@@ -1,0 +1,23 @@
+{
+  "_说明": "本文件是模板：复制为 config.json 后填入真实密钥。config.json 已 gitignore，绝不提交。",
+  "_优先级": "环境变量 DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL / DEEPSEEK_MODEL 优先于此处顶层字段；agents 块逐字段覆盖顶层，缺省回落顶层。",
+  "api_key": "sk-你的密钥",
+  "base_url": "https://api.deepseek.com",
+  "model": "deepseek-chat",
+  "_json_mode": "JSON 模式（默认 false）：请求带 response_format json_object，要求模型输出合法 JSON",
+  "json_mode": false,
+  "_reasoning_effort": "思考强度（DeepSeek 扩展，如 low / medium / high），原样透传不锁枚举；不需要可整行删除",
+  "reasoning_effort": "medium",
+  "_agents说明": "agents 块逐 agent 覆盖：只写要覆盖的字段，缺省回落顶层。character = 角色，gm = 导演，prose = 正文。块内只允许 api_key / base_url / model / json_mode / reasoning_effort。",
+  "agents": {
+    "character": { "model": "deepseek-chat" },
+    "gm": { "reasoning_effort": "high" },
+    "prose": { "json_mode": false }
+  },
+  "memory": {
+    "_prose_window_turns": "正文滑窗大小：最近 N 轮注入正文，更早的只注入事件（默认 5）",
+    "prose_window_turns": 5
+  },
+  "_gm_interval_cycles": "GM 硬保险间隔（行动周期数）：满 N 个周期末强制激活 GM（默认 3）",
+  "gm_interval_cycles": 3
+}

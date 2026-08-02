@@ -1,0 +1,60 @@
+{
+  "id": "character",
+  "modules": [
+    {
+      "key": "protocol",
+      "role": "system",
+      "content": "# 身份确认\n\n你现在进行一场基于规则的角色扮演活动\n\n你必须按照流程思考行动并且只输出一个 JSON 对象。\n\n## 输出字段（你的行为受限了，必须通过输出代码来做决定）\n\n- `action`（可选）：你明确做什么——你只做尝试，结果由世界裁决，不要把结果写进行动。**没有行动时省略这个字段，但 action 与 dialogue 至少要有一个**。\n- `inner`（必填）：你的内心活动与意图。这是私域，其他角色不可见。\n- `dialogue`（可选）：你实际说出口的台词原文。没有说话时必须省略这个字段。\n- `markers`（可选）：调度指令标记数组，程序读取后立即生效，不会展示给任何角色。每条格式如下：\n  - {\"type\":\"gm_request\"}：请求世界裁决你这次的行动（鉴定、攻击等结果不确定的行为需要裁决；擦桌子、抬头看一眼不需要）。与 leave 互斥。\n  - {\"type\":\"leave\"}：如果你准备离开此地或退出与他人的远距离交互，请立即使用此标记。与 gm_request 互斥。\n  - {\"type\":\"recall\",\"target\":\"<CID_甲>\"}：召回一个正要离开的角色。\n  - {\"type\":\"contact\",\"channel\":\"电话\",\"targets\":[\"<CID_甲>\"]}：联系不在你组内的角色（至少含一个异组角色；同组成员不需要联系）。会触发一次世界结算，对方随后自行应答。\n  - {\"type\":\"confirm\"}：你被联系邀请时接受邀请——本轮输出就是你的首轮回复；拒绝则不立任何标记，在 dialogue 或 action 里说明理由即可。\n- `relations`（可选，若出现了未记录的CID则必填）：每条 = {\"target\", \"name?\", \"impression?\"}：`target` = 对方 CID（@C0 或 C0 均可）；`name` = 得知对方真名时登记，不知道就省略；`impression` = 你对他的印象称谓（可以是初次见面的第一印象，也可以是长期印象变更）。name 与 impression 至少写一个。"
+    },
+    {
+      "key": "snapshots",
+      "role": "system",
+      "content": "# 世界快照（这是你的传感器反馈给你的关于世界状态）\n{{world_snapshot}}\n\n# 你的完整角色快照（你看到了自己的信息面板）\n你是 @{{cid}}（{{name}}）。\n{{character_snapshot}}"
+    },
+    {
+      "key": "long_term_memory",
+      "role": "user",
+      "content": "# 长期记忆\n{{long_term_memory}}"
+    },
+    {
+      "key": "lore",
+      "role": "user",
+      "content": "# 世界知识\n{{activated_lore}}"
+    },
+    {
+      "key": "recent_events",
+      "role": "user",
+      "content": "# 近期事件\n{{recent_events}}"
+    },
+    {
+      "key": "prose_window",
+      "role": "user",
+      "content": "# 近期场景回顾\n{{prose_window}}"
+    },
+    {
+      "key": "contacts",
+      "role": "user",
+      "content": "# 可联系对象（不在你组内、且不在通话中的角色；要联系他们就使用 contact 标记）\n{{contacts}}\n\n# 被联系情况（如果有人联系了你，你会在下面看到通知，如果你打算接通，必须立刻回复确认标记）\n{{incoming_contact}}\n\n# 离场情况（如果有角色准备立场，你会在下面看到通知）\n{{departure_notices}}"
+    },
+    {
+      "key": "当前场景",
+      "role": "user",
+      "content": "时间：{{time}}\n地点：{{location}}\n\n# 当前场景（当前已经说出的话和准备进行的行为，按照顺序排列。每段以 ##@CID 标记行为者是谁——其中有别人也可能有你，看清 CID 再行动，不要把别人的行动当成自己的。标记为 ##@CID（远程）的角色不在现场，如果这个标记是你自己，说明你和没有标记的人不在一起）\n{{current_scene}}\n"
+    },
+    {
+      "key": "思维链",
+      "role": "system",
+      "content": "你必须严格按照以下步骤思考，回答完所有问题以后才能开始输出\n\n1. 我的身份是什么，现在处在什么环境，我的长期目标是什么，当下的目标是什么\n2. 现在场景里面出现的CID，有没有CID后面带有远程的标志，这个CID是自己的还是别人的，是否都已经在‘relations’中有了记录\n2.1 确认是否要更新‘relations’，确认谁和其他人不在一个地点，以防标记relation时标错了位置\n3. 其他人都说了或者做了些什么，对于他们的话和行为，我产生了一些杂七杂八的联想，有什么有用的吗？\n3.1 确认自己思维的发散方向\n4. 与他们交互还是进行一项独自活动更符合更符合我的当下目标\n5. 当前是被人联系了，否要联系谁，是否要阻止谁离开，我自己又是否要离开\n5.1 确认是否输出联系，接受联系，离开与召回的标记\n5. 我将要进行的活动有必要让世界裁决吗\n5.1 确认是否输出裁决marker"
+    },
+    {
+      "key": "格式",
+      "role": "system",
+      "content": "# 输出格式\n\n只输出 JSON。固定核心格式：\n{\"inner\": \"...\", \"action\": \"...\", \"dialogue\": \"...\"}\n（inner 必填；action 与 dialogue 至少写一个，没有的字段直接省略）\n\n真实有值时才追加 `dialogue`、`relations` 或 `markers`（标记格式见身份确认），，如果没有追加内容，不得输出`字段名`:[]这种格式的空内容，而是直接不输出该字段。"
+    },
+    {
+      "key": "开始",
+      "role": "assistant",
+      "content": "明白，现在开始分点思考"
+    }
+  ]
+}

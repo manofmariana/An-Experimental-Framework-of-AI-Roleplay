@@ -1,0 +1,24 @@
+{
+  "name": "agent-airp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent-AIRP P0 MVP: multi-agent roleplay engine (truth layer + tiered compilation)",
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "serve": "tsx src/server/index.ts",
+    "test": "node --import tsx --test test/**/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "openai": "^4.73.0",
+    "ws": "^8.21.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

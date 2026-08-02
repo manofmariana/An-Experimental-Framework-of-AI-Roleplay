@@ -1,0 +1,27 @@
+{
+  "id": "C0",
+  "name": "林凡",
+  "gender": "男",
+  "age": "25",
+  "personality": "疯疯癫癫的神秘人",
+  "tags": [
+    "白滩镇：访客"
+  ],
+  "reaction": 5,
+  "location": {
+    "name": "旧灯塔塔顶",
+    "level": 1
+  },
+  "timer": 0,
+  "group": 0,
+  "initiative": null,
+  "channel": null,
+  "acted": false,
+  "level": 1,
+  "isPlayer": true,
+  "relations": {},
+  "initial_memories": [
+    "我刚抵达白滩镇，对这里的人和事所知不多。"
+  ],
+  "vars": {}
+}

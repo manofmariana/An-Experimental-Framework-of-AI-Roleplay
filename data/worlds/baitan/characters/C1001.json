@@ -1,0 +1,28 @@
+{
+  "id": "C1001",
+  "name": "林雾",
+  "gender": "女",
+  "age": "26",
+  "personality": "一个死傲娇。",
+  "tags": [
+    "白滩镇：常识",
+    "灯塔：秘密"
+  ],
+  "reaction": 5,
+  "location": {
+    "name": "旧灯塔塔顶",
+    "level": 1
+  },
+  "timer": 0,
+  "group": 0,
+  "initiative": null,
+  "channel": null,
+  "acted": false,
+  "level": 1,
+  "isPlayer": false,
+  "relations": {},
+  "initial_memories": [
+    "我二十六岁，是白滩镇旧灯塔的看守人，我才不喜欢看灯塔呢，哼！"
+  ],
+  "vars": {}
+}

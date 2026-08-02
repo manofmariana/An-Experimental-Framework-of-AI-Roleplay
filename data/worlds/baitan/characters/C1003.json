@@ -1,0 +1,27 @@
+{
+  "id": "C1003",
+  "name": "沈舟",
+  "gender": "男",
+  "age": "29",
+  "personality": "一个大龄单身待业青年",
+  "tags": [
+    "白滩镇：常识"
+  ],
+  "reaction": 5,
+  "location": {
+    "name": "雾灯酒馆",
+    "level": 1
+  },
+  "timer": 60,
+  "group": 0,
+  "initiative": null,
+  "channel": null,
+  "acted": false,
+  "level": 1,
+  "isPlayer": false,
+  "relations": {},
+  "initial_memories": [
+    "我二十九岁，替镇上人跑短途海路和杂活。"
+  ],
+  "vars": {}
+}
