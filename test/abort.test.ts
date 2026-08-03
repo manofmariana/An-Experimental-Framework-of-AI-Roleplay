@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { describe, it } from "node:test";
 import { CharacterAgent, type CharacterManifest } from "../src/agents/character.js";
 import { GMAgent, validateAdjudicationRound } from "../src/agents/gm.js";
-import { LLMAbortedError, LLMClient } from "../src/llm/client.js";
+import { LLMAbortedError } from "../src/llm/chatPort.js";
+import { OpenAIChatAdapter } from "../src/llm/openaiChatAdapter.js";
 import { CharactersStore } from "../src/truth/charactersStore.js";
 import { Lorebook } from "../src/truth/lorebook.js";
+import { tempDir } from "./harness/tempDir.js";
 
 const manifest: CharacterManifest = {
   id: "C1001", name: "林雾", gender: "女", age: "26", personality: "谨慎。",
@@ -29,31 +28,37 @@ function failingLlm(err: Error) {
 }
 
 function makeCharacter(llm: unknown): CharacterAgent {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "airp-abort-"));
+  const dir = tempDir("airp-abort-");
   const store = CharactersStore.initFrom("t1", [manifest], 0, dir);
   return new CharacterAgent(manifest, llm as never, store, [], "");
 }
 
 describe("abort 不触发重试（停止 ≠ 可重试的失败）", () => {
-  it("LLMClient 流式：abort 后流「正常结束」也抛 LLMAbortedError（根因修复）", async () => {
+  it("OpenAIChatAdapter 流式：abort 后流「正常结束」也抛 LLMAbortedError（根因修复）", async () => {
     // 真实根因：abort 不保证从 SDK 流里抛错——流可能正常收尾，
     // 若无显式检查，部分文本会被当成成功返回，下游误判解析失败并重试。
-    const client = new LLMClient(
+    const adapter = new OpenAIChatAdapter(
       { apiKey: "x", baseURL: "http://127.0.0.1:9", model: "m", jsonMode: false },
-      `test-abort-${process.pid}`,
     );
-    const openai = (client as never as { openai: { chat: { completions: { create: unknown } } } }).openai;
+    const openai = (adapter as never as { openai: { chat: { completions: { create: unknown } } } }).openai;
     openai.chat.completions.create = async () => ({
       async *[Symbol.asyncIterator]() {
         yield { choices: [{ delta: { content: "半截" } }] };
         // 流"正常"结束（模拟 abort 不抛错的时序）
       },
     });
+    const controller = new AbortController();
     await assert.rejects(
       () =>
-        client.chat("character:C1001", 1, [{ role: "system", content: "x" }], () => {
-          client.abort(); // 第一个 chunk 到达即停止
-        }),
+        adapter.chat(
+          {
+            agent: "character:C1001",
+            seq: 1,
+            messages: [{ role: "system", content: "x" }],
+            onDelta: () => controller.abort(), // 第一个 chunk 到达即停止
+          },
+          controller.signal,
+        ),
       (err: Error) => err instanceof LLMAbortedError && err.partialText === "半截",
     );
   });
@@ -61,16 +66,16 @@ describe("abort 不触发重试（停止 ≠ 可重试的失败）", () => {
   it("character.decide：LLMAbortedError 直接向上传播，只调用一次", async () => {
     const llm = failingLlm(new LLMAbortedError("半截", ""));
     const agent = makeCharacter(llm);
-    await assert.rejects(() => agent.decide(1), LLMAbortedError);
+    await assert.rejects(() => agent.decide(1, new AbortController().signal), LLMAbortedError);
     assert.equal(llm.state.calls, 1);
   });
 
   it("gm.adjudicate：LLMAbortedError 直接向上传播，只调用一次", async () => {
     const llm = failingLlm(new LLMAbortedError("", ""));
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "airp-abort-"));
+    const dir = tempDir("airp-abort-");
     const store = CharactersStore.initFrom("t1", [manifest], 0, dir);
     const gm = new GMAgent(llm as never, "设定", new Lorebook([]), [], store);
-    await assert.rejects(() => gm.adjudicate(1, "场景", {}, ["C1001"]), LLMAbortedError);
+    await assert.rejects(() => gm.adjudicate(1, "场景", {}, ["C1001"], new AbortController().signal), LLMAbortedError);
     assert.equal(llm.state.calls, 1);
   });
 
@@ -93,10 +98,10 @@ describe("abort 不触发重试（停止 ≠ 可重试的失败）", () => {
         return { text: JSON.stringify(pkg), reasoning: "" };
       },
     };
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "airp-abort-"));
+    const dir = tempDir("airp-abort-");
     const store = CharactersStore.initFrom("t1", [manifest], 0, dir);
     const gm = new GMAgent(llm as never, "设定", new Lorebook([]), [], store);
-    const { pkg } = await gm.adjudicate(1, "场景", {}, ["C1001"]);
+    const { pkg } = await gm.adjudicate(1, "场景", {}, ["C1001"], new AbortController().signal);
     assert.equal(state.calls, 2);
     assert.deepEqual(pkg.timer.map((item) => item.cid), ["C1001"]);
     assert.doesNotThrow(() => validateAdjudicationRound(pkg, ["C1001"]));
@@ -116,7 +121,7 @@ describe("abort 不触发重试（停止 ≠ 可重试的失败）", () => {
       },
     };
     const agent = makeCharacter(llm);
-    const { pkg } = await agent.decide(1);
+    const { pkg } = await agent.decide(1, new AbortController().signal);
     assert.equal(state.calls, 2);
     assert.equal(pkg.dialogue, "好。");
   });

@@ -1,121 +1,29 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { describe, it, after } from "node:test";
-import { LLMClient, type ChatMessage, type ChatResult } from "../src/llm/client.js";
-import { GameSession } from "../src/loop.js";
+import { describe, it } from "node:test";
+import type { GameSession } from "../src/loop.js";
+import { buildAdjudication as gmPkg } from "./builders/index.js";
+import { SessionHarness } from "./harness/session.js";
 
 // ---------------------------------------------------------------------------
 // 暂停选项（取代"默认自动继续"）：一次性闸门——只在本次续跑已执行过步后生效，
 // 点"继续"恢复；自动继续 = 全 false。附：玩家纯文本回退映射（inner+dialogue）。
-// 集成基建与 loopSchedule.test.ts 同型：临时世界设定集 + fake LLM + 确定性骰子。
+// 集成基建 = SessionHarness（临时世界设定集 + fake LLM + 确定性骰子）。
 // ---------------------------------------------------------------------------
 
-const cfg = { apiKey: "dummy", baseURL: "http://127.0.0.1:9", model: "m", jsonMode: false };
-const configs = { character: cfg, gm: cfg, prose: cfg };
-
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "airp-pause-"));
-const runsDir = path.join(root, "runs");
-const worldsDir = path.join(root, "worlds");
-
-after(() => {
-  LLMClient.prototype.chat = originalChat;
-  fs.rmSync(root, { recursive: true, force: true });
-});
-
-interface CharSpec {
-  id: string;
-  name: string;
-  location: string;
-  timer: number;
-  isPlayer?: boolean;
-}
-
-function manifest(spec: CharSpec) {
-  return {
-    id: spec.id,
-    name: spec.name,
-    gender: "未设定",
-    age: "未设定",
-    personality: `${spec.name}谨慎。`,
-    initial_memories: [`${spec.name}的记忆`],
-    location: { name: spec.location, level: 1 },
-    tags: [],
-    reaction: 5,
-    timer: spec.timer,
-    group: 0,
-    initiative: null,
-    channel: null,
-    acted: false,
-    level: 1,
-    isPlayer: spec.isPlayer === true,
-    relations: {},
-    vars: {},
-  };
-}
-
-function setupWorld(worldId: string, specs: CharSpec[]): void {
-  const dir = path.join(worldsDir, worldId);
-  fs.mkdirSync(path.join(dir, "characters"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "setting.md"), "测试世界设定\n");
-  fs.writeFileSync(path.join(dir, "tone-card.md"), "测试基调\n");
-  fs.writeFileSync(path.join(dir, "lorebook.json"), "[]\n");
-  fs.writeFileSync(
-    path.join(dir, "time.json"),
-    JSON.stringify({ start: { y: 1, m: 1, d: 1, h: 0, min: 0 }, periods: [{ key: "白天", from: 0, to: 24 }] }),
-  );
-  for (const spec of specs) {
-    const file = spec.isPlayer === true
-      ? path.join(dir, "player.json")
-      : path.join(dir, "characters", `${spec.id}.json`);
-    fs.writeFileSync(file, JSON.stringify(manifest(spec)));
-  }
-}
-
-// --- fake LLM：character 固定决策；gm 按脚本队列；prose 回显轮次 ---
-interface Call {
-  agent: string;
-  seq: number;
-  messages: ChatMessage[];
-}
-let calls: Call[] = [];
-let gmQueue: Record<string, unknown>[] = [];
-let diceQueue: number[] = [];
-
-const originalChat = LLMClient.prototype.chat;
-LLMClient.prototype.chat = (async (
-  agent: string,
-  seq: number,
-  messages: ChatMessage[],
-): Promise<ChatResult> => {
-  calls.push({ agent, seq, messages: messages.map((m) => ({ ...m })) });
-  const usage = { hit: 0, miss: 0, output: 0 };
-  if (agent === "gm") {
-    const pkg = gmQueue.shift();
-    if (pkg === undefined) throw new Error(`GM 脚本耗尽（seq ${seq}）`);
-    return { text: JSON.stringify(pkg), reasoning: "", usage };
-  }
-  if (agent === "prose") return { text: `正文#${seq}`, reasoning: "", usage };
-  return {
-    text: JSON.stringify({ action: `行动#${seq}`, inner: `内心#${seq}`, dialogue: `台词#${seq}` }),
-    reasoning: "",
-    usage,
-  };
-}) as never;
+const h = new SessionHarness("airp-pause-");
+const llm = h.llm;
+const calls = llm.port.calls;
+const setupWorld = h.setupWorld.bind(h);
 
 /** narrativity=full 的 GM 包（触发正文步；timer 覆盖本轮行动者）。 */
 function gmFull(): Record<string, unknown> {
-  return {
-    events: [{ text: "GM事件", tags: [] }],
+  return gmPkg({
     narrativity: "full",
-    deltas: [],
     timer: [
       { cid: "C0", span: { min: 5 } },
       { cid: "C1001", span: { min: 5 } },
     ],
-    location: [],
-  };
+  });
 }
 
 const NO_PAUSE = { everyStep: false, beforeGm: false, afterGm: false, afterProse: false };
@@ -131,20 +39,7 @@ function makeSession(tag: string, pause: typeof NO_PAUSE): GameSession {
     { id: "C1001", name: "甲", location: "loc_A", timer: 0 },
   ]);
   const runId = `run-${tag}-${process.pid}`;
-  calls = [];
-  gmQueue = [gmFull()];
-  diceQueue = [5, 20];
-  const session = GameSession.create(configs, runId, undefined, worldId, {
-    baseDir: path.join(runsDir, runId),
-    worldsDir,
-    proseWindowTurns: 5,
-    gmIntervalCycles: 1,
-    rollDice: () => {
-      const v = diceQueue.shift();
-      if (v === undefined) throw new Error("骰子队列耗尽（出现预期外的先攻投掷）");
-      return v;
-    },
-  });
+  const session = h.makeSession(runId, worldId, { dice: [5, 20], gmIntervalCycles: 1, gm: [gmFull()] });
   session.setPauseOptions(pause);
   return session;
 }

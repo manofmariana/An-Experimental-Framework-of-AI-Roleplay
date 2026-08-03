@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import {
@@ -9,6 +8,7 @@ import {
   readRecent,
   recordRecent,
 } from "../src/llm/recent.js";
+import { tempDir } from "./harness/tempDir.js";
 
 describe("llm-recent（存档 v2 文件 6：每 agent 最近 5 轮滚动窗）", () => {
   it("agentSlug：非法字符转连字符", () => {
@@ -17,7 +17,7 @@ describe("llm-recent（存档 v2 文件 6：每 agent 最近 5 轮滚动窗）",
   });
 
   it("recordRecent 滚动窗口：只保留最近 5 条；readRecent 读回", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "airp-recent-"));
+    const dir = tempDir("airp-recent-");
     for (let seq = 1; seq <= 7; seq++) {
       recordRecent("t1", "character:C1001", {
         seq,

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { EventsStore, truncateEvents } from "../src/truth/events.js";
+import { tempDir } from "./harness/tempDir.js";
 import type { Event } from "../src/types.js";
 
 function evt(partial: Partial<Event> & { id: string; seq: number }): Event {
@@ -18,7 +18,7 @@ function evt(partial: Partial<Event> & { id: string; seq: number }): Event {
 
 describe("EventsStore（存档 v2 文件 1：events.json）", () => {
   it("append 立刻写入；readAll 按 (t, id) 排序；重载可读", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "airp-ev-"));
+    const dir = tempDir("airp-ev-");
     const store = new EventsStore("t1", dir);
     store.append(evt({ id: "evt_0002", seq: 3, t: 5 }));
     store.append(evt({ id: "evt_0001", seq: 3, t: 3 }));
@@ -34,7 +34,7 @@ describe("EventsStore（存档 v2 文件 1：events.json）", () => {
   });
 
   it("readWindow / readVisibleTo（known_by 标签 ∧ time，无地点成分，ADR 0002）", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "airp-ev-"));
+    const dir = tempDir("airp-ev-");
     const store = new EventsStore("t1", dir);
     store.append(evt({ id: "evt_0001", seq: 1, t: 1, location: "loc_lighthouse" }));
     store.append(evt({ id: "evt_0002", seq: 2, t: 2, tags: ["known_by:C0"] })); // C1001 不可见
@@ -54,7 +54,7 @@ describe("EventsStore（存档 v2 文件 1：events.json）", () => {
     );
     assert.equal(events.length, 3); // 纯函数不改入参
 
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "airp-ev-"));
+    const dir = tempDir("airp-ev-");
     const store = new EventsStore("t1", dir);
     for (const e of events) store.append(e);
     store.truncateToSeq(7);

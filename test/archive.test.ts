@@ -1,13 +1,11 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { describe, it } from "node:test";
 import {
   ArchiveStore,
   buildArchiveEntry,
   type ArchiveEntry,
 } from "../src/truth/archive.js";
+import { tempDir } from "./harness/tempDir.js";
 
 describe("buildArchiveEntry（归档写入时机的纯函数核心）", () => {
   it("current 为 null（会话刚开始）→ 无可归档", () => {
@@ -39,7 +37,7 @@ describe("buildArchiveEntry（归档写入时机的纯函数核心）", () => {
 
 describe("ArchiveStore（存档 v2 文件 5：archive.json）", () => {
   it("append 落盘 → 重载读回；truncateToSeq", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "airp-arch-"));
+    const dir = tempDir("airp-arch-");
     const store = new ArchiveStore("t1", dir);
     const mk = (seq: number, kind: string): ArchiveEntry =>
       buildArchiveEntry({ seq, kind, result: {}, var_changes: [] })!;
@@ -67,7 +65,7 @@ describe("seq 计数约定（说明性断言）", () => {
     // 总轮次计数 = 每次 API 调用 + 玩家输入。
     // 未来工具 Agent 调用【不计入】seq：工具 Agent 有独立计数器，与 seq 一一对应记录；
     // 回溯跨越含工具 Agent 结构变更的 seq 时强制绑定回滚（P2+，DESIGN-P1 §10.2）。
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "airp-arch-"));
+    const dir = tempDir("airp-arch-");
     const store = new ArchiveStore("t1", dir);
     const kinds = ["player", "character:C1001", "gm", "prose"];
     kinds.forEach((kind, i) =>

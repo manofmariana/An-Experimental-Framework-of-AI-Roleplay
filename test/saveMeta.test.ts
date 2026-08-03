@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { deleteRun, listRuns, validateAlias, writeAlias } from "../src/server/api.js";
+import { tempDir } from "./harness/tempDir.js";
 
 function mkRun(dir: string, id: string): void {
   fs.mkdirSync(path.join(dir, id), { recursive: true });
@@ -27,7 +27,7 @@ describe("validateAlias", () => {
 
 describe("writeAlias / deleteRun（路径安全）", () => {
   it("别名写入后 listRuns 带出；显示名回退 id", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "airp-save-"));
+    const dir = tempDir("airp-save-");
     mkRun(dir, "run-a");
     mkRun(dir, "run-b");
     writeAlias(dir, "run-a", "灯塔之夜");
@@ -40,13 +40,13 @@ describe("writeAlias / deleteRun（路径安全）", () => {
   });
 
   it("writeAlias：不存在/穿越拒绝", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "airp-save-"));
+    const dir = tempDir("airp-save-");
     assert.throws(() => writeAlias(dir, "nope", "x"), /不存在/);
     assert.throws(() => writeAlias(dir, "../etc", "x"), /非法名称/);
   });
 
   it("deleteRun：拒删活跃会话、拒穿越、拒不存在", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "airp-save-"));
+    const dir = tempDir("airp-save-");
     mkRun(dir, "run-active");
     mkRun(dir, "run-old");
 

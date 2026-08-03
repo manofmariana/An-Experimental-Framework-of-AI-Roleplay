@@ -8,6 +8,13 @@
     "dev": "tsx src/cli.ts",
     "serve": "tsx src/server/index.ts",
     "test": "node --import tsx --test test/**/*.test.ts",
+    "test:unit": "tsx scripts/run-suite.ts unit",
+    "test:contract": "tsx scripts/run-suite.ts contract",
+    "test:application": "tsx scripts/run-suite.ts application",
+    "test:integration": "tsx scripts/run-suite.ts integration",
+    "test:fast": "tsx scripts/run-suite.ts unit",
+    "test:arch": "tsx scripts/check-dependencies.ts",
+    "check": "npm run typecheck && npm run test:arch && npm run test:fast",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

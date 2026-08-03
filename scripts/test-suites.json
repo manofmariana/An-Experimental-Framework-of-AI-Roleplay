@@ -1,0 +1,47 @@
+{
+  "unit": [
+    "test/simulator.test.ts",
+    "test/compiler.test.ts",
+    "test/types.test.ts",
+    "test/varDiff.test.ts",
+    "test/identity.test.ts",
+    "test/workingSet.test.ts",
+    "test/llmClient.test.ts",
+    "test/contracts.test.ts"
+  ],
+  "contract": [
+    "test/template.test.ts",
+    "test/character.test.ts",
+    "test/prose.test.ts",
+    "test/config.test.ts",
+    "test/lorebook.test.ts",
+    "test/baitanWorld.test.ts",
+    "test/saveMeta.test.ts",
+    "test/auditContracts.test.ts",
+    "test/llmRecent.test.ts",
+    "test/history.test.ts",
+    "test/charactersStore.test.ts",
+    "test/events.test.ts",
+    "test/loreStore.test.ts",
+    "test/timeStore.test.ts",
+    "test/worldStore.test.ts",
+    "test/archive.test.ts",
+    "test/rollback.test.ts"
+  ],
+  "application": [
+    "test/loopSchedule.test.ts",
+    "test/directEdit.test.ts",
+    "test/editMarkers.test.ts",
+    "test/gmTimerCoverage.test.ts",
+    "test/pauseOptions.test.ts",
+    "test/reloadConfig.test.ts",
+    "test/reproActedRollback.test.ts",
+    "test/resume.test.ts",
+    "test/abort.test.ts"
+  ],
+  "integration": [
+    "test/serverApi.test.ts",
+    "test/wsReroll.test.ts",
+    "test/wsStateBroadcast.test.ts"
+  ]
+}

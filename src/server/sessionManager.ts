@@ -3,11 +3,8 @@ import path from "node:path";
 import { loadAgentConfigs, RUNS_DIR } from "../config.js";
 import type { Display } from "../display.js";
 import { buildHistory, GameSession, type HistoryPayload, type PauseOptions } from "../loop.js";
-import { safeSegment } from "./api.js";
-
-function newRunId(): string {
-  return `run-${new Date().toISOString().replace(/[:.]/g, "-")}`;
-}
+import { systemIds, type IdPorts } from "../ports.js";
+import { safeSegment } from "../shared/safeSegment.js";
 
 /**
  * 会话管理器：持有当前活跃 GameSession。
@@ -23,7 +20,10 @@ export class SessionManager {
   /** 暂停选项（内存即可）：记住以便新会话/读档自动套用；自动继续 = 全 false。 */
   private pauseOptions: PauseOptions = { everyStep: false, beforeGm: false, afterGm: false, afterProse: false };
 
-  constructor(private displayFactory: () => Display) {}
+  constructor(
+    private displayFactory: () => Display,
+    private ids: IdPorts = systemIds,
+  ) {}
 
   /** 暂停选项下发（pause_options 消息）：立即应用到当前会话并记住。 */
   setPauseOptions(msg: { every_step: boolean; before_gm: boolean; after_gm: boolean; after_prose: boolean }): void {
@@ -101,7 +101,7 @@ export class SessionManager {
     if (!configs) {
       throw new Error("未找到 LLM API Key：请在「配置」页填入 api_key，或设置 DEEPSEEK_API_KEY 环境变量。");
     }
-    return GameSession.create(configs, newRunId(), this.displayFactory(), worldSetId);
+    return GameSession.create(configs, this.ids.newRunId(), this.displayFactory(), worldSetId);
   }
 
   /** 取当前会话（无则创建；资源修改不触发自动重建，须显式 new_session）。 */

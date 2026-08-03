@@ -21,6 +21,7 @@ import {
   type PromptTemplate,
 } from "../compile/template.js";
 import { readRecent } from "../llm/recent.js";
+import { safeSegment } from "../shared/safeSegment.js";
 import { LoreEntrySchema, type LoreEntry } from "../types.js";
 import type { SessionManager } from "./sessionManager.js";
 
@@ -114,22 +115,8 @@ export function validateLorebookPayload(raw: unknown): LoreEntry[] {
 }
 
 /**
- * 路径安全：拒绝 `..`、斜杠、空串、点开头——防目录穿越。
- * 通过则原样返回（调用方拼进受控目录）。
+ * 路径安全段校验已迁至 src/shared/safeSegment.ts（供 transport / SessionManager / resources 共用）。
  */
-export function safeSegment(name: string): string {
-  if (
-    name.length === 0 ||
-    name.includes("..") ||
-    name.includes("/") ||
-    name.includes("\\") ||
-    name.startsWith(".") ||
-    !/^[\w-]+(\.[\w-]+)*$/.test(name)
-  ) {
-    throw new Error(`非法名称: ${JSON.stringify(name)}`);
-  }
-  return name;
-}
 
 export interface RunInfo {
   id: string;

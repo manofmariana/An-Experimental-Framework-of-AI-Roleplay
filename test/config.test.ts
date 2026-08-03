@@ -1,15 +1,20 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { describe, it } from "node:test";
 import {
   AGENT_KINDS,
   DEFAULT_GM_INTERVAL_CYCLES,
   DEFAULT_WORLD_SET,
   listWorldSets,
+  PROJECT_ROOT,
   resolveAgentConfigs,
   resolveGmIntervalCycles,
   resolveMemoryConfig,
   resolveWorldDir,
+  type FileConfig,
 } from "../src/config.js";
+import { ResolvedAgentConfigSchema } from "../src/contracts/config.js";
 
 const NO_ENV: NodeJS.ProcessEnv = {};
 
@@ -188,5 +193,22 @@ describe("世界设定集（data/worlds）", () => {
     assert.ok(resolveWorldDir("baitan").endsWith("baitan"));
     assert.throws(() => resolveWorldDir("../etc"), /非法/);
     assert.throws(() => resolveWorldDir("no-such-set"), /不存在/);
+  });
+});
+
+describe("config.example.json（对外模板与契约对齐）", () => {
+  it("模板可被 FileConfig 现状解析，且三 agent 解析结果过 ResolvedAgentConfigSchema", () => {
+    const file = JSON.parse(
+      fs.readFileSync(path.join(PROJECT_ROOT, "config.example.json"), "utf8"),
+    ) as FileConfig;
+    const configs = resolveAgentConfigs(file, {})!;
+    assert.ok(configs, "模板自带示例 api_key，解析不应为 null");
+    for (const kind of AGENT_KINDS) {
+      ResolvedAgentConfigSchema.parse(configs[kind]);
+    }
+    // 模板分层语义：gm.reasoning_effort=high 覆盖顶层 medium
+    assert.equal(configs.character.reasoningEffort, "medium");
+    assert.equal(configs.gm.reasoningEffort, "high");
+    assert.equal(configs.prose.jsonMode, false);
   });
 });

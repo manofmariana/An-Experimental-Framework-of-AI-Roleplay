@@ -11,7 +11,6 @@ import {
   placeholdersCatalog,
   readPromptTemplates,
   readRunArtifact,
-  safeSegment,
   characterManifestFile,
   listCharacterManifests,
   validateCharacterManifestForPath,
@@ -19,9 +18,12 @@ import {
   validateLorebookPayload,
   validatePromptPayload,
 } from "../src/server/api.js";
+import { safeSegment } from "../src/shared/safeSegment.js";
 import { Lorebook } from "../src/truth/lorebook.js";
 import { CharacterManifestSchema } from "../src/agents/character.js";
+import { SAVE_SCHEMA_VERSION } from "../src/truth/saveSchema.js";
 import type { SessionManager } from "../src/server/sessionManager.js";
+import { tempDir } from "./harness/tempDir.js";
 
 describe("validateConfigPayload", () => {
   it("合法结构通过并保留未知注释字段", () => {
@@ -126,15 +128,17 @@ describe("safeSegment（路径安全）", () => {
 
 describe("listRuns / readRunArtifact（存档 v2 产物）", () => {
   it("只认目录、按 mtime 倒序；五文件 + stats 读取回环", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "airp-runs-"));
+    const dir = tempDir("airp-runs-");
+    // readRunArtifact 是纯读取（不校验版本），fixture 跟随当前 SAVE_SCHEMA_VERSION
+    const v = SAVE_SCHEMA_VERSION;
     const mk = (id: string, mtime: Date) => {
       const d = path.join(dir, id);
       fs.mkdirSync(d);
-      fs.writeFileSync(path.join(d, "events.json"), '{"schema_version":4,"events":[{"id":"evt_1","t":0,"seq":3}]}');
-      fs.writeFileSync(path.join(d, "world.json"), '{"schema_version":4,"world":{"time":{"y":1,"m":1,"d":1,"h":0,"min":5},"weather":"雾"},"pipeline":{"seq":3,"phase":"await_player","working_set":[],"current":null}}');
-      fs.writeFileSync(path.join(d, "characters.json"), '{"schema_version":4,"characters":{"C1001":{"name":"林雾","gender":"女","age":"26","personality":"寡言谨慎。","tags":[],"reaction":0,"location":{"name":"灯塔","level":1},"timer":5,"group":0,"initiative":null,"channel":null,"acted":false,"level":1,"isPlayer":false,"relations":{},"long_term_memory":[],"vars":{}}}}');
-      fs.writeFileSync(path.join(d, "archive.json"), '{"schema_version":4,"entries":[{"seq":1,"kind":"player","result":{"input":"你好"},"var_changes":[]}]}');
-      fs.writeFileSync(path.join(d, "lore.json"), '{"schema_version":4,"entries":[],"changelog":[]}');
+      fs.writeFileSync(path.join(d, "events.json"), `{"schema_version":${v},"events":[{"id":"evt_1","t":0,"seq":3}]}`);
+      fs.writeFileSync(path.join(d, "world.json"), `{"schema_version":${v},"world":{"time":{"y":1,"m":1,"d":1,"h":0,"min":5},"weather":"雾"},"pipeline":{"seq":3,"phase":"await_player","working_set":[],"current":null}}`);
+      fs.writeFileSync(path.join(d, "characters.json"), `{"schema_version":${v},"characters":{"C1001":{"name":"林雾","gender":"女","age":"26","personality":"寡言谨慎。","tags":[],"reaction":0,"location":{"name":"灯塔","level":1},"timer":5,"group":0,"initiative":null,"channel":null,"acted":false,"level":1,"isPlayer":false,"relations":{},"long_term_memory":[],"vars":{}}}}`);
+      fs.writeFileSync(path.join(d, "archive.json"), `{"schema_version":${v},"entries":[{"seq":1,"kind":"player","result":{"input":"你好"},"var_changes":[]}]}`);
+      fs.writeFileSync(path.join(d, "lore.json"), `{"schema_version":${v},"entries":[],"changelog":[]}`);
       fs.utimesSync(d, mtime, mtime);
     };
     mk("run-old", new Date(2020, 0, 1));
@@ -148,7 +152,7 @@ describe("listRuns / readRunArtifact（存档 v2 产物）", () => {
     );
 
     assert.deepEqual(readRunArtifact(dir, "run-new", "events"), {
-      schema_version: 4,
+      schema_version: v,
       events: [{ id: "evt_1", t: 0, seq: 3 }],
     });
     const world = readRunArtifact(dir, "run-new", "world") as { world: { time: { min: number } } };
@@ -157,7 +161,7 @@ describe("listRuns / readRunArtifact（存档 v2 产物）", () => {
     assert.equal(characters.characters.C1001?.personality, "寡言谨慎。");
     const archive = readRunArtifact(dir, "run-new", "archive") as { entries: unknown[] };
     assert.equal(archive.entries.length, 1);
-    assert.deepEqual(readRunArtifact(dir, "run-new", "lore"), { schema_version: 4, entries: [], changelog: [] });
+    assert.deepEqual(readRunArtifact(dir, "run-new", "lore"), { schema_version: v, entries: [], changelog: [] });
     assert.deepEqual(readRunArtifact(dir, "run-new", "stats"), []); // 缺文件 → 空
     assert.throws(() => readRunArtifact(dir, "..", "events"), /非法名称/);
   });
@@ -229,7 +233,7 @@ describe("prompts API（提示词模板端点的纯逻辑）", () => {
 
 describe("角色 manifest API/前端往返契约", () => {
   it("characters manifest 列表纳入 player.json/C0 并映射正确路径", () => {
-    const worldDir = fs.mkdtempSync(path.join(os.tmpdir(), "airp-character-api-"));
+    const worldDir = tempDir("airp-character-api-");
     fs.mkdirSync(path.join(worldDir, "characters"));
     const base = {
       name: "玩家", gender: "未设定", age: "未设定", personality: "谨慎。", tags: [], reaction: 0,
@@ -268,7 +272,7 @@ describe("角色 manifest API/前端往返契约", () => {
 
 describe("lorebook 读写回环", () => {
   it("validateLorebookPayload → 写盘 → Lorebook.load 读回一致", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "airp-lore-"));
+    const dir = tempDir("airp-lore-");
     const file = path.join(dir, "lorebook.json");
     const entries = validateLorebookPayload([
       { id: "b", tags: ["白滩镇：常识"], content: "B", enabled: false },

@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { CharacterManifestSchema, type CharacterManifest } from "../src/agents/character.js";
@@ -17,6 +16,7 @@ import { LoreStore, rollbackLore, type LoreFile } from "../src/truth/loreStore.j
 import { SAVE_SCHEMA_VERSION } from "../src/truth/saveSchema.js";
 import { WorldStore } from "../src/truth/worldStore.js";
 import { DecisionPackageSchema, SpanSchema, type LoreEntry } from "../src/types.js";
+import { tempDir } from "./harness/tempDir.js";
 
 
 const start = { y: 1, m: 1, d: 1, h: 0, min: 0 };
@@ -43,7 +43,7 @@ const manifest = (id: string, isPlayer = false, timer: number | null = 0): Chara
 });
 
 function temp(prefix: string): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return tempDir(prefix);
 }
 
 function decision(relations: unknown) {

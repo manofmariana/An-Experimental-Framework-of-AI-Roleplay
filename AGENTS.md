@@ -15,11 +15,18 @@ npm run dev        # CLI 游玩（tsx src/cli.ts，readline REPL）
 npm run serve      # WebUI 服务（tsx src/server/index.ts，默认 http://127.0.0.1:8787）
 npm test           # node --import tsx --test test/**/*.test.ts
 npm run typecheck  # tsc --noEmit（改动后必须通过）
+npm run test:arch  # 依赖审计（scripts/check-dependencies.ts：禁止边 + 传递依赖 + import 循环）
+npm run test:fast  # = test:unit（纯单测套件：严格零 IO，scripts/test-suites.json 的 unit 清单）
+npm run test:unit / test:contract / test:application / test:integration
+                   # 四层套件（判据见 scripts/run-suite.ts 头部注释：unit 零 IO 纯逻辑；
+                   # contract 外部格式/文件 codec + truth Store 文件系统语义；
+                   # application GameSession 级 fake ChatPort；integration 真实 HTTP/WS）
+npm run check      # 日常门禁 = typecheck + test:arch + test:fast
 ```
 
 启动器：`Agent-AIRP.bat`（CLI）、`Agent-AIRP-WebUI.bat`（WebUI + 自动开浏览器）。
 
-配置：根目录 `config.json`（已 gitignore，模板 `config.example.json`）。顶层 `api_key/base_url/model` 为公共默认，`agents.{character|gm|prose}` 块可逐 agent 覆盖；`json_mode`（默认 false）与 `reasoning_effort`（原样透传不锁枚举）同样支持顶层 + 逐 agent 覆盖；`memory.prose_window_turns` 为正文滑窗大小（默认 5）；环境变量 `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL` / `DEEPSEEK_MODEL` 优先于顶层字段。设置页保存**立即热生效**（PUT /api/config → GameSession.reloadConfig 原地更新三个 LLMClient 与滑窗/GM 间隔，不走 markStale）；world/character 域仍是新会话生效。服务端绑定地址可用 `AIRP_HOST` / `AIRP_PORT` 覆盖。
+配置：根目录 `config.json`（已 gitignore，模板 `config.example.json`）。顶层 `api_key/base_url/model` 为公共默认，`agents.{character|gm|prose}` 块可逐 agent 覆盖；`json_mode`（默认 false）与 `reasoning_effort`（原样透传不锁枚举）同样支持顶层 + 逐 agent 覆盖；`memory.prose_window_turns` 为正文滑窗大小（默认 5）；环境变量 `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL` / `DEEPSEEK_MODEL` 优先于顶层字段。设置页保存**立即热生效**（PUT /api/config → GameSession.reloadConfig 原地更新三个 OpenAI adapter 与滑窗/GM 间隔，不走 markStale）；world/character 域仍是新会话生效。服务端绑定地址可用 `AIRP_HOST` / `AIRP_PORT` 覆盖。
 
 ## 目录结构
 
@@ -29,8 +36,9 @@ npm run typecheck  # tsc --noEmit（改动后必须通过）
 - `src/scheduler/` — `simulator.ts`（**纯逻辑派生函数集**：nextDue / reconcileGroups（timer+location 并组 + id 保稳继承：精确>增员>减员>人少并入人多）/ groupLocation（组位置 = 先攻最高者 location）/ orderGroups（同刻多组串行）/ visibleEvents（known_by 唯一通道）/ rollInitiative·initiativeBatches·rerollInitiative（d20+reaction，同值同批，{value,group} 结构，补投不波及全组）；禁 IO import，`test/simulator.test.ts` 有元测试守护）
 - `src/compile/` — `template.ts`（模板 schema/加载/占位符校验）+ `compiler.ts`（**纯渲染器**：模板 × 占位符注册表 × 注入上下文 → ChatMessage[]；占位符注册表 = 唯一出口，新占位符 = 注册新 provider）
 - `src/truth/` — **统一版本存档核心文件**：events/lore/world/characters/archive/time 均带同一 `schema_version`（saveSchema.ts 校验，旧版或混合版本明确拒绝且不迁移）；`world.json={schema_version,world:{time:{y,m,d,h,min},...},pipeline}`（clock 由 world.time 派生，不落盘）；characters 单文件仅含同构 C* 角色（name/gender/age/personality + 调度变量 + relations/长期记忆/vars；无 gm key、无 persona/voice_anchor）；archive 正文结果持久化 `participants+scenes`（正文滑窗按 CID+连续场景过滤的数据源）；timeStore（time.json 档内副本 + 结构化时间渲染）；snapshot（注入层状态序列化：timer 分钟标量 → {y,m,d,h,min} 结构化，LEAVE_TIMER → "已离开待结算"）；另有 lorebook/identity/workingSet
-- `src/llm/` — client（OpenAI 兼容）/ cacheStats（埋点）/ recent（llm-recent/{agent}.json 最近 5 轮滚动窗）
+- `src/llm/` — chatPort（ChatPort/ChatRequest/ChatResult/LLMAbortedError 端口定义）/ openaiChatAdapter（OpenAI 兼容 adapter，buildRequestParams 等纯函数）/ callLog（recent+cacheStats 落盘 decorator，写盘失败只告警）/ cacheStats（埋点）/ recent（llm-recent/{agent}.json 最近 5 轮滚动窗）
 - `src/agents/` — character（私域上下文+人际关系库自维护）/ gm（重裁决+@ID 转写，**红线：不替主要角色决策**，写在 `data/prompts/gm.prompt.json` 的裁决协议模块里）/ prose（**无工具纯渲染器**）；各自导出占位符注册表 `*_PLACEHOLDERS`
+- `src/shared/` — 跨层基础工具（safeSegment 路径安全段校验；不依赖 src 内任何模块）；`src/contracts/` — 共享 zod 契约（配置/Secrets/Preset/脱敏视图，阶段 A4 起契约先行，不依赖 truth/agents/server/llm/loop）；`src/resources/` — 用户资源目录解析（UserDirectories(default_user)，现行 legacy 路径映射，config.ts 路径常量由此派生）
 - `data/prompts/{character,gm,prose}.prompt.json` — 模块化提示词模板（模块 = {key, role, content}，content 内 `{{placeholder}}`；Web 可编辑，**每轮激活前热加载**，保存后下一轮即生效；旧的 `src/prompts/` md 已废除）
 - `src/server/` — WebUI 后端（http + ws）：WebDisplay / sessionManager / 管理 API；`PUT /api/session/state` 状态直编（LLM 在途拒绝；world/characters/events 整体替换 + agent 重建；变量域经 varDiff 净额并入当前步 var_changes——可回溯，事件域按 seq 截断口径）；state/events 逐轮广播（turn_done/rollback/edit_result/会话建立/重连后推送，前端侧栏实时重渲 + 直编预填缓存保鲜）
 - `src/loop.ts` — 主循环 GameSession（M2 计时器 DES：deriveNext 派生"下一步该谁"（无快照，回溯零特例）、单活跃组 + 同刻多组串行、行动顺序 = initiative 现排、已行动位 = 角色 acted 变量、周期计数 X = world 变量、无判定轮（GM 标记立即激活/硬保险 N 周期末激活）+ 五标记即时执行 + 邀请延迟生效 + 频道变量、GM 多事件裁决（timer 必非 0 + 精确覆盖全体同步组成员与刚离组者契约）+ 工作集清算、分步流水线）；`src/cli.ts` / `src/display.ts` — CLI 与显示层接口

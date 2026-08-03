@@ -1,52 +1,25 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { describe, it, after } from "node:test";
 import { CharacterAgent } from "../src/agents/character.js";
 import { GMAgent } from "../src/agents/gm.js";
-import { LLMClient } from "../src/llm/client.js";
-import { GameSession } from "../src/loop.js";
+import type { GameSession } from "../src/loop.js";
 import { CharactersStore } from "../src/truth/charactersStore.js";
 import { EventsStore } from "../src/truth/events.js";
 import { WorldStore } from "../src/truth/worldStore.js";
 import type { Event } from "../src/types.js";
+import { buildAdjudication as gmPkg } from "./builders/index.js";
+import { SessionHarness } from "./harness/session.js";
 
 // ---------------------------------------------------------------------------
 // 状态栏直接编辑（GameSession.applyDirectEdit）：整体替换 world/characters/events，
 // 不经过裁决；world/characters 变量差异净额并入当前步 var_changes（回溯随该步还原），
 // events 域不进 var_changes（回溯按 seq 截断事件）；LLM 在途拒绝；校验失败整体还原。
-// 集成基建与 pauseOptions.test.ts 同型：临时世界设定集 + fake LLM + 确定性骰子。
+// 集成基建 = SessionHarness（临时世界设定集 + fake LLM + 确定性骰子）。
 // ---------------------------------------------------------------------------
 
-const cfg = { apiKey: "dummy", baseURL: "http://127.0.0.1:9", model: "m", jsonMode: false };
-const configs = { character: cfg, gm: cfg, prose: cfg };
-
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "airp-direct-edit-"));
-const runsDir = path.join(root, "runs");
-const worldsDir = path.join(root, "worlds");
-
-// --- fake LLM：character 固定决策；gm 按脚本队列；prose 回显轮次 ---
-let gmQueue: Record<string, unknown>[] = [];
-const originalChat = LLMClient.prototype.chat;
-LLMClient.prototype.chat = (async (
-  agent: string,
-  seq: number,
-  _messages: unknown,
-): Promise<{ text: string; reasoning: string; usage: { hit: number; miss: number; output: number } }> => {
-  const usage = { hit: 0, miss: 0, output: 0 };
-  if (agent === "gm") {
-    const pkg = gmQueue.shift();
-    if (pkg === undefined) throw new Error(`GM 脚本耗尽（seq ${seq}）`);
-    return { text: JSON.stringify(pkg), reasoning: "", usage };
-  }
-  if (agent === "prose") return { text: `正文#${seq}`, reasoning: "", usage };
-  return {
-    text: JSON.stringify({ action: `行动#${seq}`, inner: `内心#${seq}`, dialogue: `台词#${seq}` }),
-    reasoning: "",
-    usage,
-  };
-}) as never;
+const h = new SessionHarness("airp-direct-edit-");
 
 const origCharRestore = CharacterAgent.prototype.restore;
 const origGmRestore = GMAgent.prototype.restore;
@@ -62,65 +35,26 @@ GMAgent.prototype.restore = function (this: GMAgent, events: Event[]): void {
 };
 
 after(() => {
-  LLMClient.prototype.chat = originalChat;
   CharacterAgent.prototype.restore = origCharRestore;
   GMAgent.prototype.restore = origGmRestore;
-  fs.rmSync(root, { recursive: true, force: true });
 });
 
-function manifest(spec: { id: string; name: string; isPlayer?: boolean }) {
-  return {
-    id: spec.id,
-    name: spec.name,
-    gender: "未设定",
-    age: "未设定",
-    personality: `${spec.name}谨慎。`,
-    initial_memories: [`${spec.name}的记忆`],
-    location: { name: "loc_A", level: 1 },
-    tags: [],
-    reaction: 5,
-    timer: 0,
-    group: 0,
-    initiative: null,
-    channel: null,
-    acted: false,
-    level: 1,
-    isPlayer: spec.isPlayer === true,
-    relations: {},
-    vars: {},
-  };
-}
-
 const WORLD_ID = `w-edit-${process.pid}`;
-
-function setupWorld(): void {
-  const dir = path.join(worldsDir, WORLD_ID);
-  fs.mkdirSync(path.join(dir, "characters"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "setting.md"), "测试世界设定\n");
-  fs.writeFileSync(path.join(dir, "tone-card.md"), "测试基调\n");
-  fs.writeFileSync(path.join(dir, "lorebook.json"), "[]\n");
-  fs.writeFileSync(
-    path.join(dir, "time.json"),
-    JSON.stringify({ start: { y: 1, m: 1, d: 1, h: 0, min: 0 }, periods: [{ key: "白天", from: 0, to: 24 }] }),
-  );
-  fs.writeFileSync(path.join(dir, "player.json"), JSON.stringify(manifest({ id: "C0", name: "玩家", isPlayer: true })));
-  fs.writeFileSync(path.join(dir, "characters", "C1001.json"), JSON.stringify(manifest({ id: "C1001", name: "甲" })));
-}
-
-let dice = [5, 20];
+h.setupWorld(WORLD_ID, [
+  { id: "C0", name: "玩家", location: "loc_A", timer: 0, isPlayer: true },
+  { id: "C1001", name: "甲", location: "loc_A", timer: 0 },
+]);
 
 /** narrativity=full 的 GM 包（触发正文步；timer 覆盖本轮行动者；可带 world deltas）。 */
 function gmFull(deltas: Record<string, unknown>[] = []): Record<string, unknown> {
-  return {
-    events: [{ text: "GM事件", tags: [] }],
+  return gmPkg({
     narrativity: "full",
     deltas,
     timer: [
       { cid: "C0", span: { min: 5 } },
       { cid: "C1001", span: { min: 5 } },
     ],
-    location: [],
-  };
+  });
 }
 
 const NO_PAUSE = { everyStep: false, beforeGm: false, afterGm: false, afterProse: false };
@@ -130,21 +64,14 @@ function makeSession(
   options?: { pause?: typeof NO_PAUSE; gm?: Record<string, unknown>; gmIntervalCycles?: number },
 ): { session: GameSession; dir: string } {
   const runId = `run-edit-${tag}-${process.pid}`;
-  const dir = path.join(runsDir, runId);
-  dice = [5, 20];
-  gmQueue = [options?.gm ?? gmFull()];
-  const session = GameSession.create(configs, runId, undefined, WORLD_ID, {
-    baseDir: dir,
-    worldsDir,
-    proseWindowTurns: 5,
+  const session = h.makeSession(runId, WORLD_ID, {
+    dice: [5, 20],
     gmIntervalCycles: options?.gmIntervalCycles ?? 1,
-    rollDice: () => dice.shift() ?? 10,
+    gm: [options?.gm ?? gmFull()],
   });
   session.setPauseOptions(options?.pause ?? NO_PAUSE);
-  return { session, dir };
+  return { session, dir: path.join(h.runsDir, runId) };
 }
-
-setupWorld();
 
 /** 深拷贝当前 {world, characters} 作为编辑底本（保持角色集合一致）。 */
 function stateClone(session: GameSession): { world: Record<string, unknown>; characters: Record<string, Record<string, unknown>> } {

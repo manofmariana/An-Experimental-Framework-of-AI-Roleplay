@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildRequestParams, extractReasoningContent, type ChatMessage } from "../src/llm/client.js";
+import type { ChatMessage } from "../src/llm/chatPort.js";
+import { buildRequestParams, extractReasoningContent } from "../src/llm/openaiChatAdapter.js";
 
 const MESSAGES: ChatMessage[] = [
   { role: "system", content: "s" },

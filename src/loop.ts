@@ -11,6 +11,7 @@ import { GM_PLACEHOLDERS, GMAgent, validateAdjudicationRound } from "./agents/gm
 import { PROSE_PLACEHOLDERS, ProseAgent } from "./agents/prose.js";
 import { loadTemplate } from "./compile/template.js";
 import {
+  AGENT_KINDS,
   DEFAULT_WORLD_SET,
   loadAgentConfigs,
   loadGmIntervalCycles,
@@ -22,8 +23,11 @@ import {
   type MemoryConfig,
 } from "./config.js";
 import type { Display } from "./display.js";
-import { LLMClient, LLMAbortedError } from "./llm/client.js";
+import { LLMAbortedError, type ChatPort } from "./llm/chatPort.js";
+import { OpenAIChatAdapter } from "./llm/openaiChatAdapter.js";
+import { CallLogChatPort } from "./llm/callLog.js";
 import { readCacheStats } from "./llm/cacheStats.js";
+import { defaultDice, type DicePort } from "./ports.js";
 import { ArchiveStore, buildArchiveEntry, type ArchiveEntry } from "./truth/archive.js";
 import { CharactersStore, type CharacterState } from "./truth/charactersStore.js";
 import { EventsStore } from "./truth/events.js";
@@ -337,9 +341,14 @@ export interface PauseOptions {
 /** 自动继续（缺省）：不停任何步。 */
 const AUTO_CONTINUE: PauseOptions = { everyStep: false, beforeGm: false, afterGm: false, afterProse: false };
 
-/** 可配置注入点（测试用）：确定性骰子与临时数据根。 */
+/** 可配置注入点（测试用）：确定性骰子、fake ChatPort 与临时数据根。 */
 export interface SessionOptions {  /** d20 骰子（默认 Math.random 实现；先攻投掷用） */
-  rollDice?: () => number;
+  rollDice?: DicePort;
+  /**
+   * 逐 agent kind 注入 ChatPort（测试 fake）：注入的 kind 跳过 OpenAIChatAdapter 构造
+   * （无 API key 也能建会话）；未注入的 kind 走生产路径 CallLogChatPort(OpenAIChatAdapter)。
+   */
+  chatPorts?: Partial<Record<AgentKind, ChatPort>>;
   /** 存档文件目录；省略时使用 runs/{runId}。 */
   baseDir?: string;
   /** 世界设定集根目录；省略时使用 data/worlds。 */
@@ -376,27 +385,28 @@ export class GameSession {
     private manifests: CharacterManifest[],
     private proseWindowTurns: number,
     private gmIntervalCycles: number,
-    private rollDice: () => number,
+    private rollDice: DicePort,
     private display?: Display,
   ) {}
 
   private eventSeq = 0;
   private pauseOptions: PauseOptions = AUTO_CONTINUE;
-  /** 三个 agent 的 LLMClient 引用（create 时建立）：设置页保存后经 reloadConfig 热更新。 */
-  private llms!: Record<AgentKind, LLMClient>;
+  /** 各 agent kind 的 OpenAI adapter（create 时建立，注入 fake 的 kind 无此项）：设置页保存后经 reloadConfig 热更新。 */
+  private adapters!: Partial<Record<AgentKind, OpenAIChatAdapter>>;
+  /** 当前 activation 的 AbortController（每次 LLM activation 新建；stop 经 abortCurrent 中止它）。 */
+  private activationController: AbortController | null = null;
 
   /**
    * 应用已解析配置到运行中会话（可注入，测试直测本方法）：
-   * 三个 LLMClient 原地换配置（在途调用不受影响），滑窗/GM 间隔字段立即生效。
+   * 各 OpenAI adapter 原地换配置（在途调用不受影响；注入 fake 的 kind 无 adapter，跳过），
+   * 滑窗/GM 间隔字段立即生效。
    */
   applyResolvedConfigs(
     configs: Record<AgentKind, LLMConfig>,
     memory: MemoryConfig,
     gmIntervalCycles: number,
   ): void {
-    this.llms.character.updateConfig(configs.character);
-    this.llms.gm.updateConfig(configs.gm);
-    this.llms.prose.updateConfig(configs.prose);
+    for (const kind of AGENT_KINDS) this.adapters[kind]?.updateConfig(configs[kind]);
     this.proseWindowTurns = memory.proseWindowTurns;
     this.gmIntervalCycles = gmIntervalCycles;
   }
@@ -426,10 +436,20 @@ export class GameSession {
     worldSetId?: string,
     options?: SessionOptions,
   ): GameSession {
-    // 每个 agent 独立的 LLMClient（api_key/base_url/model 可分别配置，缓存埋点按 agent 名分开统计）
-    const charLlm = new LLMClient(configs.character, runId);
-    const gmLlm = new LLMClient(configs.gm, runId);
-    const proseLlm = new LLMClient(configs.prose, runId);
+    // 每个 agent kind 独立的 OpenAI adapter（api_key/base_url/model 可分别配置，缓存埋点按 agent 名分开统计）；
+    // 注入 fake ChatPort 的 kind 不建 adapter（测试无需 API key）；recordRecent/cacheStats 走 CallLog decorator。
+    const adapters: Partial<Record<AgentKind, OpenAIChatAdapter>> = {};
+    const ports = {} as Record<AgentKind, ChatPort>;
+    for (const kind of AGENT_KINDS) {
+      const injected = options?.chatPorts?.[kind];
+      if (injected !== undefined) {
+        ports[kind] = injected;
+        continue;
+      }
+      const adapter = new OpenAIChatAdapter(configs[kind]);
+      adapters[kind] = adapter;
+      ports[kind] = new CallLogChatPort(adapter, runId);
+    }
 
     // 提示词模板：create 时加载一次做启动校验（运行期每轮激活前热加载，见各 agent）
     loadTemplate("character", Object.keys(CHARACTER_PLACEHOLDERS));
@@ -499,10 +519,10 @@ export class GameSession {
       const activatedLore = Lorebook.render(
         loreStore.book().getByTags(characters.get(m.id).tags),
       );
-      charAgents.set(m.id, new CharacterAgent(m, charLlm, characters, cast, activatedLore));
+      charAgents.set(m.id, new CharacterAgent(m, ports.character, characters, cast, activatedLore));
     }
-    const gm = new GMAgent(gmLlm, setting, loreStore.book(), cast, characters);
-    const prose = new ProseAgent(proseLlm, toneCard, setting, cast);
+    const gm = new GMAgent(ports.gm, setting, loreStore.book(), cast, characters);
+    const prose = new ProseAgent(ports.prose, toneCard, setting, cast);
 
     const session = new GameSession(
       runId,
@@ -519,13 +539,13 @@ export class GameSession {
       manifests,
       options?.proseWindowTurns ?? loadMemoryConfig().proseWindowTurns,
       options?.gmIntervalCycles ?? loadGmIntervalCycles(),
-      options?.rollDice ?? (() => 1 + Math.floor(Math.random() * 20)),
+      options?.rollDice ?? defaultDice,
       display,
     );
     // 开局组派生 + 首组先攻投掷（仅新档：初始状态的一部分，不产生 var_changes——
     // 它在 seq 1 之前，回溯永不越过）
     if (!charactersExist) session.rederiveGroups(false);
-    session.llms = { character: charLlm, gm: gmLlm, prose: proseLlm };
+    session.adapters = adapters;
     session.restoreFromDisk();
     return session;
   }
@@ -568,6 +588,8 @@ export class GameSession {
     this.world.setPipeline({ phase: this.deriveNext().phase });
   }
 
+  // TODO(阶段 B)：eventSeq 续档/回溯时从 events.length 重推（见 restoreFromDisk/rollbackTo/applyDirectEdit），
+  // 调用者不应从数组长度推导 ID——随 GenerationRepository 一并改为显式 ID 端口。
   private nextEventId(): string {
     this.eventSeq += 1;
     return `evt_${String(this.eventSeq).padStart(4, "0")}`;
@@ -1196,8 +1218,10 @@ export class GameSession {
     );
     const name = this.manifests.find((m) => m.id === cid)?.name ?? cid;
     this.display?.agentStart(agent.agentName, `── 角色·${name} 决策 ──`, seq);
+    const controller = new AbortController();
+    this.activationController = controller;
     try {
-      const { raw, pkg } = await agent.decide(seq, this.display);
+      const { raw, pkg } = await agent.decide(seq, controller.signal, this.display);
       const effects = this.applyCharacterEffects(cid, pkg, d, preInviteTimer);
       const varChanges = [...setup, ...effects.changes, ...effects.markerChanges];
       // effects_from = setup 之后效应（relations/邀请应答或 acted/标记）在 var_changes 中的起始下标，
@@ -1232,6 +1256,7 @@ export class GameSession {
     } catch (err) {
       this.handleStepError(seq, kind, err, { varChanges: setup });
     } finally {
+      this.activationController = null;
       this.display?.agentEnd(agent.agentName);
     }
   }
@@ -1312,12 +1337,15 @@ export class GameSession {
     );
     this.gm.updateSituation(this.world.clock, this.timeStore.render(this.world.world.time));
     this.display?.agentStart(this.gm.agentName, `── GM 裁决 ──`, seq);
+    const controller = new AbortController();
+    this.activationController = controller;
     try {
       const { raw, pkg } = await this.gm.adjudicate(
         seq,
         renderScene(workingSet, undefined, this.remoteCids()),
         this.world.world,
         timerCids,
+        controller.signal,
         this.display,
       );
       const varChanges = [...setup, ...this.applyGmEffects(seq, pkg, roundCids)];
@@ -1335,6 +1363,7 @@ export class GameSession {
     } catch (err) {
       this.handleStepError(seq, "gm", err, { result: { round_scenes: roundScenes } });
     } finally {
+      this.activationController = null;
       this.display?.agentEnd(this.gm.agentName);
     }
   }
@@ -1368,12 +1397,15 @@ export class GameSession {
       .readWindow(this.proseWindowTurns)
       .map((e) => renderForGm(e.payload, this.cast));
     this.display?.agentStart(this.prose.agentName, `── 正文 ──`, seq);
+    const controller = new AbortController();
+    this.activationController = controller;
     try {
       const proseText = await this.prose.render(
         seq,
         this.currentAdjudication(),
         speech,
         { recentEvents, triggeredLore, lastProse: lastProse(this.archive.readAll()) },
+        controller.signal,
         this.display,
       );
       const result: ArchivedProseResult = {
@@ -1391,6 +1423,7 @@ export class GameSession {
       });
       return "";
     } finally {
+      this.activationController = null;
       this.display?.agentEnd(this.prose.agentName);
     }
   }
@@ -1736,9 +1769,7 @@ export class GameSession {
 
   /** 中止当前在途 LLM 调用（停止按钮；步内捕获 LLMAbortedError 后冻结）。 */
   abortCurrent(): void {
-    for (const agent of this.charAgents.values()) agent.abort();
-    this.gm.abort();
-    this.prose.abort();
+    this.activationController?.abort();
   }
 
   /** 当前总轮次 seq（缓存埋点标记/测试观测用）。 */

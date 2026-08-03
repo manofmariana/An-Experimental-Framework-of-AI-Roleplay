@@ -1,7 +1,4 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import {
   groupLocation,
@@ -38,20 +35,6 @@ function simChar(partial: Partial<SimChar>): SimChar {
     ...partial,
   };
 }
-
-describe("simulator 元测试守护（纯逻辑纪律不变）", () => {
-  it("纯性元测试：不 import 任何 IO/网络模块", () => {
-    const here = path.dirname(fileURLToPath(import.meta.url));
-    const src = fs.readFileSync(path.join(here, "..", "src", "scheduler", "simulator.ts"), "utf8");
-    const imports = [...src.matchAll(/from\s+"([^"]+)"/g)].map((m) => m[1]!);
-    for (const mod of imports) {
-      assert.ok(
-        !mod.startsWith("node:") && !["fs", "net", "http", "https", "openai"].includes(mod),
-        `simulator.ts 不得 import IO/网络模块，发现: ${mod}`,
-      );
-    }
-  });
-});
 
 describe("nextDue（调度 = 扫描角色 timer 取最小）", () => {
   it("最小非空 timer 及该时刻全部到期角色（同刻同弹，cids 排序）", () => {

@@ -1,7 +1,7 @@
 import { compilePrompt, type PlaceholderRegistry } from "../compile/compiler.js";
 import { loadTemplate } from "../compile/template.js";
 import type { Display } from "../display.js";
-import type { LLMClient } from "../llm/client.js";
+import type { ChatPort } from "../llm/chatPort.js";
 import type { CastMember } from "../truth/identity.js";
 import type { AdjudicationPackage } from "../types.js";
 
@@ -22,9 +22,8 @@ export const PROSE_PLACEHOLDERS: PlaceholderRegistry<ProseContext> = {
 
 export class ProseAgent {
   readonly agentName = "prose";
-  constructor(private llm: LLMClient, private toneCard: string, private worldLore: string, private cast: CastMember[]) {}
-  abort(): void { this.llm.abort(); }
-  async render(turn: number, adjudication: AdjudicationPackage, sceneText: string, turnInput: { recentEvents: string[]; triggeredLore: string; lastProse: string }, display?: Display): Promise<string> {
+  constructor(private llm: ChatPort, private toneCard: string, private worldLore: string, private cast: CastMember[]) {}
+  async render(turn: number, adjudication: AdjudicationPackage, sceneText: string, turnInput: { recentEvents: string[]; triggeredLore: string; lastProse: string }, signal: AbortSignal, display?: Display): Promise<string> {
     const template = loadTemplate("prose", Object.keys(PROSE_PLACEHOLDERS));
     const messages = compilePrompt(template, PROSE_PLACEHOLDERS, {
       toneCard: this.toneCard, worldLore: this.worldLore, recentEvents: turnInput.recentEvents,
@@ -33,7 +32,14 @@ export class ProseAgent {
     });
     const onDelta = display ? (delta: string) => display.delta(this.agentName, delta) : undefined;
     const onReasoningDelta = display ? (delta: string) => display.reasoningDelta(this.agentName, delta) : undefined;
-    const { text } = await this.llm.chat(this.agentName, turn, messages, onDelta, onReasoningDelta);
+    const { text } = await this.llm.chat(
+      {
+        agent: this.agentName, seq: turn, messages,
+        ...(onDelta !== undefined ? { onDelta } : {}),
+        ...(onReasoningDelta !== undefined ? { onReasoningDelta } : {}),
+      },
+      signal,
+    );
     return text.trim();
   }
 }

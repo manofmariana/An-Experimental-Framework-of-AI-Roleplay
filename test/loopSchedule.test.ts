@@ -1,149 +1,28 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { describe, it, after } from "node:test";
+import { describe, it } from "node:test";
 import { CHARACTER_PLACEHOLDERS, type CharacterContext } from "../src/agents/character.js";
 import { GM_PLACEHOLDERS, type GmContext } from "../src/agents/gm.js";
-import { LLMAbortedError, LLMClient, type ChatMessage, type ChatResult } from "../src/llm/client.js";
 import { GameSession, LEAVE_TIMER } from "../src/loop.js";
 import type { CharacterState } from "../src/truth/charactersStore.js";
+import {
+  buildAdjudication as gmPkg,
+  buildCharacterState as state,
+  buildDecision as decision,
+} from "./builders/index.js";
+import { SessionHarness } from "./harness/session.js";
 
 // ---------------------------------------------------------------------------
-// 集成测试基建：临时世界设定集（每测试独立构图）+ fake LLM（脚本化）+ 确定性骰子
+// 集成测试基建：SessionHarness（临时世界设定集（每测试独立构图）+ fake LLM（脚本化）+ 确定性骰子）
 // ---------------------------------------------------------------------------
 
-const cfg = { apiKey: "dummy", baseURL: "http://127.0.0.1:9", model: "m", jsonMode: false };
-const configs = { character: cfg, gm: cfg, prose: cfg };
-
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "airp-loop-schedule-"));
-const runsDir = path.join(root, "runs");
-const worldsDir = path.join(root, "worlds");
-
-after(() => {
-  LLMClient.prototype.chat = originalChat;
-  fs.rmSync(root, { recursive: true, force: true });
-});
-
-interface CharSpec {
-  id: string;
-  name: string;
-  location: string;
-  timer: number | null;
-  isPlayer?: boolean;
-}
-
-function manifest(spec: CharSpec) {
-  return {
-    id: spec.id,
-    name: spec.name,
-    gender: "未设定",
-    age: "未设定",
-    personality: `${spec.name}谨慎。`,
-    initial_memories: [`${spec.name}的记忆`],
-    location: { name: spec.location, level: 1 },
-    tags: [],
-    reaction: 5,
-    timer: spec.timer,
-    group: 0,
-    initiative: null,
-    channel: null,
-    acted: false,
-    level: 1,
-    isPlayer: spec.isPlayer === true,
-    relations: {},
-    vars: {},
-  };
-}
-
-/** 每测试独立世界：specs 含且仅含一个 isPlayer（写入 player.json），其余入 characters/。 */
-function setupWorld(worldId: string, specs: CharSpec[]): void {
-  const dir = path.join(worldsDir, worldId);
-  fs.mkdirSync(path.join(dir, "characters"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "setting.md"), "测试世界设定\n");
-  fs.writeFileSync(path.join(dir, "tone-card.md"), "测试基调\n");
-  fs.writeFileSync(path.join(dir, "lorebook.json"), "[]\n");
-  fs.writeFileSync(
-    path.join(dir, "time.json"),
-    JSON.stringify({ start: { y: 1, m: 1, d: 1, h: 0, min: 0 }, periods: [{ key: "白天", from: 0, to: 24 }] }),
-  );
-  for (const spec of specs) {
-    const file = spec.isPlayer === true
-      ? path.join(dir, "player.json")
-      : path.join(dir, "characters", `${spec.id}.json`);
-    fs.writeFileSync(file, JSON.stringify(manifest(spec)));
-  }
-}
-
-// --- fake LLM：character 按 agent 脚本队列生成决策；gm 按脚本队列；prose 回显轮次 ---
-interface Call {
-  agent: string;
-  seq: number;
-  messages: ChatMessage[];
-}
-let calls: Call[] = [];
-let gmQueue: Record<string, unknown>[] = [];
-let diceQueue: number[] = [];
-let abortAt: { agent: string; seq: number; partial: string } | null = null;
-let characterQueues: Record<string, Record<string, unknown>[]> = {};
-
-const originalChat = LLMClient.prototype.chat;
-LLMClient.prototype.chat = (async (
-  agent: string,
-  seq: number,
-  messages: ChatMessage[],
-): Promise<ChatResult> => {
-  calls.push({ agent, seq, messages: messages.map((m) => ({ ...m })) });
-  const usage = { hit: 0, miss: 0, output: 0 };
-  if (abortAt?.agent === agent && abortAt.seq === seq) {
-    throw new LLMAbortedError(abortAt.partial, "");
-  }
-  if (agent === "gm") {
-    const pkg = gmQueue.shift();
-    if (pkg === undefined) throw new Error(`GM 脚本耗尽（seq ${seq}）`);
-    return { text: JSON.stringify(pkg), reasoning: "", usage };
-  }
-  if (agent === "prose") return { text: `正文#${seq}`, reasoning: "", usage };
-  const scripted = characterQueues[agent]?.shift();
-  return {
-    text: JSON.stringify(scripted ?? {
-      action: `行动#${seq}`,
-      inner: `内心#${seq}`,
-      dialogue: `台词@${agent}#${seq}`,
-    }),
-    reasoning: "",
-    usage,
-  };
-}) as never;
-
-function gmPkg(overrides: Record<string, unknown>): Record<string, unknown> {
-  return {
-    events: [{ text: "GM事件", tags: [] }],
-    narrativity: "skip",
-    deltas: [],
-    timer: [],
-    location: [],
-    ...overrides,
-  };
-}
-
-function decision(overrides: Record<string, unknown>): Record<string, unknown> {
-  return { action: "行动", inner: "内心", ...overrides };
-}
-
-function sessionOptions(runId: string, gmIntervalCycles: number) {
-  return {
-    baseDir: path.join(runsDir, runId),
-    worldsDir,
-    proseWindowTurns: 5,
-    gmIntervalCycles,
-    rollDice: () => {
-      const v = diceQueue.shift();
-      if (v === undefined) throw new Error("骰子队列耗尽（出现预期外的先攻投掷）");
-      return v;
-    },
-  };
-}
+const h = new SessionHarness("airp-loop-schedule-");
+const llm = h.llm;
+const calls = llm.port.calls;
+const setupWorld = h.setupWorld.bind(h);
+const callsText = h.callsText.bind(h);
+const readRun = h.runFile.bind(h);
+const charState = h.charState.bind(h);
+const worldVars = h.worldVars.bind(h);
 
 function makeSession(
   runId: string,
@@ -152,30 +31,7 @@ function makeSession(
   gmIntervalCycles: number,
   gm: Record<string, unknown>[],
 ): GameSession {
-  diceQueue = [...dice];
-  calls = [];
-  gmQueue = [...gm];
-  abortAt = null;
-  characterQueues = {};
-  return GameSession.create(configs, runId, undefined, worldId, sessionOptions(runId, gmIntervalCycles));
-}
-
-function callsText(agent: string, seq: number): string {
-  const call = calls.find((c) => c.agent === agent && c.seq === seq);
-  assert.ok(call, `缺少调用 ${agent}#${seq}`);
-  return call.messages.map((m) => m.content).join("\n");
-}
-
-function readRun(runId: string, file: string): string {
-  return fs.readFileSync(path.join(runsDir, runId, file), "utf8");
-}
-
-function charState(session: GameSession, cid: string): CharacterState {
-  return (session.getState().characters as Record<string, CharacterState>)[cid]!;
-}
-
-function worldVars(session: GameSession): Record<string, unknown> {
-  return session.getState().world as Record<string, unknown>;
+  return h.makeSession(runId, worldId, { dice, gmIntervalCycles, gm });
 }
 
 // ---------------------------------------------------------------------------
@@ -274,7 +130,7 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
         timer: [{ cid: "C1001", span: { min: 5 } }, { cid: "C0", span: { min: 5 } }],
       }),
     ]);
-    characterQueues["character:C1001"] = [
+    llm.characterQueues["character:C1001"] = [
       decision({ markers: [{ type: "gm_request" }] }),
     ];
 
@@ -352,7 +208,7 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     const runId = `run-t3-${process.pid}`;
     // 骰子只够开局两投：召回必须复用已存先攻（任何重投都会耗尽队列报错）
     const session = makeSession(runId, worldId, [5, 20], 5, []);
-    characterQueues["character:C1001"] = [
+    llm.characterQueues["character:C1001"] = [
       decision({ markers: [{ type: "leave" }] }),
       decision({ action: "被召回后的行动" }),
     ];
@@ -414,10 +270,10 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     const runId = `run-t3c-${process.pid}`;
     // 骰子按 cid 升序消费：C0=5+5=10，C1001=15+5=20，C1002=15+5=20 → 甲与乙同值批（甲先动）
     const session = makeSession(runId, worldId, [5, 15, 15], 5, []);
-    characterQueues["character:C1001"] = [
+    llm.characterQueues["character:C1001"] = [
       decision({ dialogue: "甲离开前的台词", inner: "甲的隐秘内心", markers: [{ type: "leave" }] }),
     ];
-    characterQueues["character:C1002"] = [decision({ dialogue: "乙的回应" })];
+    llm.characterQueues["character:C1002"] = [decision({ dialogue: "乙的回应" })];
 
     // seq1 C1001 行动并立 leave（归 0 + 超大 timer）→ seq2 C1002（同值批）→ 停等玩家
     await session.continuePipeline();
@@ -450,11 +306,11 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
         ],
       }),
     ]);
-    characterQueues["character:C1001"] = [
+    llm.characterQueues["character:C1001"] = [
       decision({ markers: [{ type: "contact", channel: "电话", targets: ["C1002"] }] }),
       decision({ action: "接听后的行动" }),
     ];
-    characterQueues["character:C1002"] = [
+    llm.characterQueues["character:C1002"] = [
       decision({ dialogue: "喂，我马上到。", markers: [{ type: "confirm" }] }),
     ];
 
@@ -528,10 +384,10 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
         ],
       }),
     ]);
-    characterQueues["character:C1001"] = [
+    llm.characterQueues["character:C1001"] = [
       decision({ markers: [{ type: "contact", channel: "电话", targets: ["C1002"] }] }),
     ];
-    characterQueues["character:C1002"] = [
+    llm.characterQueues["character:C1002"] = [
       decision({ dialogue: "抱歉，走不开。" }), // 无 confirm → 拒绝
     ];
 
@@ -572,12 +428,12 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
       gmPkg({ timer: [{ cid: "C1001", span: { min: 10 } }, { cid: "C1002", span: { min: 10 } }, { cid: "C0", span: { min: 10 } }] }), // seq10（回溯前继续）
     ];
     const session = makeSession(runId, worldId, [5, 20, 8, 8], 1, gmScripts());
-    characterQueues["character:C1001"] = [
+    llm.characterQueues["character:C1001"] = [
       decision({ markers: [{ type: "contact", channel: "电话", targets: ["C1002"] }] }),
       decision({ action: "接听后的行动" }),
       decision({ action: "接听后的行动" }), // 回溯后重跑
     ];
-    characterQueues["character:C1002"] = [
+    llm.characterQueues["character:C1002"] = [
       decision({ dialogue: "来了。", markers: [{ type: "confirm" }] }), // 邀请应答
       decision({ action: "到场后的行动" }), // seq8 周期行动
       decision({ action: "到场后的行动" }), // seq12 周期行动
@@ -604,10 +460,7 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     assert.equal(charState(session, "C1002").group, 0);
 
     // 续档：从磁盘重建（纯数据），deriveNext 推出同一调度点——受邀者应答步（邀请再激活）
-    const resumed = GameSession.resume(configs, runId, undefined, {
-      ...sessionOptions(runId, 1),
-      rollDice: () => 8,
-    });
+    const resumed = h.resumeSession(runId, { gmIntervalCycles: 1, options: { rollDice: () => 8 } });
     assert.equal(resumed.pipelineInfo.phase, "await_character");
     await resumed.continuePipeline(); // seq3 重跑（confirm）→ seq4 C1001 → 停等玩家
     assert.equal(resumed.turnCount, 4);
@@ -627,7 +480,7 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
       gmPkg({ timer: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }] }), // seq7（abort 后继续）
     ]);
     await session.continuePipeline(); // seq1 → 停等
-    abortAt = { agent: "character:C1001", seq: 5, partial: "半截" };
+    llm.abortAt = { agent: "character:C1001", seq: 5, partial: "半截" };
     await session.handlePlayerInput("推进"); // seq2 player → seq3 GM(full) → seq4 prose → seq5 abort
     const current = session.getPipelineCurrent()!;
     assert.equal(current.interrupted, true);
@@ -635,7 +488,7 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     assert.equal(session.worldTime, 5);
     session.rollbackTo(4);
     const beforeWorld = readRun(runId, "world.json");
-    abortAt = null;
+    llm.abortAt = null;
     await session.continuePipeline(); // seq5 重跑 → 停等玩家
     session.rollbackTo(4);
     assert.equal(readRun(runId, "world.json"), beforeWorld);
@@ -649,7 +502,7 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     ]);
     const runId = `run-t8-${process.pid}`;
     const session = makeSession(runId, worldId, [5, 20], 1, []);
-    abortAt = { agent: "gm", seq: 3, partial: "半截裁决" };
+    llm.abortAt = { agent: "gm", seq: 3, partial: "半截裁决" };
     await session.continuePipeline(); // seq1
     await session.handlePlayerInput("玩家行动"); // seq2 → seq3 GM abort
     const pkg = gmPkg({
@@ -675,7 +528,7 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     const session = makeSession(runId, worldId, [5, 20], 1, [
       gmPkg({ narrativity: "full", timer: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }] }), // seq3
     ]);
-    abortAt = { agent: "prose", seq: 4, partial: "停住" };
+    llm.abortAt = { agent: "prose", seq: 4, partial: "停住" };
     await session.continuePipeline(); // seq1
     await session.handlePlayerInput("玩家行动"); // seq2 → seq3 GM → seq4 prose abort
     session.rollbackTo(3);
@@ -701,7 +554,7 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
       ["C0.timer", "C1001.timer"],
     );
 
-    abortAt = null;
+    llm.abortAt = null;
     await session.continuePipeline(); // prose seq4 → 组 1 到期 seq5 → 停等玩家
     assert.equal(session.pipelineInfo.phase, "await_player");
   });
@@ -723,12 +576,6 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
   });
 
   it("联系人列表 provider：排除频道持有者与前台（timer 未到期才可被联系）", () => {
-    const state = (overrides: Partial<CharacterState>): CharacterState => ({
-      name: "某人", gender: "未设定", age: "未设定", personality: "谨慎。", tags: [], reaction: 5,
-      location: { name: "loc", level: 1 }, timer: 100, group: 0, initiative: null, channel: null,
-      acted: false, level: 1, isPlayer: false, relations: {}, long_term_memory: [], vars: {},
-      ...overrides,
-    });
     const states: Record<string, CharacterState> = {
       C0: state({ name: "玩家", isPlayer: true }),
       C1001: state({ name: "甲", channel: 1 }), // 频道持有者 → 排除

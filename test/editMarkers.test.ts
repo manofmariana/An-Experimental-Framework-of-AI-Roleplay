@@ -1,125 +1,23 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { describe, it, after } from "node:test";
-import { LLMClient, type ChatMessage, type ChatResult } from "../src/llm/client.js";
+import { describe, it } from "node:test";
 import { GameSession, LEAVE_TIMER } from "../src/loop.js";
-import type { CharacterState } from "../src/truth/charactersStore.js";
+import {
+  buildAdjudication as gmPkg,
+  buildDecision as decision,
+} from "./builders/index.js";
+import { SessionHarness, type CharSpec } from "./harness/session.js";
 
 // ---------------------------------------------------------------------------
 // 编辑执行标记（editResult 重放 applyMarkers）+ 工作集跨周期注入（#当前场景）。
-// 集成基建与 loopSchedule.test.ts 同型：临时世界设定集 + fake LLM + 确定性骰子。
+// 集成基建：SessionHarness（与 loopSchedule.test.ts 同型）。
 // ---------------------------------------------------------------------------
 
-const cfg = { apiKey: "dummy", baseURL: "http://127.0.0.1:9", model: "m", jsonMode: false };
-const configs = { character: cfg, gm: cfg, prose: cfg };
-
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "airp-edit-markers-"));
-const runsDir = path.join(root, "runs");
-const worldsDir = path.join(root, "worlds");
-
-after(() => {
-  LLMClient.prototype.chat = originalChat;
-  fs.rmSync(root, { recursive: true, force: true });
-});
-
-interface CharSpec {
-  id: string;
-  name: string;
-  location: string;
-  timer: number;
-  isPlayer?: boolean;
-}
-
-function manifest(spec: CharSpec) {
-  return {
-    id: spec.id,
-    name: spec.name,
-    gender: "未设定",
-    age: "未设定",
-    personality: `${spec.name}谨慎。`,
-    initial_memories: [`${spec.name}的记忆`],
-    location: { name: spec.location, level: 1 },
-    tags: [],
-    reaction: 5,
-    timer: spec.timer,
-    group: 0,
-    initiative: null,
-    channel: null,
-    acted: false,
-    level: 1,
-    isPlayer: spec.isPlayer === true,
-    relations: {},
-    vars: {},
-  };
-}
-
-function setupWorld(worldId: string, specs: CharSpec[]): void {
-  const dir = path.join(worldsDir, worldId);
-  fs.mkdirSync(path.join(dir, "characters"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "setting.md"), "测试世界设定\n");
-  fs.writeFileSync(path.join(dir, "tone-card.md"), "测试基调\n");
-  fs.writeFileSync(path.join(dir, "lorebook.json"), "[]\n");
-  fs.writeFileSync(
-    path.join(dir, "time.json"),
-    JSON.stringify({ start: { y: 1, m: 1, d: 1, h: 0, min: 0 }, periods: [{ key: "白天", from: 0, to: 24 }] }),
-  );
-  for (const spec of specs) {
-    const file = spec.isPlayer === true
-      ? path.join(dir, "player.json")
-      : path.join(dir, "characters", `${spec.id}.json`);
-    fs.writeFileSync(file, JSON.stringify(manifest(spec)));
-  }
-}
-
-// --- fake LLM：character 按 agent 脚本队列生成决策；gm 按脚本队列；prose 回显轮次 ---
-interface Call {
-  agent: string;
-  seq: number;
-  messages: ChatMessage[];
-}
-let calls: Call[] = [];
-let gmQueue: Record<string, unknown>[] = [];
-let diceQueue: number[] = [];
-let characterQueues: Record<string, Record<string, unknown>[]> = {};
-
-const originalChat = LLMClient.prototype.chat;
-LLMClient.prototype.chat = (async (
-  agent: string,
-  seq: number,
-  messages: ChatMessage[],
-): Promise<ChatResult> => {
-  calls.push({ agent, seq, messages: messages.map((m) => ({ ...m })) });
-  const usage = { hit: 0, miss: 0, output: 0 };
-  if (agent === "gm") {
-    const pkg = gmQueue.shift();
-    if (pkg === undefined) throw new Error(`GM 脚本耗尽（seq ${seq}）`);
-    return { text: JSON.stringify(pkg), reasoning: "", usage };
-  }
-  if (agent === "prose") return { text: `正文#${seq}`, reasoning: "", usage };
-  const scripted = characterQueues[agent]?.shift();
-  return {
-    text: JSON.stringify(scripted ?? { action: `行动#${seq}`, inner: `内心#${seq}`, dialogue: `台词#${seq}` }),
-    reasoning: "",
-    usage,
-  };
-}) as never;
-
-function gmPkg(overrides: Record<string, unknown>): Record<string, unknown> {
-  return {
-    events: [{ text: "GM事件", tags: [] }],
-    narrativity: "skip",
-    deltas: [],
-    timer: [],
-    location: [],
-    ...overrides,
-  };
-}
-
-function decision(overrides: Record<string, unknown>): Record<string, unknown> {
-  return { action: "行动", inner: "内心", ...overrides };
-}
+const h = new SessionHarness("airp-edit-markers-");
+const llm = h.llm;
+llm.defaultDecision = (_agent, seq) => ({ action: `行动#${seq}`, inner: `内心#${seq}`, dialogue: `台词#${seq}` });
+const callsText = h.callsText.bind(h);
+const charState = h.charState.bind(h);
+const worldVars = h.worldVars.bind(h);
 
 function makeSession(
   tag: string,
@@ -129,40 +27,8 @@ function makeSession(
   gm: Record<string, unknown>[] = [],
 ): GameSession {
   const worldId = `w-${tag}-${process.pid}`;
-  setupWorld(worldId, specs);
-  const runId = `run-${tag}-${process.pid}`;
-  calls = [];
-  gmQueue = [...gm];
-  diceQueue = [...dice];
-  characterQueues = {};
-  return GameSession.create(configs, runId, undefined, worldId, {
-    baseDir: path.join(runsDir, runId),
-    worldsDir,
-    proseWindowTurns: 5,
-    gmIntervalCycles,
-    rollDice: () => {
-      const v = diceQueue.shift();
-      if (v === undefined) throw new Error("骰子队列耗尽（出现预期外的先攻投掷）");
-      return v;
-    },
-  });
-}
-
-function charState(session: GameSession, cid: string): CharacterState {
-  const chars = session.getState().characters as Record<string, CharacterState>;
-  const s = chars[cid];
-  assert.ok(s, `缺少角色 ${cid}`);
-  return s;
-}
-
-function worldVars(session: GameSession): Record<string, unknown> {
-  return session.getState().world as Record<string, unknown>;
-}
-
-function callsText(agent: string, seq: number): string {
-  const call = calls.find((c) => c.agent === agent && c.seq === seq);
-  assert.ok(call, `缺少调用 ${agent}#${seq}`);
-  return call.messages.map((m) => m.content).join("\n");
+  h.setupWorld(worldId, specs);
+  return h.makeSession(`run-${tag}-${process.pid}`, worldId, { dice, gmIntervalCycles, gm });
 }
 
 describe("编辑执行标记（editResult 重放 applyMarkers，与普通路径同语义）", () => {
@@ -171,7 +37,7 @@ describe("编辑执行标记（editResult 重放 applyMarkers，与普通路径�
       { id: "C0", name: "玩家", location: "loc_A", timer: 0, isPlayer: true },
       { id: "C1001", name: "甲", location: "loc_A", timer: 0 },
     ], [5, 20], 5);
-    characterQueues["character:C1001"] = [decision({ dialogue: "原决策台词" })];
+    llm.characterQueues["character:C1001"] = [decision({ dialogue: "原决策台词" })];
 
     await session.continuePipeline(); // seq1 C1001（无标记）→ 停等玩家
     assert.equal(session.pipelineInfo.kind, "character:C1001");
@@ -198,7 +64,7 @@ describe("编辑执行标记（editResult 重放 applyMarkers，与普通路径�
       { id: "C1001", name: "甲", location: "loc_A", timer: 0 },
       { id: "C1002", name: "乙", location: "loc_B", timer: 30 },
     ], [5, 20], 5);
-    characterQueues["character:C1001"] = [decision({ dialogue: "原决策台词" })];
+    llm.characterQueues["character:C1001"] = [decision({ dialogue: "原决策台词" })];
 
     await session.continuePipeline(); // seq1 C1001（无标记）→ 停等玩家
     assert.equal(charState(session, "C1001").channel, null);
@@ -225,8 +91,8 @@ describe("编辑执行标记（editResult 重放 applyMarkers，与普通路径�
       { id: "C1001", name: "甲", location: "loc_A", timer: 0 },
       { id: "C1002", name: "乙", location: "loc_A", timer: 0 },
     ], [5, 20, 15], 5);
-    characterQueues["character:C1001"] = [decision({ markers: [{ type: "leave" }] })];
-    characterQueues["character:C1002"] = [decision({ dialogue: "乙的台词" })];
+    llm.characterQueues["character:C1001"] = [decision({ markers: [{ type: "leave" }] })];
+    llm.characterQueues["character:C1002"] = [decision({ dialogue: "乙的台词" })];
 
     // seq1 C1001（先攻 25 最高，立 leave）→ seq2 C1002 → 停等玩家（C0）
     await session.continuePipeline();
@@ -262,7 +128,7 @@ describe("工作集跨周期注入（#当前场景：GM 清算前的全体言行
         ],
       }),
     ]);
-    characterQueues["character:C1001"] = [
+    llm.characterQueues["character:C1001"] = [
       decision({ dialogue: "甲一周期台词" }),
       decision({ dialogue: "甲二周期台词" }),
       decision({ dialogue: "甲三周期台词" }),
@@ -302,10 +168,10 @@ describe("编辑 = 重读整个输出并完整处理（effects_from 整段反向
       gmPkg({ timer: [{ cid: "C1001", span: { min: 5 } }] }), // seq2：contact 触发 GM 立即结算
     ]);
     session.setPauseOptions({ everyStep: true, beforeGm: false, afterGm: false, afterProse: false });
-    characterQueues["character:C1001"] = [
+    llm.characterQueues["character:C1001"] = [
       decision({ markers: [{ type: "contact", channel: "电话", targets: ["C1002"] }] }),
     ];
-    characterQueues["character:C1002"] = [
+    llm.characterQueues["character:C1002"] = [
       decision({ dialogue: "喂，我马上到。", markers: [{ type: "confirm" }] }),
     ];
 
@@ -364,7 +230,7 @@ describe("编辑 = 重读整个输出并完整处理（effects_from 整段反向
       { id: "C0", name: "玩家", location: "loc_A", timer: 0, isPlayer: true },
       { id: "C1001", name: "甲", location: "loc_A", timer: 0 },
     ], [5, 20], 5);
-    characterQueues["character:C1001"] = [
+    llm.characterQueues["character:C1001"] = [
       decision({ dialogue: "原台词", relations: [{ target: "C0", name: "玩家", impression: "友好" }] }),
     ];
 

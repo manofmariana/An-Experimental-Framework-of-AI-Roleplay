@@ -1,122 +1,25 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { describe, it, after } from "node:test";
+import { describe, it } from "node:test";
 import { CHARACTER_PLACEHOLDERS, type CharacterContext } from "../src/agents/character.js";
 import { GM_PLACEHOLDERS, validateAdjudicationRound, type GmContext } from "../src/agents/gm.js";
-import { LLMClient, type ChatMessage, type ChatResult } from "../src/llm/client.js";
 import { GameSession, LEAVE_TIMER } from "../src/loop.js";
 import type { CharacterState } from "../src/truth/charactersStore.js";
 import { snapshotCharacterState, snapshotCharacterStates } from "../src/truth/snapshot.js";
 import { worldTimeToMinutes } from "../src/truth/timeStore.js";
 import { AdjudicationPackageSchema } from "../src/types.js";
+import { buildAdjudication as gmPkg, buildCharacterState as state } from "./builders/index.js";
+import { SessionHarness } from "./harness/session.js";
 
 // ---------------------------------------------------------------------------
-// 集成测试基建：与 loopSchedule.test.ts 同模式（临时世界设定集 + 脚本化 fake LLM + 确定性骰子）
+// 集成测试基建：SessionHarness（与 loopSchedule.test.ts 同模式）
 // ---------------------------------------------------------------------------
 
-const cfg = { apiKey: "dummy", baseURL: "http://127.0.0.1:9", model: "m", jsonMode: false };
-const configs = { character: cfg, gm: cfg, prose: cfg };
-
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "airp-gm-timer-"));
-const runsDir = path.join(root, "runs");
-const worldsDir = path.join(root, "worlds");
-
-after(() => {
-  LLMClient.prototype.chat = originalChat;
-  fs.rmSync(root, { recursive: true, force: true });
-});
-
-interface CharSpec {
-  id: string;
-  name: string;
-  location: string;
-  timer: number | null;
-  isPlayer?: boolean;
-}
-
-function manifest(spec: CharSpec) {
-  return {
-    id: spec.id,
-    name: spec.name,
-    gender: "未设定",
-    age: "未设定",
-    personality: `${spec.name}谨慎。`,
-    initial_memories: [`${spec.name}的记忆`],
-    location: { name: spec.location, level: 1 },
-    tags: [],
-    reaction: 5,
-    timer: spec.timer,
-    group: 0,
-    initiative: null,
-    channel: null,
-    acted: false,
-    level: 1,
-    isPlayer: spec.isPlayer === true,
-    relations: {},
-    vars: {},
-  };
-}
-
-function setupWorld(worldId: string, specs: CharSpec[]): void {
-  const dir = path.join(worldsDir, worldId);
-  fs.mkdirSync(path.join(dir, "characters"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "setting.md"), "测试世界设定\n");
-  fs.writeFileSync(path.join(dir, "tone-card.md"), "测试基调\n");
-  fs.writeFileSync(path.join(dir, "lorebook.json"), "[]\n");
-  fs.writeFileSync(
-    path.join(dir, "time.json"),
-    JSON.stringify({ start: { y: 1, m: 1, d: 1, h: 0, min: 0 }, periods: [{ key: "白天", from: 0, to: 24 }] }),
-  );
-  for (const spec of specs) {
-    const file = spec.isPlayer === true
-      ? path.join(dir, "player.json")
-      : path.join(dir, "characters", `${spec.id}.json`);
-    fs.writeFileSync(file, JSON.stringify(manifest(spec)));
-  }
-}
-
-interface Call {
-  agent: string;
-  seq: number;
-  messages: ChatMessage[];
-}
-let calls: Call[] = [];
-let gmQueue: Record<string, unknown>[] = [];
-let diceQueue: number[] = [];
-
-const originalChat = LLMClient.prototype.chat;
-LLMClient.prototype.chat = (async (
-  agent: string,
-  seq: number,
-  messages: ChatMessage[],
-): Promise<ChatResult> => {
-  calls.push({ agent, seq, messages: messages.map((m) => ({ ...m })) });
-  const usage = { hit: 0, miss: 0, output: 0 };
-  if (agent === "gm") {
-    const pkg = gmQueue.shift();
-    if (pkg === undefined) throw new Error(`GM 脚本耗尽（seq ${seq}）`);
-    return { text: JSON.stringify(pkg), reasoning: "", usage };
-  }
-  if (agent === "prose") return { text: `正文#${seq}`, reasoning: "", usage };
-  return {
-    text: JSON.stringify({ action: `行动#${seq}`, inner: `内心#${seq}`, dialogue: `台词@${agent}#${seq}` }),
-    reasoning: "",
-    usage,
-  };
-}) as never;
-
-function gmPkg(overrides: Record<string, unknown>): Record<string, unknown> {
-  return {
-    events: [{ text: "GM事件", tags: [] }],
-    narrativity: "skip",
-    deltas: [],
-    timer: [],
-    location: [],
-    ...overrides,
-  };
-}
+const h = new SessionHarness("airp-gm-timer-");
+const llm = h.llm;
+const calls = llm.port.calls;
+const setupWorld = h.setupWorld.bind(h);
+const callsText = h.callsText.bind(h);
+const charState = h.charState.bind(h);
 
 function makeSession(
   runId: string,
@@ -124,30 +27,7 @@ function makeSession(
   dice: number[],
   gm: Record<string, unknown>[],
 ): GameSession {
-  diceQueue = [...dice];
-  calls = [];
-  gmQueue = [...gm];
-  return GameSession.create(configs, runId, undefined, worldId, {
-    baseDir: path.join(runsDir, runId),
-    worldsDir,
-    proseWindowTurns: 5,
-    gmIntervalCycles: 5,
-    rollDice: () => {
-      const v = diceQueue.shift();
-      if (v === undefined) throw new Error("骰子队列耗尽（出现预期外的先攻投掷）");
-      return v;
-    },
-  });
-}
-
-function callsText(agent: string, seq: number): string {
-  const call = calls.find((c) => c.agent === agent && c.seq === seq);
-  assert.ok(call, `缺少调用 ${agent}#${seq}`);
-  return call.messages.map((m) => m.content).join("\n");
-}
-
-function charState(session: GameSession, cid: string): CharacterState {
-  return (session.getState().characters as Record<string, CharacterState>)[cid]!;
+  return h.makeSession(runId, worldId, { dice, gm, gmIntervalCycles: 5 });
 }
 
 // ---------------------------------------------------------------------------
@@ -269,15 +149,6 @@ describe("validateAdjudicationRound 文案与校验（基准集合 = 期望 time
 // ---------------------------------------------------------------------------
 // 快照 timer 结构化渲染（Task 2）与占位符单测基建
 // ---------------------------------------------------------------------------
-
-function state(overrides: Partial<CharacterState>): CharacterState {
-  return {
-    name: "某人", gender: "未设定", age: "未设定", personality: "谨慎。", tags: [], reaction: 5,
-    location: { name: "loc", level: 1 }, timer: 100, group: 0, initiative: null, channel: null,
-    acted: false, level: 1, isPlayer: false, relations: {}, long_term_memory: [], vars: {},
-    ...overrides,
-  };
-}
 
 function charCtx(selfCid: string, states: Record<string, CharacterState>): CharacterContext {
   return {

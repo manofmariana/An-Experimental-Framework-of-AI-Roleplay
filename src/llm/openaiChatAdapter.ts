@@ -1,23 +1,14 @@
+/**
+ * OpenAI 兼容协议 ChatPort adapter（默认 DeepSeek）。
+ * 只负责 SDK 交互；recent/cacheStats 落盘在 CallLogChatPort（callLog.ts）。
+ * model/jsonMode/reasoningEffort 是构造配置，不进 ChatRequest。
+ * 中止：signal 由调用方按 activation 传入，abort 后抛 LLMAbortedError（含部分文本）；
+ * 无 abort() 方法与共享 current——AbortController 属于单次 activation。
+ * updateConfig：设置页保存后热更新（重建底层 OpenAI 实例；在途调用已持有旧请求，不受影响）。
+ */
 import OpenAI from "openai";
-import { runDir, type LLMConfig } from "../config.js";
-import { recordCacheStat } from "./cacheStats.js";
-import { recordRecent } from "./recent.js";
-
-export interface ChatMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
-}
-
-export interface ChatResult {
-  text: string;
-  /** 思维链（推理模型如 deepseek-reasoner 返回；非推理模型为空串） */
-  reasoning: string;
-  usage: {
-    hit: number;
-    miss: number;
-    output: number;
-  };
-}
+import type { LLMConfig } from "../config.js";
+import { LLMAbortedError, type ChatMessage, type ChatPort, type ChatRequest, type ChatResult } from "./chatPort.js";
 
 type UsageWithCache =
   | (OpenAI.CompletionUsage & {
@@ -45,17 +36,6 @@ export function extractReasoningContent(obj: unknown): string {
     return typeof value === "string" ? value : "";
   }
   return "";
-}
-
-/** LLM 调用被中止（停止按钮）：携带已收到的部分文本，供流水线冻结时保留。 */
-export class LLMAbortedError extends Error {
-  constructor(
-    readonly partialText: string,
-    readonly partialReasoning: string,
-  ) {
-    super("LLM 调用被中止");
-    this.name = "LLMAbortedError";
-  }
 }
 
 /**
@@ -104,24 +84,13 @@ function asStreaming(params: ChatRequestParams): OpenAI.ChatCompletionCreatePara
   return params as OpenAI.ChatCompletionCreateParamsStreaming;
 }
 
-/**
- * LLM 统一入口（OpenAI 兼容协议，默认 DeepSeek）。每个 agent 持有独立实例。
- * 每次调用把 prompt_cache_hit_tokens / prompt_cache_miss_tokens
- * 埋点到 runs/{runId}/cache-stats.jsonl（§8 验证点②），
- * 并把 {seq, messages, reasoning} 滚入 llm-recent/{agent}.json（最近 5 轮窗口）。
- * 中止：abort() 取消在途调用，抛 LLMAbortedError（含部分文本）。
- * updateConfig：设置页保存后热更新（重建底层 OpenAI 实例；在途调用已持有旧请求，不受影响）。
- */
-export class LLMClient {
+export class OpenAIChatAdapter implements ChatPort {
   private openai: OpenAI;
   private config: LLMConfig;
-  private runId: string;
-  private current: AbortController | null = null;
 
-  constructor(config: LLMConfig, runId: string) {
+  constructor(config: LLMConfig) {
     this.config = config;
     this.openai = new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL });
-    this.runId = runId;
   }
 
   /** 热更新配置（设置页保存即生效）：原地换 key/baseURL/model/jsonMode/reasoningEffort。 */
@@ -130,36 +99,14 @@ export class LLMClient {
     this.openai = new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL });
   }
 
-  /** 中止在途调用（无在途调用时 no-op）。 */
-  abort(): void {
-    this.current?.abort();
-  }
-
   /**
-   * 一次对话调用。传 onDelta 时走流式（逐 token 回调），否则一次性返回。
-   * onReasoningDelta 透出思维链增量（推理模型；非推理模型永不触发）。
-   * 流式的 usage 在最后一个 chunk（stream_options.include_usage），埋点口径与非流式一致。
-   * seq = 总轮次（API 调用计数，存档 v2）。
+   * 一次对话调用。request.onDelta 存在时走流式（逐 token 回调），否则一次性返回。
+   * 流式的 usage 在最后一个 chunk（stream_options.include_usage），口径与非流式一致。
    */
-  async chat(
-    agent: string,
-    seq: number,
-    messages: ChatMessage[],
-    onDelta?: (delta: string) => void,
-    onReasoningDelta?: (delta: string) => void,
-  ): Promise<ChatResult> {
-    const controller = new AbortController();
-    this.current = controller;
-    try {
-      const result = onDelta
-        ? await this.chatStreaming(messages, controller.signal, onDelta, onReasoningDelta)
-        : await this.chatOnce(messages, controller.signal);
-      recordRecent(this.runId, agent, { seq, messages: messages as unknown[], reasoning: result.reasoning });
-      recordCacheStat(this.runId, { agent, turn: seq, ...result.usage });
-      return result;
-    } finally {
-      this.current = null;
-    }
+  async chat(request: ChatRequest, signal: AbortSignal): Promise<ChatResult> {
+    return request.onDelta !== undefined
+      ? this.chatStreaming(request.messages, signal, request.onDelta, request.onReasoningDelta)
+      : this.chatOnce(request.messages, signal);
   }
 
   private async chatOnce(messages: ChatMessage[], signal: AbortSignal): Promise<ChatResult> {
@@ -222,4 +169,3 @@ export class LLMClient {
     return { text, reasoning, usage };
   }
 }
-

@@ -2,7 +2,7 @@ import { z } from "zod";
 import { compilePrompt, type PlaceholderRegistry } from "../compile/compiler.js";
 import { loadTemplate } from "../compile/template.js";
 import type { Display } from "../display.js";
-import { LLMAbortedError, type LLMClient } from "../llm/client.js";
+import { LLMAbortedError, type ChatPort } from "../llm/chatPort.js";
 import { CharactersStore, type CharacterState } from "../truth/charactersStore.js";
 import { renderForReader, type CastMember } from "../truth/identity.js";
 import { snapshotCharacterState } from "../truth/snapshot.js";
@@ -101,7 +101,7 @@ export class CharacterAgent {
   readonly agentName: string;
   private recentEvents: string[] = []; private proseWindow: string[] = []; private currentScene = ""; private timeHeader = ""; private worldSnapshot = "{}"; private clock = 0;
   private incomingContact: { inviter: string; channel: string } | null = null;
-  constructor(private manifest: CharacterManifest, private llm: LLMClient, private characters: CharactersStore, private cast: CastMember[], private activatedLore: string) {
+  constructor(private manifest: CharacterManifest, private llm: ChatPort, private characters: CharactersStore, private cast: CastMember[], private activatedLore: string) {
     this.agentName = `character:${manifest.id}`;
   }
   get id(): string { return this.manifest.id; }
@@ -112,7 +112,7 @@ export class CharacterAgent {
   updateSituation(header: string, world: Record<string, unknown>, clock: number): void { this.timeHeader = header; this.worldSnapshot = JSON.stringify(world); this.clock = clock; }
   updateIncomingContact(contact: { inviter: string; channel: string } | null): void { this.incomingContact = contact; }
 
-  async decide(turn: number, display?: Display): Promise<{ raw: string; pkg: DecisionPackage }> {
+  async decide(turn: number, signal: AbortSignal, display?: Display): Promise<{ raw: string; pkg: DecisionPackage }> {
     const template = loadTemplate("character", Object.keys(CHARACTER_PLACEHOLDERS));
     const messages = compilePrompt(template, CHARACTER_PLACEHOLDERS, {
       selfCid: this.id, states: this.characters.all(), cast: this.cast, worldSnapshot: this.worldSnapshot,
@@ -123,7 +123,14 @@ export class CharacterAgent {
     const onDelta = display ? (delta: string) => display.delta(this.agentName, delta) : undefined;
     const onReasoningDelta = display ? (delta: string) => display.reasoningDelta(this.agentName, delta) : undefined;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const { text } = await this.llm.chat(this.agentName, turn, messages, onDelta, onReasoningDelta);
+      const { text } = await this.llm.chat(
+        {
+          agent: this.agentName, seq: turn, messages,
+          ...(onDelta !== undefined ? { onDelta } : {}),
+          ...(onReasoningDelta !== undefined ? { onReasoningDelta } : {}),
+        },
+        signal,
+      );
       try { return { raw: text, pkg: DecisionPackageSchema.parse(extractJson(text)) }; }
       catch (error) {
         if (error instanceof LLMAbortedError) throw error;
@@ -134,5 +141,4 @@ export class CharacterAgent {
     throw new Error("unreachable");
   }
   restore(events: Event[]): void { this.recentEvents = []; this.perceive(events); }
-  abort(): void { this.llm.abort(); }
 }

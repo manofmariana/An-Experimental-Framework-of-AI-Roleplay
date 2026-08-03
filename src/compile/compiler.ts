@@ -9,7 +9,7 @@
  * 渲染规则：按模块顺序每模块渲染为一条消息（带模块的 role）；
  * 渲染后 content 为空的模块整条丢弃。未知占位符在模板加载时已拦截（见 template.ts）。
  */
-import type { ChatMessage } from "../llm/client.js";
+import type { ChatMessage } from "../llm/chatPort.js";
 import type { PromptTemplate } from "./template.js";
 
 /** 占位符 provider：从注入上下文（事件、工作集、正文、状态快照等）产出文本。 */

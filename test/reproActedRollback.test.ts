@@ -1,105 +1,34 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { describe, it, after } from "node:test";
-import { LLMClient, type ChatMessage, type ChatResult } from "../src/llm/client.js";
-import { GameSession } from "../src/loop.js";
+import { describe, it } from "node:test";
+import type { GameSession } from "../src/loop.js";
 import type { CharacterState } from "../src/truth/charactersStore.js";
+import { SessionHarness } from "./harness/session.js";
 
 // ---------------------------------------------------------------------------
 // 复现：二人同步组 {C0, C1001}，NPC 发言 → 玩家发言（周期完成，X+1，全员 acted 清零）
 // → NPC 再次发言 → 回滚到第一次 NPC 发言。预期 acted_C1001 === true、下一步 await_player。
+// 集成基建 = SessionHarness（临时世界设定集 + fake LLM + 确定性骰子）。
+// fake LLM：本场景不应激活 GM（gmQueue 恒空，被调用即报"GM 脚本耗尽"）。
 // ---------------------------------------------------------------------------
 
-const cfg = { apiKey: "dummy", baseURL: "http://127.0.0.1:9", model: "m", jsonMode: false };
-const configs = { character: cfg, gm: cfg, prose: cfg };
-
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "airp-repro-acted-"));
-const runsDir = path.join(root, "runs");
-const worldsDir = path.join(root, "worlds");
-
-after(() => {
-  LLMClient.prototype.chat = originalChat;
-  fs.rmSync(root, { recursive: true, force: true });
-});
-
+const h = new SessionHarness("airp-repro-acted-");
 const worldId = `w-repro-${process.pid}`;
-function setupWorld(): void {
-  const dir = path.join(worldsDir, worldId);
-  fs.mkdirSync(path.join(dir, "characters"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "setting.md"), "测试世界设定\n");
-  fs.writeFileSync(path.join(dir, "tone-card.md"), "测试基调\n");
-  fs.writeFileSync(path.join(dir, "lorebook.json"), "[]\n");
-  fs.writeFileSync(
-    path.join(dir, "time.json"),
-    JSON.stringify({ start: { y: 1, m: 1, d: 1, h: 0, min: 0 }, periods: [{ key: "白天", from: 0, to: 24 }] }),
-  );
-  const base = {
-    gender: "未设定",
-    age: "未设定",
-    personality: "谨慎。",
-    initial_memories: ["记忆"],
-    location: { name: "loc_A", level: 1 },
-    tags: [],
-    reaction: 5,
-    timer: 0,
-    group: 0,
-    initiative: null,
-    channel: null,
-    acted: false,
-    level: 1,
-    relations: {},
-    vars: {},
-  };
-  fs.writeFileSync(
-    path.join(dir, "player.json"),
-    JSON.stringify({ ...base, id: "C0", name: "玩家", isPlayer: true }),
-  );
-  fs.writeFileSync(
-    path.join(dir, "characters", "C1001.json"),
-    JSON.stringify({ ...base, id: "C1001", name: "甲", isPlayer: false }),
-  );
-}
-
-const originalChat = LLMClient.prototype.chat;
-LLMClient.prototype.chat = (async (
-  agent: string,
-  seq: number,
-  _messages: ChatMessage[],
-): Promise<ChatResult> => {
-  const usage = { hit: 0, miss: 0, output: 0 };
-  if (agent === "gm") throw new Error(`本场景不应激活 GM（seq ${seq}）`);
-  if (agent === "prose") return { text: `正文#${seq}`, reasoning: "", usage };
-  return {
-    text: JSON.stringify({ action: `行动#${seq}`, inner: `内心#${seq}`, dialogue: `台词#${seq}` }),
-    reasoning: "",
-    usage,
-  };
-}) as never;
+h.setupWorld(worldId, [
+  { id: "C0", name: "玩家", location: "loc_A", timer: 0, isPlayer: true },
+  { id: "C1001", name: "甲", location: "loc_A", timer: 0 },
+]);
 
 function createSession(runId: string, dice: number[]): GameSession {
-  return GameSession.create(configs, runId, undefined, worldId, {
-    baseDir: path.join(runsDir, runId),
-    worldsDir,
-    proseWindowTurns: 5,
-    gmIntervalCycles: 5,
-    rollDice: () => {
-      const v = dice.shift();
-      if (v === undefined) throw new Error("骰子队列耗尽");
-      return v;
-    },
-  });
+  return h.makeSession(runId, worldId, { dice, gmIntervalCycles: 5 });
 }
 
 function resumeSession(runId: string): GameSession {
-  return GameSession.resume(configs, runId, undefined, {
-    baseDir: path.join(runsDir, runId),
-    worldsDir,
-    proseWindowTurns: 5,
+  return h.resumeSession(runId, {
     gmIntervalCycles: 5,
-    rollDice: () => {
-      throw new Error("恢复后不应有先攻投掷");
+    options: {
+      rollDice: () => {
+        throw new Error("恢复后不应有先攻投掷");
+      },
     },
   });
 }
@@ -111,7 +40,6 @@ function acted(session: GameSession, cid: string): boolean {
 
 describe("复现：跨周期回滚吞 acted", () => {
   it("(a) 纯内存会话", async () => {
-    setupWorld();
     // 开局先攻：C0=10，C1001=25（先行动）
     const session = createSession(`run-a-${process.pid}`, [5, 20]);
 
@@ -137,7 +65,6 @@ describe("复现：跨周期回滚吞 acted", () => {
   });
 
   it("(b) 第一步后存档→恢复→再走 2-4", async () => {
-    setupWorld();
     const runId = `run-b-${process.pid}`;
     const s1 = createSession(runId, [5, 20]);
     await s1.continuePipeline(); // seq1：C1001 发言 → 停等玩家

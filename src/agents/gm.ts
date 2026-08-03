@@ -1,7 +1,7 @@
 import { compilePrompt, type PlaceholderRegistry } from "../compile/compiler.js";
 import { loadTemplate } from "../compile/template.js";
 import type { Display } from "../display.js";
-import { LLMAbortedError, type LLMClient } from "../llm/client.js";
+import { LLMAbortedError, type ChatPort } from "../llm/chatPort.js";
 import type { CharacterState, CharactersStore } from "../truth/charactersStore.js";
 import { buildCastLines, type CastMember } from "../truth/identity.js";
 import type { Lorebook } from "../truth/lorebook.js";
@@ -50,16 +50,15 @@ export const GM_PLACEHOLDERS: PlaceholderRegistry<GmContext> = {
 
 export class GMAgent {
   readonly agentName = "gm"; private loreFull: string; private events: string[] = []; private proseWindow: string[] = []; private clock = 0; private timeHeader = "";
-  constructor(private llm: LLMClient, private setting: string, lorebook: Lorebook, private cast: CastMember[], private characters: CharactersStore) {
+  constructor(private llm: ChatPort, private setting: string, lorebook: Lorebook, private cast: CastMember[], private characters: CharactersStore) {
     this.loreFull = lorebook.all().map((entry) => `[${entry.id}]（标签：${entry.tags.join("、")}）\n${entry.content}`).join("\n\n");
   }
   observe(events: Event[]): void { for (const event of events) this.events.push(event.payload); }
   restore(events: Event[]): void { this.events = events.map((event) => event.payload); }
-  abort(): void { this.llm.abort(); }
   updateWindow(blocks: string[]): void { this.proseWindow = blocks; }
   updateSituation(clock: number, timeHeader: string): void { this.clock = clock; this.timeHeader = timeHeader; }
   /** expectedTimerCids = timer 必须精确覆盖的 cid 集（同步组全体成员 ∪ 刚离组者，由 loop.expectedGmTimerCids 派生） */
-  async adjudicate(turn: number, sceneText: string, world: StateTree, expectedTimerCids: readonly string[], display?: Display): Promise<{ raw: string; pkg: AdjudicationPackage }> {
+  async adjudicate(turn: number, sceneText: string, world: StateTree, expectedTimerCids: readonly string[], signal: AbortSignal, display?: Display): Promise<{ raw: string; pkg: AdjudicationPackage }> {
     const template = loadTemplate("gm", Object.keys(GM_PLACEHOLDERS));
     const messages = compilePrompt(template, GM_PLACEHOLDERS, {
       setting: this.setting, cast: this.cast, loreFull: this.loreFull, events: this.events,
@@ -69,7 +68,14 @@ export class GMAgent {
     const onDelta = display ? (delta: string) => display.delta(this.agentName, delta) : undefined;
     const onReasoningDelta = display ? (delta: string) => display.reasoningDelta(this.agentName, delta) : undefined;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const { text } = await this.llm.chat(this.agentName, turn, messages, onDelta, onReasoningDelta);
+      const { text } = await this.llm.chat(
+        {
+          agent: this.agentName, seq: turn, messages,
+          ...(onDelta !== undefined ? { onDelta } : {}),
+          ...(onReasoningDelta !== undefined ? { onReasoningDelta } : {}),
+        },
+        signal,
+      );
       try { const pkg = AdjudicationPackageSchema.parse(extractJson(text)); validateAdjudicationRound(pkg, expectedTimerCids); return { raw: text, pkg }; }
       catch (error) {
         if (error instanceof LLMAbortedError) throw error;

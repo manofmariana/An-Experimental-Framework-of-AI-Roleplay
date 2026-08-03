@@ -1,6 +1,8 @@
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
+import { ResolvedAgentConfigSchema } from "./contracts/config.js";
+import { resolveUserDirectories } from "./resources/userDirectories.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -8,12 +10,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const PROJECT_ROOT = path.resolve(__dirname, "..");
 
 export const DATA_DIR = path.join(PROJECT_ROOT, "data");
+
+/** 默认用户资源目录（阶段 A4：路径常量唯一真相在 resources/userDirectories） */
+const DEFAULT_DIRS = resolveUserDirectories();
+
 /** 提示词模板目录：data/prompts/{agent}.prompt.json（模块化模板，Web 可编辑） */
-export const PROMPTS_DIR = path.join(DATA_DIR, "prompts");
-export const RUNS_DIR = path.join(PROJECT_ROOT, "runs");
+export const PROMPTS_DIR = DEFAULT_DIRS.promptsDir;
+export const RUNS_DIR = DEFAULT_DIRS.runsDir;
 
 /** 世界设定集根目录：data/worlds/{setId}/（setting.md / tone-card.md / lorebook.json / characters/） */
-export const WORLDS_DIR = path.join(DATA_DIR, "worlds");
+export const WORLDS_DIR = DEFAULT_DIRS.worldsDir;
 /** 缺省世界设定集（存档 meta.json 未记录时回落）。 */
 export const DEFAULT_WORLD_SET = "baitan";
 
@@ -30,7 +36,7 @@ export interface LLMConfig {
   reasoningEffort?: string;
 }
 
-/** 三类 agent（对应 config.json 的 agents 块与每 agent 独立 LLMClient） */
+/** 三类 agent（对应 config.json 的 agents 块与每 agent 独立 OpenAI adapter） */
 export type AgentKind = "character" | "gm" | "prose";
 export const AGENT_KINDS: readonly AgentKind[] = ["character", "gm", "prose"];
 
@@ -98,6 +104,8 @@ export function resolveAgentConfigs(
       ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
     };
     if (!config.apiKey) return null;
+    // 契约校验（阶段 A4：纯增强，不改动解析值；非法形状在边界处即暴露）
+    ResolvedAgentConfigSchema.parse(config);
     out[kind] = config;
   }
   return out;

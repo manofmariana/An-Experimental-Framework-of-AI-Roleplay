@@ -2,6 +2,7 @@ import readline from "node:readline";
 import { loadAgentConfigs } from "./config.js";
 import type { Display } from "./display.js";
 import { GameSession } from "./loop.js";
+import { systemIds } from "./ports.js";
 
 const DIM = "\x1b[2m";
 const ITALIC = "\x1b[3m";
@@ -87,7 +88,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const runId = `run-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  const runId = systemIds.newRunId();
   const session = GameSession.create(configs, runId, makeDisplay());
   console.log(`Agent-AIRP P1-M2a · 运行目录 runs/${runId}/`);
   console.log(
