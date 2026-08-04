@@ -22,7 +22,27 @@ export function createRunIdGenerator(clock: Clock = systemClock): IdPorts {
 
 export const systemIds: IdPorts = createRunIdGenerator();
 
-/** d20 骰子（先攻投掷用；测试注入确定性序列，回滚不重投）。 */
-export type DicePort = () => number;
+/** 单骰端口：投一个 face 面骰，返回 1..face（测试注入确定性序列，回滚不重投）。 */
+export type DicePort = (face: number) => number;
 
-export const defaultDice: DicePort = () => 1 + Math.floor(Math.random() * 20);
+export const defaultDice: DicePort = (face) => 1 + Math.floor(Math.random() * face);
+
+export type DiceKeep = "high" | "low";
+
+/**
+ * 统一投掷（骰子随机源唯一出口）：每次投掷 = dice 个 face 面骰全部投出求和；
+ * 共投 times 次，从 times 个总和中取最高（keep="high"）或最低（keep="low"）的一次。
+ * face/dice/times 须为正整数，否则抛错。
+ */
+export function rollDice(port: DicePort, face: number, dice = 1, times = 1, keep: DiceKeep = "high"): number {
+  for (const [name, v] of [["face", face], ["dice", dice], ["times", times]] as const) {
+    if (!Number.isInteger(v) || v <= 0) throw new Error(`rollDice: ${name} 须为正整数，收到 ${v}`);
+  }
+  let best: number | undefined;
+  for (let t = 0; t < times; t++) {
+    let sum = 0;
+    for (let d = 0; d < dice; d++) sum += port(face);
+    if (best === undefined || (keep === "high" ? sum > best : sum < best)) best = sum;
+  }
+  return best!;
+}

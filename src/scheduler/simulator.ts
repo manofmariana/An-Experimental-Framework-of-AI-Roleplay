@@ -9,6 +9,7 @@
  * test/simulator.test.ts 的元测试守护保留。
  */
 import { knownByTag, type Event } from "../types.js";
+import { defaultDice, rollDice, type DicePort } from "../ports.js";
 
 /** 调度视图中的角色（单 group 分组变量；initiative 结构化 {value, group}）。 */
 export interface SimChar {
@@ -296,14 +297,14 @@ export interface InitiativeMember {
 /**
  * 先攻投掷（确定性排序，代码侧执行不经 LLM）：d20（1-20）+ reaction，降序分批；
  * 同值 = 同时行动批次（批内互不见对方言行，注入隔离由主循环做）。
- * roll 可注入骰子函数（默认 Math.random 实现），测试用其达成确定性。
+ * roll 可注入骰子端口（默认 defaultDice），测试用其达成确定性。
  * 返回值为裸先攻值批次；写入角色变量时由调用方盖上组编号（{value, group}）。
  */
 export function rollInitiative(
   members: InitiativeMember[],
-  roll: () => number = () => 1 + Math.floor(Math.random() * 20),
+  roll: DicePort = defaultDice,
 ): { batches: { initiative: number; cids: string[] }[] } {
-  const rolled = members.map((m) => ({ cid: m.cid, initiative: roll() + m.reaction }));
+  const rolled = members.map((m) => ({ cid: m.cid, initiative: rollDice(roll, 20) + m.reaction }));
   rolled.sort((a, b) => b.initiative - a.initiative || a.cid.localeCompare(b.cid));
   const batches: { initiative: number; cids: string[] }[] = [];
   for (const r of rolled) {
@@ -327,11 +328,11 @@ export interface RerollMember extends InitiativeMember {
 export function rerollInitiative(
   members: RerollMember[],
   group: number,
-  roll: () => number = () => 1 + Math.floor(Math.random() * 20),
+  roll: DicePort = defaultDice,
 ): { cid: string; initiative: { value: number; group: number } }[] {
   return members
     .filter((m) => m.initiative === null || m.initiative.group !== group)
-    .map((m) => ({ cid: m.cid, initiative: { value: roll() + m.reaction, group } }));
+    .map((m) => ({ cid: m.cid, initiative: { value: rollDice(roll, 20) + m.reaction, group } }));
 }
 
 export interface OrderedMember {

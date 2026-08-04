@@ -1,6 +1,6 @@
 # Ofair（Open Framework of AI Roleplay）
 
-多 Agent 架构的 AI 角色扮演系统：**一个 GM 导演 + 拥有私域上下文的角色 Subagent + 受约束的正文渲染器**，真相存于结构化事件日志而非聊天文本。
+多 Agent 架构的 AI 角色扮演系统：**一个 GM 导演 + 拥有私域上下文的角色 activation + 受约束的正文渲染器**，真相存于结构化事件日志而非聊天文本。
 
 ## 文档体系
 

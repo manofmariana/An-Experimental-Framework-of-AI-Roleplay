@@ -11,7 +11,7 @@
 | `configResolver.ts` | 配置解析纯函数：resolveEffectiveAgentConfigs（settings+presets+secrets+env → 三 activation ResolvedAgentConfig；优先级：preset 显式 secretId > env > 该 kind active secret）+ mapLegacyConfig（旧版 config.json → secrets/presets/settings 迁移映射） | 无 | → contracts |
 | `cli.ts` | CLI 入口（readline REPL；经 SessionCoordinator 发 player_input/continue/rollback/rollback_and_continue 命令；启动经 configService.loadConfigState 读配置——迁移闸对 CLI 同样生效） | 终端 | → application(sessionCoordinator/configService)/config/resources |
 | `serverConfig.ts` | server.json 加载与 env 合成：resolveServerConfig 纯函数（listen/host白名单/IP白名单/allowKeysExposure；OFAIR_HOST/OFAIR_PORT 优先于 listen；缺文件=全默认 loopback 放开）+ loadServerConfig IO 壳（basicAuth/SSL/proxy/broadcast 接受但逐块 warn 未实现忽略） | 读 server.json | → contracts/config(PROJECT_ROOT) |
-| `ports.ts` | 运行时端口：Clock / IdPorts / DicePort 及系统默认实现 | 墙钟 | 不依赖 src 内模块 |
+| `ports.ts` | 运行时端口：Clock / IdPorts / DicePort（单骰 (face)=>1..face）+ rollDice 统一投掷出口（dice 求和 × times 次取高/低，keep: high/low）及系统默认实现 | 墙钟 | 不依赖 src 内模块 |
 | `display.ts` | Display 接口（UI 协议层）：CLI 与 WebUI 各一实现；agentStart 带可选第 4 参 activationId | 无 | → types |
 
 ## src/application/（应用层：统一效果规划器 + 调度派生收口 + 会话内核/装配/协调器；禁依赖 server）

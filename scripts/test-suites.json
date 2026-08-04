@@ -1,6 +1,7 @@
 {
   "unit": [
     "test/simulator.test.ts",
+    "test/ports.test.ts",
     "test/derive.test.ts",
     "test/invitations.test.ts",
     "test/compiler.test.ts",

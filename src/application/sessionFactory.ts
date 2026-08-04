@@ -98,7 +98,7 @@ function resolveSessionWorldDir(setId: string | undefined, assetsDir?: string): 
 // ---------------------------------------------------------------------------
 
 /** 可配置注入点（测试用）：确定性骰子、fake ChatPort 与临时数据根。 */
-export interface SessionOptions {  /** d20 骰子（默认 Math.random 实现；先攻投掷用） */
+export interface SessionOptions {  /** 单骰端口（默认 defaultDice；先攻投掷用，经 rollDice 投 d20） */
   rollDice?: DicePort;
   /**
    * 逐 agent kind 注入 ChatPort（测试 fake）：注入的 kind 跳过 OpenAIChatAdapter 构造

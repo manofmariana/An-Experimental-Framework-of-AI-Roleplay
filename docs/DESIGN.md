@@ -33,14 +33,14 @@ ST 的本质是**单上下文、单人格、全知视角的文本拼接器**：
                               │
         ┌─────────────────────┼─────────────────────┐
         ▼                     ▼                     ▼
-  角色Subagent ×N      （次要NPC由GM代演）      主控=玩家本人
+  角色 Activation ×N     （次要NPC由GM代演）      主控=玩家本人
   自主决策：台词/行动/         │
   内心/人际关系维护            │
         │  决策包（结构化）    │
         └──────────┬──────────┘
                    ▼
         ┌──────────────────────┐      机械层（零LLM）：
-        │  GM-Subagent         │      调度派生、计时器、
+        │  GM Activation       │      调度派生、计时器、
         │  重裁决/世界反应      │      感知过滤、变量落库、
         │  @ID 转写/事件可见性  │      标记执行、组划分
         └──────────┬───────────┘
@@ -50,7 +50,7 @@ ST 的本质是**单上下文、单人格、全知视角的文本拼接器**：
                    │                        │
                    ▼                        ▼
         ┌──────────────────┐     ┌─────────────────┐
-        │ 正文Subagent      │     │ 变量应用（确定性） │
+        │ 正文 Activation   │     │ 变量应用（确定性） │
         │ 纯渲染器，无工具   │     │                  │
         │ 无权改写角色台词   │     │                  │
         └────────┬─────────┘     └─────────────────┘
@@ -301,5 +301,5 @@ ST 的本质是**单上下文、单人格、全知视角的文本拼接器**：
 ## 11. 参考
 
 - 参考思路.txt（类脑社区"独立角色"实践）：角色自治哲学、第一人称认知改写、GM 克制红线、记忆三层、Audit/Diary/Chat 模式、涌现实证。
-- [GhostXia/AIRP-MCP-Server](https://github.com/GhostXia/AIRP-MCP-Server)：数据层/推理层分离铁律、决策提示而非强制工作流、通用优先于特供、缓存下沉边缘（[prompt-caching.md](https://github.com/GhostXia/AIRP-MCP-Server/blob/main/docs/prompt-caching.md)）、skill vs MCP 分工（[skills-vs-mcp.md](https://github.com/GhostXia/AIRP-MCP-Server/blob/main/docs/skills-vs-mcp.md)）、隔离 subagent 治"死人化"、token 纪律细节。
+- [GhostXia/AIRP-MCP-Server](https://github.com/GhostXia/AIRP-MCP-Server)：数据层/推理层分离铁律、决策提示而非强制工作流、通用优先于特供、缓存下沉边缘（[prompt-caching.md](https://github.com/GhostXia/AIRP-MCP-Server/blob/main/docs/prompt-caching.md)）、skill vs MCP 分工（[skills-vs-mcp.md](https://github.com/GhostXia/AIRP-MCP-Server/blob/main/docs/skills-vs-mcp.md)）、隔离 activation 治"死人化"、token 纪律细节。
 - [ST-ClaudeCacheGateway](https://github.com/shanye5593/ST-ClaudeCacheGateway)（AIRP 引用）：`[[CACHE_BREAK]]` 中性标记 → 边缘翻译的思路。

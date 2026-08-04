@@ -1,1 +1,1 @@
-kimi web --host
+kimi

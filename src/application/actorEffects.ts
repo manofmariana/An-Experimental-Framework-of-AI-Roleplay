@@ -175,7 +175,7 @@ function applyConfirm(truth: TruthStores, cid: string, contactSeq: number, rollD
     if (inviterInit === null || inviterInit.group !== g) {
       changes.push(
         ...truth.characters.setVars(inviter, {
-          initiative: { value: rollDice() + truth.characters.get(inviter).reaction, group: g },
+          initiative: { value: rollDice(20) + truth.characters.get(inviter).reaction, group: g },
         }),
       );
     }
@@ -183,7 +183,7 @@ function applyConfirm(truth: TruthStores, cid: string, contactSeq: number, rollD
   changes.push(...truth.characters.setVars(cid, { group: g }));
   const existing = truth.characters.get(cid).initiative;
   let value =
-    existing !== null && existing.group === g ? existing.value : rollDice() + truth.characters.get(cid).reaction;
+    existing !== null && existing.group === g ? existing.value : rollDice(20) + truth.characters.get(cid).reaction;
   // 入组位置 ≠ 组位置 → 先攻 -1（远程参与的劣后）
   const gl = groupLocation(simCharsOf(truth), g);
   if (gl !== null && truth.characters.get(cid).location.name !== gl) value -= 1;
