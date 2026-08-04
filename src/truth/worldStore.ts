@@ -39,10 +39,10 @@ export function applyDeltas(state: StateTree, deltas: StateDelta[]): StateTree {
 }
 
 /**
- * 步骤变化分段（存档 v7，docs/optimization-review.md §3「步骤变化分段」）：
+ * 步骤变化分段（存档 v7）：
  * setup = 调度在该步执行前产生的变化（时钟跳转/周期计数/维护性 acted 清零/邀请激活 timer 弹出）；
  * effects = 本步 DecisionPackage/AdjudicationPackage 经效果规划器产生的变化。
- * 取代数组下标定位（effects_from/markers_from）；回滚倒序反转 effects 再倒序反转 setup。
+ * 回滚倒序反转 effects 再倒序反转 setup。
  */
 export const StepChangesSchema = z.object({
   setup: z.array(VarChangeSchema),
@@ -56,7 +56,7 @@ export function emptyStepChanges(): StepChanges {
 }
 
 /**
- * 扁平化（先 setup 后 effects，与旧扁平 var_changes 同序）：
+ * 扁平化（先 setup 后 effects）：
  * 倒序反转该序列 ≡ 先倒序 effects 再倒序 setup——回滚/CommitPlan/测试断言共用一个出口。
  */
 export function flatChanges(changes: StepChanges | undefined): VarChange[] {
@@ -69,7 +69,7 @@ export const PipelineCurrentSchema = z.object({
 });
 export type PipelineCurrent = z.infer<typeof PipelineCurrentSchema>;
 export const PipelineSchema = z.object({
-  // phase 已删除（v7）：派生量不落盘，消费方一律 phaseOf(deriveNext(...)) 现算
+  // phase 不落盘：派生量由消费方一律 phaseOf(deriveNext(...)) 现算
   seq: z.number(), working_set: z.array(WorkingSetEntrySchema), current: PipelineCurrentSchema.nullable(),
 });
 export type Pipeline = z.infer<typeof PipelineSchema>;

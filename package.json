@@ -1,9 +1,9 @@
 {
-  "name": "agent-airp",
+  "name": "ofair",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Agent-AIRP P0 MVP: multi-agent roleplay engine (truth layer + tiered compilation)",
+  "description": "Open Framework of AI Roleplay (Ofair): multi-agent roleplay engine (truth layer + tiered compilation)",
   "scripts": {
     "dev": "tsx src/cli.ts",
     "serve": "tsx src/server/index.ts",

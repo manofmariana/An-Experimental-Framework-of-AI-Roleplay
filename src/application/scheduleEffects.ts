@@ -1,5 +1,5 @@
 /**
- * 调度效应（application 层，docs/optimization-review.md §3）：
+ * 调度效应（application 层）：
  * 把 scheduler 派生语义翻成对 TruthStores 的常规 VarChange 写入——
  * 轮首 setup 落账（applyScheduleSetup）、组派生 + 先攻补投（rederiveGroups）、
  * 频道清理 pass（cleanupChannels），以及规划器共用的调度视图小工具。
@@ -9,7 +9,7 @@
  */
 import type { DicePort } from "../ports.js";
 import type { ScheduleSetup } from "../scheduler/derive.js";
-import { groupLocation, LEAVE_TIMER, reconcileGroups, rerollInitiative, type SimChar } from "../scheduler/simulator.js";
+import { groupLocation, reconcileGroups, rerollInitiative, type SimChar } from "../scheduler/simulator.js";
 import type { CharacterState } from "../truth/charactersStore.js";
 import type { TruthStores } from "../truth/stores.js";
 import type { VarChange } from "../truth/varChanges.js";
@@ -28,13 +28,13 @@ export function playerCidOf(truth: TruthStores): string {
   return PLAYER_CID;
 }
 
-/** 调度视图（SimChar）：timer=LEAVE_TIMER 的未结算离开者视同无计时器（永不弹出）。 */
+/** 调度视图（SimChar）：timer 直传存储原值（未结算离开者 timer 本就是 null = 无计时器，永不弹出）。 */
 export function simCharsOf(truth: TruthStores): Record<string, SimChar> {
   return Object.fromEntries(
     Object.entries(playableCharacters(truth)).map(([cid, s]) => [
       cid,
       {
-        timer: s.timer === null || s.timer >= LEAVE_TIMER ? null : s.timer,
+        timer: s.timer,
         group: s.group,
         location: s.location,
         isPlayer: s.isPlayer,
@@ -122,8 +122,8 @@ export function rederiveGroups(truth: TruthStores, rollDice: DicePort, record = 
 }
 
 /**
- * 频道清理 pass（§5.3 生命周期）：全部持有者 location 相同 → 频道变量全清，
- * 仍非组位置的持有者按 leave 处理（组归 0 + 超大 timer，等待下一次 GM 结算）。
+ * 频道清理 pass（生命周期）：全部持有者 location 相同 → 频道变量全清，
+ * 仍非组位置的持有者按 leave 处理（组归 0 + timer 置 null，等待下一次 GM 结算）。
  */
 export function cleanupChannels(truth: TruthStores): VarChange[] {
   const all = truth.characters.all();
@@ -139,7 +139,7 @@ export function cleanupChannels(truth: TruthStores): VarChange[] {
     if (g === 0) continue;
     const gl = groupLocation(sim, g);
     if (gl !== null && truth.characters.get(cid).location.name !== gl) {
-      changes.push(...truth.characters.setVars(cid, { group: 0, timer: LEAVE_TIMER }));
+      changes.push(...truth.characters.setVars(cid, { group: 0, timer: null }));
     }
   }
   return changes;

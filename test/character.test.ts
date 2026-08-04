@@ -3,7 +3,12 @@ import { describe, it } from "node:test";
 import { CHARACTER_PLACEHOLDERS, type CharacterContext } from "../src/agents/character.js";
 import { compilePrompt } from "../src/compile/compiler.js";
 import { loadTemplate } from "../src/compile/template.js";
+import { resolveWorldDir } from "../src/config.js";
+import { packPromptsDir } from "../src/resources/worldRepository.js";
 import type { CharacterState } from "../src/truth/charactersStore.js";
+
+/** 出厂模板目录 = 默认世界包内 prompts/。 */
+const FACTORY_PROMPTS_DIR = packPromptsDir(resolveWorldDir());
 
 function state(name: string): CharacterState { return { name, gender: "女", age: "26", personality: `${name}性格`, tags: [], reaction: 5, location: { name: "灯塔", level: 1 }, timer: 10, group: 1, initiative: null, channel: null, acted: false, level: 1, isPlayer: false, relations: {}, long_term_memory: [`${name}记忆`], vars: { hp: 10 } }; }
 const states = { C1001: state("林雾"), C1002: state("周砚") };
@@ -16,7 +21,7 @@ describe("角色快照隔离", () => {
     assert.ok(own.includes("林雾") && own.includes('"hp":10')); assert.ok(!own.includes("周砚"));
   });
   it("模板无 persona/voice/cast，固定示例含 action/inner 键", () => {
-    const template = loadTemplate("character", Object.keys(CHARACTER_PLACEHOLDERS)); const text = compilePrompt(template, CHARACTER_PLACEHOLDERS, ctx("C1001")).map((message) => message.content).join("\n");
+    const template = loadTemplate("character", Object.keys(CHARACTER_PLACEHOLDERS), FACTORY_PROMPTS_DIR); const text = compilePrompt(template, CHARACTER_PLACEHOLDERS, ctx("C1001")).map((message) => message.content).join("\n");
     assert.ok(text.includes('"action"') && text.includes('"inner"'));
     assert.ok(!text.includes("voice_anchor") && !text.includes("演员表"));
     assert.equal("persona" in states.C1001, false);
@@ -25,14 +30,13 @@ describe("角色快照隔离", () => {
 });
 
 describe("离场通知与被联系通知占位符", () => {
-  const LEAVE_TIMER = Number.MAX_SAFE_INTEGER;
   const member = (name: string, overrides: Partial<CharacterState>): CharacterState => ({
     ...state(name), ...overrides,
   });
   const noticeStates: Record<string, CharacterState> = {
-    C1001: member("林雾", { group: 0, timer: LEAVE_TIMER, initiative: { value: 25, group: 1 } }), // 本组未结算离开者
+    C1001: member("林雾", { group: 0, timer: null, initiative: { value: 25, group: 1 } }), // 本组未结算离开者
     C1002: member("周砚", { group: 1, timer: 0, initiative: { value: 20, group: 1 } }), // 自己（留在组内）
-    C1003: member("丙", { group: 0, timer: LEAVE_TIMER, initiative: { value: 9, group: 2 } }), // 别组离开者
+    C1003: member("丙", { group: 0, timer: null, initiative: { value: 9, group: 2 } }), // 别组离开者
     C1004: member("丁", { group: 1, timer: 0, initiative: { value: 10, group: 1 } }), // 普通在组成员
   };
   const noticeCtx = (overrides: Partial<CharacterContext>): CharacterContext => ({

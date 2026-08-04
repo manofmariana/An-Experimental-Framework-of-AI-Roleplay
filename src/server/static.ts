@@ -1,5 +1,5 @@
 /**
- * 静态文件服务（D3 从 index.ts 原样搬出）：伺服 web/，拒目录穿越。
+ * 静态文件服务：伺服 web/，拒目录穿越。
  */
 import fs from "node:fs";
 import type http from "node:http";

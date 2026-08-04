@@ -26,7 +26,7 @@ export function validateCharacterManifestForPath(id: string, raw: unknown) {
 
 export function characterRoutes(deps: ApiDeps): Route[] {
   const worldDirOf = (url: URL): string =>
-    resolveWorldDir(deps.dirs.worldsDir, url.searchParams.get("set") ?? undefined, DEFAULT_WORLD_SET);
+    resolveWorldDir(deps.dirs.assetsDir, url.searchParams.get("set") ?? undefined, DEFAULT_WORLD_SET);
   return [
     {
       method: "GET",

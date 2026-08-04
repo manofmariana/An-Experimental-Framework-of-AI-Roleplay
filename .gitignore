@@ -2,4 +2,7 @@ node_modules/
 runs/
 *.log
 config.json
+server.json
 .agents/
+data/users/
+skills-lock.json

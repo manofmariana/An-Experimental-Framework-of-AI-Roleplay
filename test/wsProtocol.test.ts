@@ -1,6 +1,6 @@
 /**
- * WS 消息身份 + Snapshot/Transition 集成测试（integration 层，优化阶段 D2，
- * docs/optimization-review.md §5 验收条件）：真实 http/ws 服务 + 双真实 ws 客户端 +
+ * WS 消息身份 + Snapshot/Transition 集成测试（integration 层）：
+ * 真实 http/ws 服务 + 双真实 ws 客户端 +
  * DeferredChatPort（挂起/abort 可控），不再依赖源码正则断言。
  *
  * 场景：双客户端并发 mutation 的 REVISION_CONFLICT 与同一 transition 收敛；
@@ -43,7 +43,7 @@ function transitionsOf(client: WsClient): Record<string, unknown>[] {
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-describe("WS 消息身份与增量同步（D2）", () => {
+describe("WS 消息身份与增量同步", () => {
   it("双客户端同时提交 mutation：陈旧 baseRevision 稳定 REVISION_CONFLICT，双方收同一 transition", async (t) => {
     const h = await serverHarness(t, { dice: [20, 1] });
     enableAuto(h);
@@ -118,7 +118,7 @@ describe("WS 消息身份与增量同步（D2）", () => {
 
     await sleep(200); // 给晚到消息留出到达窗口
     // 旧 run 无任何晚到提交：磁盘 CURRENT 停在 player 步（init=1 + player=2）
-    const current = fs.readFileSync(path.join(h.sessions.runsDir, oldRun, "CURRENT"), "utf8").trim();
+    const current = fs.readFileSync(path.join(h.sessions.saveDir, oldRun, "CURRENT"), "utf8").trim();
     assert.equal(current, "000002");
     // 双客户端：切换快照之后无任何旧 runId 消息（含流式收尾）
     for (const c of [a, b]) {

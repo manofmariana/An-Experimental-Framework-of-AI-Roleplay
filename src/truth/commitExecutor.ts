@@ -1,5 +1,5 @@
 /**
- * CommitExecutor（docs/optimization-review.md §1/§12）：**一次命令一个提交**的唯一落地入口。
+ * CommitExecutor：**一次命令一个提交**的唯一落地入口。
  *
  * GameSession 全部写盘路径（init/step/gm/rollback/admin_edit）收敛为
  * 「构造 CommitPlan → executor.commit」一种形态；executor 职责刻意保持薄：

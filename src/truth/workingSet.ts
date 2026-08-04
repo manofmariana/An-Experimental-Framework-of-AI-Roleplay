@@ -7,7 +7,7 @@ export type WorkingSetEntry = z.infer<typeof WorkingSetEntrySchema>;
 export function renderScene(
   entries: readonly WorkingSetEntry[],
   viewerCid?: string,
-  /** 远程成员（位置 ≠ 组位置）：标题行标注（M2-b §5.3 注入标注） */
+  /** 远程成员（位置 ≠ 组位置）：标题行加注入标注 */
   remoteCids?: ReadonlySet<string>,
 ): string {
   const lines: string[] = [];

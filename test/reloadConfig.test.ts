@@ -6,8 +6,9 @@ import type { LLMConfig } from "../src/config.js";
 import { SessionHarness } from "./harness/session.js";
 
 // ---------------------------------------------------------------------------
-// reloadConfig 链路：OpenAIChatAdapter.updateConfig + GameSession.applyResolvedConfigs
-// （reloadConfig() 本身只负责读全局 CONFIG_FILE 后调注入方法，故测注入方法）
+// 配置事务热应用链路：OpenAIChatAdapter.updateConfig + GameSession.applyResolvedConfig
+// （resolved/settings 由 configService 事务同一份对象传入，
+// 经 SessionCoordinator.applyResolvedConfig 转发到本方法）。
 // 基建 = SessionHarness（临时世界设定集）；会话走真实 adapter 路径——
 // sessionOptions 基座显式 delete chatPorts（注入 fake 会跳过 OpenAIChatAdapter 构造）。
 // ---------------------------------------------------------------------------
@@ -40,8 +41,8 @@ describe("OpenAIChatAdapter.updateConfig（热更新：原地换配置）", () =
   });
 });
 
-describe("GameSession.applyResolvedConfigs（设置页保存即生效的可注入核心）", () => {
-  it("三个 OpenAI adapter 换配置；proseWindowTurns / gmIntervalCycles 字段更新", () => {
+describe("GameSession.applyResolvedConfig（配置事务热应用的可注入核心）", () => {
+  it("三个 OpenAI adapter 换配置；settings 的 proseWindowTurns / gmIntervalCycles 生效，缺省回落默认", () => {
     const worldId = `w-reload-${process.pid}`;
     h.setupWorld(worldId, [
       { id: "C0", name: "玩家", location: "灯塔", timer: null, isPlayer: true },
@@ -60,10 +61,9 @@ describe("GameSession.applyResolvedConfigs（设置页保存即生效的可注�
     assert.equal(priv<number>(session, "proseWindowTurns"), 5);
     assert.equal(priv<number>(session, "gmIntervalCycles"), 3);
 
-    session.applyResolvedConfigs(
+    session.applyResolvedConfig(
       { character: cfgB, gm: cfgB, prose: cfgB },
-      { proseWindowTurns: 9 },
-      7,
+      { configRevision: 1, proseWindowTurns: 9, gmIntervalCycles: 7 },
     );
 
     const adapters = priv<Record<string, OpenAIChatAdapter>>(session, "adapters");
@@ -72,5 +72,10 @@ describe("GameSession.applyResolvedConfigs（设置页保存即生效的可注�
     }
     assert.equal(priv<number>(session, "proseWindowTurns"), 9);
     assert.equal(priv<number>(session, "gmIntervalCycles"), 7);
+
+    // settings 缺省字段回落默认值（5 / 3）
+    session.applyResolvedConfig({ character: cfgA, gm: cfgA, prose: cfgA }, { configRevision: 2 });
+    assert.equal(priv<number>(session, "proseWindowTurns"), 5);
+    assert.equal(priv<number>(session, "gmIntervalCycles"), 3);
   });
 });

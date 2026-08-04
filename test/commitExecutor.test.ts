@@ -9,9 +9,9 @@ import { buildAdjudication as gmPkg } from "./builders/index.js";
 import { SessionHarness } from "./harness/session.js";
 
 // ---------------------------------------------------------------------------
-// CommitExecutor 统一入口 + draft 编辑/回溯/直编收敛（B5，optimization-review §1/§7/§12）：
-// - 非法 GM 编辑（timer 覆盖不全）/非法角色编辑/非法直编失败 → 内存/CURRENT/磁盘 Generation 三不变
-//   （已完成 GM 步"draft 上先反转后校验"修复旧"先反转后校验留残态"缺陷的回归测试）；
+// CommitExecutor 统一入口 + draft 编辑/回溯/直编收敛：
+// - 非法 GM 编辑（durations 覆盖不全）/非法角色编辑/非法直编失败 → 内存/CURRENT/磁盘 Generation 三不变
+//   （GM 步在 draft 上先校验后反转、不留已反转残态的回归测试）；
 // - rollback → revision 递增 + seq 回退 + 新 Generation 逐字节 = 回滚目标态；
 // - 五条写盘路径的 CommitPlan.reason（init/step/gm/rollback/admin_edit）；
 // - 恒冻结：getState()/snapshot() 深改抛 TypeError。
@@ -27,11 +27,11 @@ h.setupWorld(WORLD_ID, [
 
 const NO_PAUSE = { everyStep: false, beforeGm: false, afterGm: false, afterProse: false };
 
-/** timer 覆盖 C0+C1001 的合法裁决包。 */
+/** durations 覆盖 C0+C1001 的合法裁决包。 */
 function gmFull(): Record<string, unknown> {
   return gmPkg({
     narrativity: "skip",
-    timer: [
+    durations: [
       { cid: "C0", span: { min: 5 } },
       { cid: "C1001", span: { min: 5 } },
     ],
@@ -49,7 +49,7 @@ function makeSession(
     gm: options?.gm ?? [gmFull()],
   });
   session.setPauseOptions(options?.pause ?? NO_PAUSE);
-  return { session, dir: path.join(h.runsDir, runId) };
+  return { session, dir: path.join(h.saveDir, runId) };
 }
 
 /** 三不变快照：内存（state/events/pipeline current）+ CURRENT + 当前 Generation 六文件原文。 */
@@ -78,7 +78,7 @@ function assertTruthUnchanged(session: GameSession, dir: string, snap: ReturnTyp
 }
 
 describe("编辑失败零副作用（draft 机制：内存/CURRENT/磁盘 Generation 三不变）", () => {
-  it("非法 GM 编辑（timer 覆盖不全）：已完成 GM 步先反转后校验失败，三不变且后续合法编辑照常", async () => {
+  it("非法 GM 编辑（durations 覆盖不全）：已完成 GM 步先反转后校验失败，三不变且后续合法编辑照常", async () => {
     const { session, dir } = makeSession("gm-edit-invalid", {
       pause: { ...NO_PAUSE, afterGm: true },
     });
@@ -87,15 +87,15 @@ describe("编辑失败零副作用（draft 机制：内存/CURRENT/磁盘 Genera
     assert.equal(session.getPipelineCurrent()?.kind, "gm");
 
     const snap = captureTruth(session, dir);
-    // timer 只覆盖 C0、漏 C1001 → 契约校验失败（旧顺序：先反转旧效应后校验 → 留下已反转残态）
-    const invalid = gmPkg({ narrativity: "skip", timer: [{ cid: "C0", span: { min: 9 } }] });
-    assert.throws(() => session.editResult(JSON.stringify(invalid)), /timer cid 必须精确覆盖/);
+    // timer 只覆盖 C0、漏 C1001 → 契约校验失败（校验先于反转，不留已反转残态）
+    const invalid = gmPkg({ narrativity: "skip", durations: [{ cid: "C0", span: { min: 9 } }] });
+    assert.throws(() => session.editResult(JSON.stringify(invalid)), /durations cid 必须精确覆盖/);
     assertTruthUnchanged(session, dir, snap);
 
     // 无残态的直接证据：同一 GM 步的合法编辑照常成功（旧缺陷下旧效应已被反转、状态错乱）
     const valid = gmPkg({
       narrativity: "skip",
-      timer: [
+      durations: [
         { cid: "C0", span: { min: 10 } },
         { cid: "C1001", span: { min: 10 } },
       ],

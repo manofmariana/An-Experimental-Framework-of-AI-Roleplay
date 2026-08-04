@@ -1,8 +1,8 @@
 /**
- * 存档 v7（Generation 布局自 v6 起）：Generation 布局与单一写盘屏障（docs/optimization-review.md §1/§7）。
+ * 存档 v7：Generation 布局与单一写盘屏障。
  *
  * 布局：
- *   runs/{runId}/
+ *   save/{runId}/
  *     CURRENT                     文本文件，内容 = 6 位零填充 revision（如 "000007"）
  *     generations/{revision}/     world.json characters.json events.json archive.json lore.json time.json
  *     meta.json / cache-stats.jsonl / llm-recent/ / save-meta.json   旁路产物，留 run 根，不进 Generation
@@ -10,7 +10,7 @@
  * 磁盘写入从"每次变异立即写单文件"收敛为"步边界一次写整 Generation"：
  * 六个 Store 是纯内存容器（saveData() 供收集），本类是唯一写盘出口。
  *
- * 原子提交流程（§1 步骤 6-10）：
+ * 原子提交流程：
  *   ① baseRevision 闸：≠ 当前 revision → RevisionConflictError（乐观并发）；
  *   ② 六文件信封序列化写入 generations/.tmp-{next}/；
  *   ③ 重读临时目录六文件并过 codec + validateSaveSet（跨文件不变量，B4；可构造注入替换）；
@@ -207,7 +207,7 @@ export class GenerationRepository {
     }
     const save = this.readSaveSet(dir);
     this.validateSaveSet(save);
-    // 恒冻结（§7 不可变 Snapshot）：调用方（GameSession 六 Store 构造）深拷贝后使用，
+    // 恒冻结（不可变 Snapshot）：调用方（GameSession 六 Store 构造）深拷贝后使用，
     // 此处冻结让"直接改 loadCurrent 结果"的越界写入立刻抛 TypeError
     deepFreeze(save);
     return { revision, save };

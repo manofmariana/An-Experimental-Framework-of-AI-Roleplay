@@ -1,8 +1,8 @@
 /**
- * GameSession 会话内核（C4 从 loop.ts 迁入；装配逻辑在 sessionFactory.ts，
+ * GameSession 会话内核（装配逻辑在 sessionFactory.ts，
  * 命令串行/会话切换在 sessionCoordinator.ts，历史展示在 historyProjection.ts）。
  *
- * 主循环（M2-b：无判定轮与标记体系，DESIGN-P1 §5）。
+ * 主循环（无判定轮与标记体系）。
  * 调度 = 扫描角色 timer 取最小（时钟只在弹出时跳转）；单活跃组不变量——同刻多组按
  * orderGroups 串行，组内行动顺序 = initiative 变量现排（行动顺序表，acted 角色变量）；
  * 周期完成 X+1（世界变量 cycles_since_gm），X 达 N 周期末 GM，任何 GM 激活后 X 清零；
@@ -22,13 +22,12 @@ import { extractJson } from "../agents/json.js";
 import { ProseActivation } from "../agents/prose.js";
 import {
   AGENT_KINDS,
-  loadAgentConfigs,
-  loadGmIntervalCycles,
-  loadMemoryConfig,
+  DEFAULT_GM_INTERVAL_CYCLES,
+  DEFAULT_PROSE_WINDOW_TURNS,
   type AgentKind,
   type LLMConfig,
-  type MemoryConfig,
 } from "../config.js";
+import type { UserSettings } from "../contracts/config.js";
 import type { Display } from "../display.js";
 import { readCacheStats } from "../llm/cacheStats.js";
 import { LLMAbortedError } from "../llm/chatPort.js";
@@ -36,7 +35,7 @@ import { OpenAIChatAdapter } from "../llm/openaiChatAdapter.js";
 import type { DicePort } from "../ports.js";
 import {
   deriveNext,
-  expectedGmTimerCids,
+  expectedGmDurationCids,
   phaseOf,
   selectFront,
   type DerivedPhase,
@@ -101,7 +100,7 @@ import {
 import { projectWorkingSet } from "./workingSetProjection.js";
 
 // ---------------------------------------------------------------------------
-// 调度派生（M2：时间轴与轮状态全派生，无独立存储，§10.3）
+// 调度派生：时间轴与轮状态全派生，无独立存储
 // 派生逻辑在 scheduler/derive.ts（纯逻辑）；本层只负责快照构建与 setup 落账。
 // ---------------------------------------------------------------------------
 
@@ -113,7 +112,7 @@ type CharacterCommand = Extract<NextCommand, { type: "character" }>;
 type GmCommand = Extract<NextCommand, { type: "gm" }>;
 
 /**
- * 暂停选项（取代"默认自动继续"）：自动继续 = 全部 false。
+ * 暂停选项：自动继续 = 全部 false。
  * 互斥（自动继续/每轮暂停各自排除其余）在前端保证；服务端按位生效、内存态不落盘。
  */
 export interface PauseOptions {
@@ -155,7 +154,7 @@ export interface GameSessionDeps {
   rollDice: DicePort;
   repo: GenerationRepository;
   revision: number;
-  /** 各 agent kind 的 OpenAI adapter（注入 fake 的 kind 无此项）：reloadConfig 热更新目标。 */
+  /** 各 agent kind 的 OpenAI adapter（注入 fake 的 kind 无此项）：applyResolvedConfig 热更新目标。 */
   adapters: Partial<Record<AgentKind, OpenAIChatAdapter>>;
   display?: Display;
 }
@@ -170,7 +169,7 @@ export class GameSession {
   private readonly loreStore: LoreStore;
   private readonly timeStore: TimeStore;
   private readonly archive: ArchiveStore;
-  /** activation 上下文构建器（§4：激活点逐调用现算 Context，无 agent 侧缓存）。 */
+  /** activation 上下文构建器（激活点逐调用现算 Context，无 agent 侧缓存）。 */
   private readonly contexts: ActivationContextBuilder;
   private proseWindowTurns: number;
   private gmIntervalCycles: number;
@@ -180,11 +179,11 @@ export class GameSession {
   private readonly display: Display | undefined;
   /** 提交执行器（唯一提交入口；六条写盘路径全部经它，见 commitGeneration/commitTruth）。 */
   private readonly executor: CommitExecutor;
-  /** 各 agent kind 的 OpenAI adapter（装配时建立，注入 fake 的 kind 无此项）：设置页保存后经 reloadConfig 热更新。 */
+  /** 各 agent kind 的 OpenAI adapter（装配时建立，注入 fake 的 kind 无此项）：配置事务保存后经 applyResolvedConfig 热更新。 */
   private readonly adapters: Partial<Record<AgentKind, OpenAIChatAdapter>>;
 
   /**
-   * 注入式构造：依赖全部由 sessionFactory 组装（C4；原 static create/resume 的装配逻辑已迁出）。
+   * 注入式构造：依赖全部由 sessionFactory 组装。
    * 构造尾完成开局序列：新档开局组派生 + 首组先攻投掷（revision 0 判据；初始状态的一部分，
    * 不产生变更记录——它在 seq 1 之前，回溯永不越过）→ 断点恢复（邀请投影重建）→
    * 新档首次写盘（整代 Generation 1，唯一写盘出口；续档不写）→ 恒冻结
@@ -223,7 +222,7 @@ export class GameSession {
   /** 当前 activation 的 AbortController（每次 LLM activation 新建；stop 经 abortCurrent 中止它）。 */
   private activationController: AbortController | null = null;
   /**
-   * 提交通知钩子（D2 消息身份/增量同步）：每次提交（commitGeneration/commitTruth）成功后
+   * 提交通知钩子（消息身份/增量同步）：每次提交（commitGeneration/commitTruth）成功后
    * 同步回调一次，携带 prev/next 根引用（恒冻结 → 零拷贝）。由 SessionCoordinator 挂接
    * （装配发生在构造之后，构造期的 init 提交不触发广播——会话建立走 snapshot）。
    */
@@ -234,35 +233,19 @@ export class GameSession {
   private activationSeq = 0;
   /** 当前在途 activation 的 ID（stop 的定向中止核对用；无在途为 null）。 */
   private activeActivationId: string | null = null;
-  /** 已销毁旗标（D2 强制切换兜底）：dispose 后任何提交/新步启动抛 DisposedSessionError。 */
+  /** 已销毁旗标（强制切换兜底）：dispose 后任何提交/新步启动抛 DisposedSessionError。 */
   private disposedFlag = false;
 
   /**
-   * 应用已解析配置到运行中会话（可注入，测试直测本方法）：
-   * 各 OpenAI adapter 原地换配置（在途调用不受影响；注入 fake 的 kind 无 adapter，跳过），
-   * 滑窗/GM 间隔字段立即生效。
+   * 热应用已解析配置（配置事务的唯一热更新入口；由 configService 事务在保存成功后
+   * 经 SessionCoordinator.applyResolvedConfig 转发——**同一份 resolved 对象**，会话不再
+   * 自读配置文件）：各 OpenAI adapter 原地换配置（在途调用不受影响；注入 fake 的 kind
+   * 无 adapter，跳过），滑窗/GM 间隔立即生效（settings 缺省字段回落默认值）。
    */
-  applyResolvedConfigs(
-    configs: Record<AgentKind, LLMConfig>,
-    memory: MemoryConfig,
-    gmIntervalCycles: number,
-  ): void {
+  applyResolvedConfig(configs: Record<AgentKind, LLMConfig>, settings: UserSettings): void {
     for (const kind of AGENT_KINDS) this.adapters[kind]?.updateConfig(configs[kind]);
-    this.proseWindowTurns = memory.proseWindowTurns;
-    this.gmIntervalCycles = gmIntervalCycles;
-  }
-
-  /**
-   * 热重载 config.json（设置页保存后立即生效，取代"新会话才生效"）。
-   * 缺 API key（loadAgentConfigs 返回 null）时不打坏会话：保持旧配置并告警。
-   */
-  reloadConfig(): void {
-    const configs = loadAgentConfigs();
-    if (!configs) {
-      console.warn("[GameSession] config.json 缺少 LLM API key，保持现有配置不变");
-      return;
-    }
-    this.applyResolvedConfigs(configs, loadMemoryConfig(), loadGmIntervalCycles());
+    this.proseWindowTurns = settings.proseWindowTurns ?? DEFAULT_PROSE_WINDOW_TURNS;
+    this.gmIntervalCycles = settings.gmIntervalCycles ?? DEFAULT_GM_INTERVAL_CYCLES;
   }
 
   /** 设置暂停选项（内存态；SessionCoordinator 经 WS 下发，续档/新会话由协调器重新套用）。 */
@@ -315,7 +298,7 @@ export class GameSession {
     }
   }
 
-  /** 销毁闸（D2 强制切换）：dispose 后旧任务的任何提交一律拒绝（晚到结果不得落真相/触发广播）。 */
+  /** 销毁闸（强制切换）：dispose 后旧任务的任何提交一律拒绝（晚到结果不得落真相/触发广播）。 */
   private assertAlive(): void {
     if (this.disposedFlag) throw new DisposedSessionError(this.runId);
   }
@@ -358,7 +341,7 @@ export class GameSession {
   /**
    * 错误再同步（步内非 abort 失败 → 内存可能已偏离磁盘）：
    * 从 CURRENT Generation 重建六 Store 数据（**对象身份保持**——GameSession 持有
-   * Store 引用，用数据替换而非换新实例）。activation 无状态（§4），无缓存需重建。
+   * Store 引用，用数据替换而非换新实例）。activation 无状态，无缓存需重建。
    */
   private rehydrate(): void {
     const loaded = this.repo.loadCurrent();
@@ -419,7 +402,7 @@ export class GameSession {
     return playerCidOf(truth);
   }
 
-  /** 调度视图（SimChar）：timer=LEAVE_TIMER 的未结算离开者视同无计时器（永不弹出）。 */
+  /** 调度视图（SimChar；委托 scheduleEffects.simCharsOf，timer 直传存储原值）。 */
   private simChars(truth: TruthStores): Record<string, SimChar> {
     return simCharsOf(truth);
   }
@@ -438,8 +421,8 @@ export class GameSession {
 
   /**
    * 提交步 → 邀请投影步视图（kind/seq/decision.markers/invitation.accepted 显式构造）。
-   * player 步转写为 character:<playerCid>（投影无 player 概念，与原 actorOf 同语义）；
-   * accepted = decision.markers 有无 confirm（取代 timer after===0 猜测）。
+   * player 步转写为 character:<playerCid>（投影无 player 概念）；
+   * accepted = decision.markers 有无 confirm。
    */
   private invitationStepView(truth: TruthStores, seq: number, kind: string, result: unknown): InvitationStepView {
     const r = result as { decision?: DecisionPackage; invitation?: { contactSeq: number } } | null;
@@ -473,7 +456,7 @@ export class GameSession {
     );
   }
 
-  /** 调度视图（SchedulerCharacter = SimChar + acted）：timer=LEAVE_TIMER 的未结算离开者视同无计时器。 */
+  /** 调度视图（SchedulerCharacter = SimChar + acted）：timer 直传存储原值。 */
   private schedulerChars(truth: TruthStores): Record<string, SchedulerCharacter> {
     const sim = this.simChars(truth);
     return Object.fromEntries(
@@ -513,23 +496,23 @@ export class GameSession {
 
   /**
    * 下一步派生（scheduler/derive.ts 纯函数出口；只读查询（pipelineInfo.phase 现算、
-   * 断点恢复提示）用本适配器；执行入口一律走 prepareNextCommand（§3 统一收口）。
+   * 断点恢复提示）用本适配器；执行入口一律走 prepareNextCommand（统一收口）。
    */
   private deriveCommand(truth: TruthStores): NextCommand {
     return deriveNext(this.buildSnapshot(truth));
   }
 
   /**
-   * 确定性规则端口集（docs/optimization-review.md §3 确定性计算层）：
-   * 本阶段为空——P2 固定规则/从动变量规则经此接入；投骰不属于本层
+   * 确定性规则端口集（确定性计算层）：
+   * 当前为空——固定规则/从动变量规则经此接入；投骰不属于本层
    * （先攻补投在效果规划器内，属该步骤的 effects）。
    */
   private readonly deterministicRules: readonly DeterministicRulePort[] = [];
 
   /**
-   * 执行入口统一收口（docs/optimization-review.md §3）：玩家输入权限检查 /
+   * 执行入口统一收口：玩家输入权限检查 /
    * 手动与自动继续（runPipeline 每步）/ 编辑·直编·回滚后的派生态刷新共用。
-   * 本阶段 rules 为空 → 恒走短路（不建 draft，直接 deriveNext，等价旧 deriveCommand）。
+   * 当前 rules 为空 → 恒走短路（不建 draft，直接 deriveNext）。
    */
   private prepareNextCommand(): PrepareResult {
     return runPrepareNextCommand({
@@ -612,8 +595,8 @@ export class GameSession {
     const seq = this.startStep();
     const invitation = this.invitationCtx(truth, cid, cmd.invitation);
     const setup = applyScheduleSetup(truth, cmd.setup);
-    // 邀请应答激活：timer 置 0 弹出（setup 段 before = 邀请前值，拒绝时据此还原）
-    if (invitation !== undefined) setup.push(...truth.characters.setVars(cid, { timer: 0 }));
+    // 邀请应答激活：timer 置当前时钟弹出（立即到期；setup 段 before = 邀请前值，拒绝时据此还原）
+    if (invitation !== undefined) setup.push(...truth.characters.setVars(cid, { timer: truth.world.clock }));
     const pkg = this.parsePlayerInput(input) ?? { inner: input, dialogue: input };
     const effects = planActorDecision(truth, { cid, pkg, ...(invitation !== undefined ? { invitation } : {}), rollDice: this.rollDice });
     // 邀请应答步记邀请上下文（与角色步同形）：邀请投影增量/重建的应答判据（显式 contactSeq + accepted）
@@ -669,10 +652,10 @@ export class GameSession {
     const seq = this.startStep();
     const invitation = this.invitationCtx(truth, cid, cmd.invitation);
     const setup = applyScheduleSetup(truth, cmd.setup);
-    // 邀请应答激活：timer 置 0 弹出（setup 段 before = 邀请前值，拒绝时据此还原）
-    if (invitation !== undefined) setup.push(...truth.characters.setVars(cid, { timer: 0 }));
+    // 邀请应答激活：timer 置当前时钟弹出（立即到期；setup 段 before = 邀请前值，拒绝时据此还原）
+    if (invitation !== undefined) setup.push(...truth.characters.setVars(cid, { timer: truth.world.clock }));
     const kind = `character:${cid}`;
-    // 无状态 activation（§4）：全量上下文逐调用现算（含被联系通知——仅邀请应答步注入）
+    // 无状态 activation：全量上下文逐调用现算（含被联系通知——仅邀请应答步注入）
     const context = this.contexts.character({
       truth,
       cid,
@@ -708,8 +691,8 @@ export class GameSession {
         `${pkg.action !== undefined ? `行动：${pkg.action}` : "（无行动）"}${pkg.dialogue ? `；台词：${pkg.dialogue}` : ""}${pkg.relations?.length ? `（人际关系更新 ${pkg.relations.length} 条）` : ""}`,
       );
     } catch (err) {
-      // 邀请应答步被停止：邀请上下文随 interrupted 结果留存（编辑补全后投影重建仍按已应答处理，
-      // 与旧 timer after=0 启发式同语义——setup 已落账 timer 置 0）；
+      // 邀请应答步被停止：邀请上下文随 interrupted 结果留存（编辑补全后投影重建仍按已应答处理——
+      // setup 已落账 timer = 当前时钟）；
       // 中止未应用业务输出：effects 空段（setup 保留）
       this.handleStepError(seq, kind, err, {
         changes: { setup, effects: [] },
@@ -746,24 +729,25 @@ export class GameSession {
       .filter((s) => s.kind === "player" || s.kind.startsWith("character:"));
   }
 
-  /** GM 激活闸：工作集非空且本轮行动者都有计时器（timer 覆盖由 GM 契约 validateAdjudicationRound 强校验）。 */
+  /** GM 激活闸：工作集非空且本轮行动者都有计时器；未结算离开者（group=0 + timer=null）豁免，其 durations 覆盖由 GM 契约 validateAdjudicationRound 强校验。 */
   private validateWorkingSetRound(roundCids: string[]): void {
     if (roundCids.length === 0) throw new Error("GM 激活前工作集为空");
     for (const cid of roundCids) {
-      if (this.characters.get(cid).timer === null) {
+      const state = this.characters.get(cid);
+      if (state.timer === null && state.group !== 0) {
         throw new Error(`GM 激活前校验失败：${cid} 无计时器`);
       }
     }
   }
 
   /**
-   * GM 裁决包 timer 必须精确覆盖的 cid 集（去重排序）。
-   * 逻辑在 scheduler/derive.ts（纯函数）；本方法仅为薄委托——gmTimerCoverage 行为保护网直测本方法。
+   * GM 裁决包 durations 必须精确覆盖的 cid 集（去重排序）。
+   * 逻辑在 scheduler/derive.ts（纯函数）；本方法仅为薄委托——gmDurationCoverage 行为保护网直测本方法。
    * 语义：全体同步组成员（行动者所在非零组的全体成员，以组成员身份为准、无论其 timer 值）
    * ∪ 刚从同步组离开的成员（已由 roundCids 覆盖）。
    */
-  private expectedGmTimerCids(truth: TruthStores, roundCids: string[]): string[] {
-    return expectedGmTimerCids(this.schedulerChars(truth), roundCids);
+  private expectedGmDurationCids(truth: TruthStores, roundCids: string[]): string[] {
+    return expectedGmDurationCids(this.schedulerChars(truth), roundCids);
   }
 
   /** GM 轮。 */
@@ -772,14 +756,14 @@ export class GameSession {
     const workingSet = truth.world.pipeline.working_set;
     const roundCids = [...new Set(workingSet.map((e) => e.cid))];
     this.validateWorkingSetRound(roundCids);
-    // roundCids（工作集行动者）语义不变；timer 契约基准另算（中途 GM 含同步组全体未行动成员）
-    const timerCids = this.expectedGmTimerCids(truth, roundCids);
+    // roundCids（工作集行动者）语义不变；durations 契约基准另算（中途 GM 含同步组全体未行动成员）
+    const durationCids = this.expectedGmDurationCids(truth, roundCids);
     const seq = this.startStep();
     const setup = applyScheduleSetup(truth, cmd.setup);
     const roundScenes = Object.fromEntries(
       roundCids.map((cid) => [cid, truth.characters.get(cid).group]),
     );
-    // 无状态 activation（§4）：GM 上下文逐调用现算（lore 档内副本逐调用渲染）
+    // 无状态 activation：GM 上下文逐调用现算（lore 档内副本逐调用渲染）
     const context = this.contexts.gm({
       truth,
       proseWindowTurns: this.proseWindowTurns,
@@ -795,7 +779,7 @@ export class GameSession {
       const { raw, pkg } = await this.gm.adjudicate(
         context,
         seq,
-        timerCids,
+        durationCids,
         controller.signal,
         this.display,
       );
@@ -850,7 +834,7 @@ export class GameSession {
     const gmStep = [...this.archive.readAll()].reverse().find((e) => e.kind === "gm");
     if (gmStep === undefined) throw new Error("正文轮找不到本轮 GM 场景元数据");
     const scenes = (gmStep.result as { round_scenes: Record<string, number> }).round_scenes;
-    // 无状态 activation（§4）：正文上下文（近期事件/触发 lore/上轮正文/演员表）逐调用现算
+    // 无状态 activation：正文上下文（近期事件/触发 lore/上轮正文/演员表）逐调用现算
     const context = this.contexts.prose({
       truth,
       proseWindowTurns: this.proseWindowTurns,
@@ -946,7 +930,7 @@ export class GameSession {
     if (this.world.pipeline.current?.interrupted === true) {
       throw new Error("当前步已被停止：请先回溯或编辑补全");
     }
-    const cmd = this.prepareNextCommand().command; // 权限检查走统一入口（§3）
+    const cmd = this.prepareNextCommand().command; // 权限检查走统一入口
     if (cmd.type !== "player") {
       // 指明当前在等谁（直编调度变量后 phase 可能刚变，模糊措辞会误导玩家反复输入）
       const waiting =
@@ -1032,7 +1016,7 @@ export class GameSession {
     this.eventSeq = scanEventWatermark(this.events.readAll());
     // 邀请投影全量重建（commit 后 live == draft，统一走重建出口）
     this.invitations = this.rebuildInvitationProjection();
-    // commit 后立即经统一入口刷新派生态（§3：下一次权限检查必须立即得到新顺序；短路路径成本可忽略）
+    // commit 后立即经统一入口刷新派生态（下一次权限检查必须立即得到新顺序；短路路径成本可忽略）
     this.prepareNextCommand();
   }
 
@@ -1047,7 +1031,7 @@ export class GameSession {
 
   /**
    * 手动编辑当前步原始返回（编辑-继续合并）：
-   * zod 校验（角色决策包/GM 裁决包必须合法 JSON；正文纯文本直接过）→
+   * zod 校验（决策包/GM 裁决包必须合法 JSON；正文纯文本直接过）→
    * 写回 pipeline.current.result 并置 edited、清 interrupted。
    * 编辑 = 该步的一次新输出：setup 段原样保留，draft 上倒序反转旧 effects 段后，
    * 用**与正常路径同一效果规划器**（planActorDecision/planGmAdjudication）生成新
@@ -1058,19 +1042,18 @@ export class GameSession {
    * **draft 机制**：解析在任何变异之前（失败抛错，draft 直接丢弃，内存零变化）；
    * 全部变异以 draft 为靶（GM 分支同样在 draft 上先反转旧效应、后 validateAdjudicationRound——
    * 校验失败 draft 丢弃，不再留下"已反转状态"），一次 commitTruth 提交后 adopt。
-   * 玩家轮不可编辑。
+   * 玩家步与角色步同一路径可编辑：cid 取玩家操控角色，编辑文本必须是合法决策包 JSON。
    */
   editResult(text: string): void {
     const current = this.world.pipeline.current;
     if (current === null) throw new Error("没有可编辑的当前步");
-    if (current.kind === "player") throw new Error("玩家轮不支持编辑");
     const edited: PipelineCurrent = { seq: current.seq, kind: current.kind, result: null, edited: true };
 
-    if (current.kind.startsWith("character:")) {
-      const cid = current.kind.slice("character:".length);
+    if (current.kind === "player" || current.kind.startsWith("character:")) {
       // 解析失败在任何变异前抛（此时 draft 尚未建立，live 内存零变化）
       const pkg = this.parseJsonField<DecisionPackage>(text, DecisionPackageSchema, "决策包");
       const draft = cloneTruth(this.liveTruth());
+      const cid = current.kind === "player" ? this.playerCid(draft) : current.kind.slice("character:".length);
       const prior = current.result as {
         invitation?: ActorInvitationContext;
       } | null;
@@ -1091,6 +1074,8 @@ export class GameSession {
       edited.result = {
         raw: text,
         decision: pkg,
+        // 玩家步保留 input：历史投影与正文工作集渲染按该字段取玩家言行
+        ...(current.kind === "player" ? { input: text } : {}),
         // 邀请上下文原样保留（再次编辑的重放输入；投影重建按已应答处理）
         ...(prior?.invitation !== undefined ? { invitation: prior.invitation } : {}),
       };
@@ -1106,7 +1091,7 @@ export class GameSession {
       if (current.interrupted === true) {
         // 暂停态：效应从未应用（effects 空段）——直接按编辑包补做（工作集仍是 GM 前的完整轮）
         const roundCids = [...new Set(draft.world.pipeline.working_set.map((e) => e.cid))];
-        validateAdjudicationRound(pkg, this.expectedGmTimerCids(draft, roundCids));
+        validateAdjudicationRound(pkg, this.expectedGmDurationCids(draft, roundCids));
         const roundScenes = previous?.round_scenes ?? Object.fromEntries(roundCids.map((cid) => [cid, draft.characters.get(cid).group]));
         const allocator = this.eventIdAllocator(scanEventWatermark(draft.events.readAll()));
         const effects = planGmAdjudication(draft, {
@@ -1124,9 +1109,9 @@ export class GameSession {
         // 校验失败 → draft 整体丢弃，live 内存/CURRENT/磁盘三不变。
         const preSet = projectWorkingSet(draft.archive.readAll(), this.playerCid(draft));
         const roundCids = [...new Set(preSet.map((e) => e.cid))];
-        // 变量反向先行（setup 保留：编辑不触碰调度落账）：状态回到 GM 前后才能按 GM 前视角派生 timer 覆盖契约
+        // 变量反向先行（setup 保留：编辑不触碰调度落账）：状态回到 GM 前后才能按 GM 前视角派生 durations 覆盖契约
         this.revertVarChanges(draft, current.changes?.effects ?? []);
-        validateAdjudicationRound(pkg, this.expectedGmTimerCids(draft, roundCids));
+        validateAdjudicationRound(pkg, this.expectedGmDurationCids(draft, roundCids));
         draft.events.truncateToSeq(current.seq - 1);
         const roundScenes = previous?.round_scenes ?? Object.fromEntries(roundCids.map((cid) => [cid, draft.characters.get(cid).group]));
         draft.world.setPipeline({ working_set: preSet });
@@ -1157,7 +1142,7 @@ export class GameSession {
 
     // 邀请投影全量重建（编辑可能改变 contact/confirm 语义；成本低，不判断影响面）
     this.invitations = this.rebuildInvitationProjection();
-    // commit 后立即经统一入口刷新派生态（§3：下一次权限检查必须立即得到新顺序；短路路径成本可忽略）
+    // commit 后立即经统一入口刷新派生态（下一次权限检查必须立即得到新顺序；短路路径成本可忽略）
     this.prepareNextCommand();
   }
 
@@ -1175,10 +1160,10 @@ export class GameSession {
   }
 
   /**
-   * 销毁会话（D2 会话切换与强制结束）：置旗标 + 中止在途 activation。
+   * 销毁会话（会话切换与强制结束）：置旗标 + 中止在途 activation。
    * 其后 commit 闸（commitGeneration/commitTruth）与 runPipeline 开步一律抛
    * DisposedSessionError——旧 run 晚到结果不得提交真相、不得触发 onCommit 广播。
-   * 已知简化：中止超时强制失效计时器不实现，本旗标即兜底（docs/known-issues.md 登记）。
+   * 已知简化：中止超时强制失效计时器不实现，本旗标即兜底。
    */
   dispose(): void {
     this.disposedFlag = true;
@@ -1211,7 +1196,7 @@ export class GameSession {
   }
 
   /**
-   * 当前真相只读快照（§7 不可变 Snapshot）：六 Store 数据视图，commit 后恒冻结。
+   * 当前真相只读快照：六 Store 数据视图，commit 后恒冻结。
    * 查询/注入/广播共享同一 revision 根；写入会在运行期抛 TypeError（编译期由 DeepReadonly 挡）。
    */
   snapshot(): DeepReadonly<SaveSet> {
@@ -1275,8 +1260,10 @@ export class GameSession {
    * 同路径改写末条 after，新路径尾部追加），回溯随该步一并还原——语义见前端警告；
    * events 域维持 replaceAll、不进变更记录（回溯本来按 seq 截断事件，两域口径不同）。
    * 闸与原子性：LLM 在途拒绝；**draft 机制**——任一域校验失败 draft 直接丢弃，
-   * live 内存/CURRENT/磁盘 Generation 三不变（取代旧 try/catch 快照还原：连内存都不动）。
+   * live 内存/CURRENT/磁盘 Generation 三不变（连内存都不动）。
    * 角色集合必须与当前一致（只改内容，不增删角色——cast 由 builder 逐调用现建，无需同步）。
+   * 提交前对 draft 重派生编组（rederiveGroups：直编对齐 timer 后立即并组，组未变则零变更），
+   * 派生变更与直编差异并入同一次 commit（回溯随该步一并还原）。
    * commit 成功后重建派生态：邀请投影全量重建 + prepareNextCommand 刷新；
    * phase 不落盘（pipelineInfo 现算，直编改调度变量后下一次查询即反映）。
    */
@@ -1318,6 +1305,9 @@ export class GameSession {
     if (payload.characters !== undefined) {
       editChanges.push(...diffStateTrees(this.characters.all(), draft.characters.all(), "characters"));
     }
+    // 直编只改变量不跑组派生：提交前对 draft 重派生编组（与 GM 步/开局/召回同一通道，
+    // 保稳幂等——组未变则零变更零补投），直编对齐 timer 后立即并组；派生变更并入同一次 commit
+    editChanges.push(...rederiveGroups(draft, this.rollDice));
     this.mergeDirectEditChanges(draft, editChanges);
     this.commitTruth(draft, "admin_edit", editChanges);
 
@@ -1325,7 +1315,7 @@ export class GameSession {
     this.eventSeq = scanEventWatermark(this.events.readAll());
     // 邀请投影全量重建（直编可改 isPlayer/group 等投影过滤输入；成本低，统一重建）
     this.invitations = this.rebuildInvitationProjection();
-    // commit 后立即经统一入口刷新派生态（§3：直编改 initiative/timer 后旧 await_player 不得放行）
+    // commit 后立即经统一入口刷新派生态（直编改 initiative/timer 后旧 await_player 不得放行）
     this.prepareNextCommand();
   }
 

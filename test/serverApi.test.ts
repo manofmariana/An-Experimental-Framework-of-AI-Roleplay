@@ -14,6 +14,7 @@ import {
 import {
   characterManifestFile,
   listCharacterManifests,
+  packPromptsDir,
   validateLorebookPayload,
 } from "../src/resources/worldRepository.js";
 import { resolveUserDirectories } from "../src/resources/userDirectories.js";
@@ -24,7 +25,7 @@ import {
   readPromptTemplates,
   validatePromptPayload,
 } from "../src/server/http/routes/prompts.js";
-import { PROMPTS_DIR } from "../src/config.js";
+import { resolveWorldDir } from "../src/config.js";
 import { safeSegment } from "../src/shared/safeSegment.js";
 import { Lorebook } from "../src/truth/lorebook.js";
 import { CharacterManifestSchema } from "../src/agents/character.js";
@@ -32,7 +33,10 @@ import { SAVE_SCHEMA_VERSION } from "../src/truth/saveSchema.js";
 import type { SessionCoordinator } from "../src/application/sessionCoordinator.js";
 import { tempDir } from "./harness/tempDir.js";
 
-describe("validateFileConfig（contracts FileConfigSchema，D3 取代手工字段表）", () => {
+/** 出厂模板目录 = 默认世界包内 prompts/（data/assets/baitan/prompts/）。 */
+const FACTORY_PROMPTS_DIR = packPromptsDir(resolveWorldDir());
+
+describe("validateFileConfig（contracts FileConfigSchema）", () => {
   it("合法结构通过并保留未知注释字段", () => {
     const raw = {
       _说明: "注释",
@@ -213,7 +217,7 @@ describe("listRuns / readRunArtifact（存档 v7 Generation 布局）", () => {
 
 describe("prompts API（提示词模板端点的纯逻辑）", () => {
   it("readPromptTemplates：三个出厂模板结构完整", () => {
-    const templates = readPromptTemplates(PROMPTS_DIR);
+    const templates = readPromptTemplates(FACTORY_PROMPTS_DIR);
     assert.deepEqual(
       templates.map((t) => t.id),
       ["character", "gm", "prose"],
@@ -361,10 +365,17 @@ function mockRes(): { res: ServerResponse; out: { status: number; text: string }
 }
 
 function stubDeps(applyDirectEdit: (payload: unknown) => void): ApiDeps {
+  const root = tempDir("airp-cfg-");
+  const dirs = {
+    ...resolveUserDirectories(),
+    presetsDir: path.join(root, "api-presets"),
+    secretsFile: path.join(root, "secrets.json"),
+    settingsFile: path.join(root, "settings.json"),
+  };
   return {
     coordinator: { applyDirectEdit } as unknown as SessionCoordinator,
-    dirs: resolveUserDirectories(),
-    configFile: path.join(tempDir("airp-cfg-"), "config.json"),
+    dirs,
+    config: { dirs, env: {}, legacyConfigFile: path.join(root, "config.json") },
   };
 }
 

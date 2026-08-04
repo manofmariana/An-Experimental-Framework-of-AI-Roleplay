@@ -1,8 +1,9 @@
 /**
- * 游玩页输入区 view（优化阶段 D5 抽取，docs/optimization-review.md §10「最小模块」）：
- * 三块结构化输入（台词/行动/内心含意图）+ 五标记区（chips + 参数小表单）+ 暂停选项行。
+ * 游玩页输入区 view：
+ * 三块结构化输入（台词/行动/内心含意图）+ 五标记区（chips + 参数小表单）+
+ * 关系记录区（relations 条目行：目标 CID + name/impression）+ 暂停选项行。
  *
- * 状态所有权：本 view 持有 transient UI 态——markers 草稿 / knownChars（CID 下拉数据源）/
+ * 状态所有权：本 view 持有 transient UI 态——markers 与 relations 草稿 / knownChars（CID 下拉数据源）/
  * blockEls / pauseState（localStorage 跨会话持久化）。reset 规则与 busy 语义见 play.js 头注。
  *
  * 竞态 2 收口（refreshCids）：调用时捕获 {runId, worldSetId}，await 后经
@@ -12,7 +13,7 @@
  */
 import { fetchKnownChars, sameCharsIdentity } from "../async-guards.js";
 
-const PAUSE_STORAGE_KEY = "airp-pause-options";
+const PAUSE_STORAGE_KEY = "ofair-pause-options";
 
 /**
  * @param {object} deps
@@ -30,6 +31,9 @@ export function createPlayInput({ el, api, getCharsIdentity, onInputChange, onEn
   let markers = [];
   let markerChipsEl = null;
   let markerFormEl = null;
+  /** 待发关系记录（DecisionPackage.relations；name/impression 至少其一才合法） */
+  let relations = [];
+  let relationsEl = null;
   /** 会话角色列表（标记 CID 下拉数据源；不含 C0 玩家自己） */
   let knownChars = [];
   /** 五选项 UI 态（auto 为展示态，不下发；其余四项映射 pause_options 消息字段） */
@@ -48,7 +52,7 @@ export function createPlayInput({ el, api, getCharsIdentity, onInputChange, onEn
   }
 
   // -------------------------------------------------------------------------
-  // 标记区（M2-b §5.2）：结构化指令位，即抛；GM 请求与离开互斥（UI 层先挡）
+  // 标记区：结构化指令位，即抛；GM 请求与离开互斥（UI 层先挡）
   // -------------------------------------------------------------------------
 
   function markerLabel(m) {
@@ -91,6 +95,41 @@ export function createPlayInput({ el, api, getCharsIdentity, onInputChange, onEn
     });
   }
 
+  /** 关系记录条目行：目标 CID 标签 + name/impression 输入 + 删除；提交前在输入区可见。 */
+  function renderRelations() {
+    if (!relationsEl) return;
+    relationsEl.textContent = "";
+    relations.forEach((r, i) => {
+      const row = el("span", "relation-row");
+      row.appendChild(el("span", "relation-target", r.target));
+      const name = el("input");
+      name.type = "text";
+      name.placeholder = "名字（可选）";
+      name.value = r.name;
+      name.oninput = () => {
+        r.name = name.value;
+        onInputChange();
+      };
+      const impression = el("input");
+      impression.type = "text";
+      impression.placeholder = "印象（可选）";
+      impression.value = r.impression;
+      impression.oninput = () => {
+        r.impression = impression.value;
+        onInputChange();
+      };
+      const x = el("button", "marker-chip-x", "×");
+      x.title = "移除关系记录";
+      x.onclick = () => {
+        relations.splice(i, 1);
+        renderRelations();
+        onInputChange();
+      };
+      row.append(name, impression, x);
+      relationsEl.appendChild(row);
+    });
+  }
+
   function cidSelect(multiple) {
     const sel = el("select");
     if (multiple) sel.multiple = true;
@@ -102,14 +141,28 @@ export function createPlayInput({ el, api, getCharsIdentity, onInputChange, onEn
     return sel;
   }
 
-  /** 召回/联系需要参数：在标记行展开小表单，确定后加标记并收起。 */
+  /** 召回/联系/记录关系需要参数：在标记行展开小表单，确定后加标记/条目并收起。 */
   function openMarkerForm(kind) {
     if (!markerFormEl) return;
     markerFormEl.textContent = "";
     const close = () => {
       markerFormEl.textContent = "";
     };
-    if (kind === "recall") {
+    if (kind === "relation") {
+      const sel = cidSelect(false);
+      const ok = el("button", "act marker-btn", "添加");
+      ok.onclick = () => {
+        if (sel.value) {
+          relations.push({ target: sel.value, name: "", impression: "" });
+          renderRelations();
+          onInputChange();
+          close();
+        }
+      };
+      const cancel = el("button", "act marker-btn", "取消");
+      cancel.onclick = close;
+      markerFormEl.append(el("span", "muted", "关系对象："), sel, ok, cancel);
+    } else if (kind === "recall") {
       const sel = cidSelect(false);
       const ok = el("button", "act marker-btn", "添加");
       ok.onclick = () => {
@@ -210,7 +263,7 @@ export function createPlayInput({ el, api, getCharsIdentity, onInputChange, onEn
   // 对外接口
   // -------------------------------------------------------------------------
 
-  /** 构建输入区 DOM（三块输入 + 标记区 + 暂停选项行；发送/停止/继续行归编排层）。 */
+  /** 构建输入区 DOM（三块输入 + 标记区 + 关系记录区 + 暂停选项行；发送/停止/继续行归编排层）。 */
   function mount() {
     const inputArea = el("div");
     inputArea.id = "inputarea";
@@ -250,17 +303,24 @@ export function createPlayInput({ el, api, getCharsIdentity, onInputChange, onEn
     recallBtn.onclick = () => openMarkerForm("recall");
     const contactBtn = el("button", "act marker-btn", "联系…");
     contactBtn.onclick = () => openMarkerForm("contact");
-    markerBtns.append(recallBtn, contactBtn);
+    const relationBtn = el("button", "act marker-btn", "记录关系…");
+    relationBtn.onclick = () => openMarkerForm("relation");
+    markerBtns.append(recallBtn, contactBtn, relationBtn);
     markerChipsEl = el("span", "marker-chips");
     markerFormEl = el("span", "marker-form");
     markerBar.append(markerBtns, markerChipsEl, markerFormEl);
     inputArea.appendChild(markerBar);
 
+    // 关系记录区：已添加的 relations 条目行（目标 + name/impression + 删除）
+    relationsEl = el("div", "relations-bar");
+    inputArea.appendChild(relationsEl);
+
     inputArea.appendChild(pauseBar());
     return inputArea;
   }
 
-  /** 三块输入 + 标记 → DecisionPackage JSON（内心必填；台词与行动至少其一；不合法返回 null）。 */
+  /** 三块输入 + 标记 + 关系记录 → DecisionPackage JSON（内心必填；台词与行动至少其一；
+   *  relations 条目 name/impression 至少其一；不合法返回 null）。 */
   function buildPayload() {
     if (blockEls === null) return null;
     const dialogue = blockEls.dialogue.value.trim();
@@ -272,6 +332,20 @@ export function createPlayInput({ el, api, getCharsIdentity, onInputChange, onEn
     if (action) pkg.action = action;
     if (dialogue) pkg.dialogue = dialogue;
     if (markers.length > 0) pkg.markers = markers;
+    if (relations.length > 0) {
+      const rels = [];
+      for (const r of relations) {
+        const name = r.name.trim();
+        const impression = r.impression.trim();
+        if (!r.target) return null;
+        if (!name && !impression) return null; // relation 至少需要 name 或 impression
+        const entry = { target: r.target };
+        if (name) entry.name = name;
+        if (impression) entry.impression = impression;
+        rels.push(entry);
+      }
+      pkg.relations = rels;
+    }
     return JSON.stringify(pkg);
   }
 
@@ -279,16 +353,20 @@ export function createPlayInput({ el, api, getCharsIdentity, onInputChange, onEn
   function resetTransient() {
     markers = [];
     renderMarkerChips();
+    relations = [];
+    renderRelations();
     if (markerFormEl) markerFormEl.textContent = "";
     if (blockEls) for (const k of Object.keys(blockEls)) blockEls[k].value = "";
     knownChars = [];
   }
 
-  /** 发送成功后清空三块输入与待发标记。 */
+  /** 发送成功后清空三块输入、待发标记与关系记录。 */
   function clearAfterSend() {
     if (blockEls) for (const k of Object.keys(blockEls)) blockEls[k].value = "";
     markers = [];
     renderMarkerChips();
+    relations = [];
+    renderRelations();
     if (markerFormEl) markerFormEl.textContent = "";
   }
 

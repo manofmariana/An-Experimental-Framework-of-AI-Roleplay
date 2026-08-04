@@ -1,14 +1,11 @@
 /**
- * WS 入站协议权威契约（优化阶段 D1，docs/optimization-review.md §9「协议单一来源」
- * 「rollback_and_continue 复合命令」）：Zod discriminated union 是 client → server
- * 消息的唯一权威定义，取代 ws-protocol.ts 手维护 ClientMessage 联合 + 先断言后手检。
+ * WS 入站协议权威契约：Zod discriminated union 是 client → server 消息的唯一权威定义。
  *
- * 字段口径与 SessionCoordinator 命令形状对齐（camelCase）：旧协议字段重命名——
- * input→player_input、command{command}→query{query}、rollback/reroll{seq}→{targetSeq}、
- * new_session{world_set}→{worldSetId}、pause_options 蛇形平铺→options 嵌套 camelCase。
- * 旧 reroll 消息删除、不留兼容映射：重 roll = rollback_and_continue 单条复合命令。
+ * 字段口径与 SessionCoordinator 命令形状对齐（camelCase）：玩家输入 player_input、
+ * 回滚/重 roll 目标段 {targetSeq}、新会话 {worldSetId}、pause_options 的 options
+ * 嵌套 camelCase；重 roll 与回滚统一为 rollback_and_continue 单条复合命令。
  *
- * 阶段 D2「消息身份」（docs/optimization-review.md §5）：mutation 命令携带
+ * 消息身份：mutation 命令携带
  * requestId（定向应答关联）/ runId（会话身份，携带且 ≠ 当前 → SESSION_SWITCHED）/
  * baseRevision（乐观并发闸，不符 → REVISION_CONFLICT）。豁免口径：
  * - pause_options/stop/query/new_session/load_session 免 baseRevision（非 mutation 或自有语义）；

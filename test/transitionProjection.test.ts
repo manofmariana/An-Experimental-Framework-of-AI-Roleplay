@@ -1,5 +1,5 @@
 /**
- * transitionProjection 单测（unit 层，零 IO；优化阶段 D2「Snapshot 与增量 Transition」）：
+ * transitionProjection 单测（unit 层，零 IO）：
  * buildTransition 的引用差分——world 根变/characters 逐 CID 增删改/events append·truncate·
  * 中段分歧重放；historyPatch 恒 replace；editedResult 透传；六类 reason（含合并）透传。
  * draft 路径（cloneTruth/adoptTruth 深拷贝）引用必变 → 值比较兜底过滤"假变化"。

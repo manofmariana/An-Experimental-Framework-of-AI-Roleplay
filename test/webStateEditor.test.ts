@@ -1,5 +1,5 @@
 /**
- * web/views/state-editor.js 单元测试（unit 层，优化阶段 D5 竞态 4 状态编辑器切片）：
+ * web/views/state-editor.js 单元测试（unit 层）：
  * 无 jsdom——极简 fake element 桩（textContent/appendChild/append/isConnected/remove 级别）
  * 覆盖 modal 生命周期断言：
  * - 打开捕获 {runId, baseRevision}，保存 PUT 携带 baseRevision，成功后关闭并注销；

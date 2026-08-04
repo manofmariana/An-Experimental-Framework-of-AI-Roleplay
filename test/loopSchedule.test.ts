@@ -3,7 +3,6 @@ import { describe, it } from "node:test";
 import { CHARACTER_PLACEHOLDERS, type CharacterContext } from "../src/agents/character.js";
 import { GM_PLACEHOLDERS, type GmContext } from "../src/agents/gm.js";
 import type { GameSession } from "../src/application/gameSession.js";
-import { LEAVE_TIMER } from "../src/scheduler/simulator.js";
 import type { CharacterState } from "../src/truth/charactersStore.js";
 import {
   buildAdjudication as gmPkg,
@@ -44,7 +43,7 @@ function makeSession(
 
 // ---------------------------------------------------------------------------
 
-describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系）", () => {
+describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", () => {
   it("无判定轮默认形态：周期完成 X+1、硬保险周期末 GM、X 清零、时钟跳转下一轮", async () => {
     const worldId = `w-t1-${process.pid}`;
     setupWorld(worldId, [
@@ -57,7 +56,7 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     const session = makeSession(runId, worldId, [5, 20], 2, [
       gmPkg({ // seq5：硬保险周期末 GM（X=2）
         narrativity: "full",
-        timer: [
+        durations: [
           { cid: "C0", span: { min: 5 } },
           { cid: "C1001", span: { min: 5 } },
         ],
@@ -125,7 +124,7 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     assert.ok(prosePrompt.includes("GM事件"));
   });
 
-  it("gm_request 标记立即激活：同先攻批全员行动完才 GM；中途 GM 的 timer 契约覆盖同步组全体成员", async () => {
+  it("gm_request 标记立即激活：同先攻批全员行动完才 GM；中途 GM 的 durations 契约覆盖同步组全体成员", async () => {
     const worldId = `w-t2-${process.pid}`;
     setupWorld(worldId, [
       { id: "C0", name: "玩家", location: "loc_A", timer: 0, isPlayer: true },
@@ -135,7 +134,7 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     const runId = `run-t2-${process.pid}`;
     const session = makeSession(runId, worldId, [5, 20], 5, [
       gmPkg({ // seq2：标记触发立即 GM——工作集仅 C1001，契约要求一并覆盖同组未行动的 C0（不设会撕裂组）
-        timer: [{ cid: "C1001", span: { min: 5 } }, { cid: "C0", span: { min: 5 } }],
+        durations: [{ cid: "C1001", span: { min: 5 } }, { cid: "C0", span: { min: 5 } }],
       }),
     ]);
     llm.characterQueues["character:C1001"] = [
@@ -178,7 +177,7 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     const runId = `run-t2b-${process.pid}`;
     const session = makeSession(runId, worldId, [15, 15], 5, [
       gmPkg({ // seq3：批完成后 GM（覆盖本轮全部行动者）
-        timer: [
+        durations: [
           { cid: "C0", span: { min: 5 } },
           { cid: "C1001", span: { min: 5 } },
         ],
@@ -207,7 +206,7 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     assert.equal(session.pipelineInfo.phase, "await_player");
   });
 
-  it("leave/recall：离场归 0 + 超大 timer 冻结；召回复用先攻、timer 归当前 clock、按进组规则归组", async () => {
+  it("leave/recall：离场归 0 + timer 置 null；召回复用先攻、timer 归当前 clock、按进组规则归组", async () => {
     const worldId = `w-t3-${process.pid}`;
     setupWorld(worldId, [
       { id: "C0", name: "玩家", location: "loc_A", timer: 0, isPlayer: true },
@@ -221,11 +220,11 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
       decision({ action: "被召回后的行动" }),
     ];
 
-    // C1001 立离开标记：不触发 GM——程序当场归 0 + 超大 timer
+    // C1001 立离开标记：不触发 GM——程序当场归 0 + timer 置 null
     await session.continuePipeline();
     assert.equal(session.pipelineInfo.phase, "await_player");
     assert.equal(charState(session, "C1001").group, 0);
-    assert.equal(charState(session, "C1001").timer, LEAVE_TIMER);
+    assert.equal(charState(session, "C1001").timer, null);
     assert.equal(calls.filter((c) => c.agent === "gm").length, 0, "离开不触发 GM");
 
     // 玩家结构化输入召回 C1001：timer 归当前 clock（0）、按进组规则归组、先攻复用（25 不变）
@@ -241,7 +240,7 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     assert.equal(session.pipelineInfo.phase, "await_player");
   });
 
-  it("玩家 leave 统一程序化：group=0 + 超大 timer + 清频道，绝不触发 GM", async () => {
+  it("玩家 leave 统一程序化：group=0 + timer 置 null + 清频道，绝不触发 GM", async () => {
     const worldId = `w-t3b-${process.pid}`;
     setupWorld(worldId, [
       { id: "C0", name: "玩家", location: "loc_A", timer: 0, isPlayer: true },
@@ -253,17 +252,17 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     // 开局：仅玩家有计时器 → 停等玩家
     assert.equal(session.pipelineInfo.phase, "await_player");
 
-    // 玩家结构化输入立离开标记：与 NPC 同规——程序当场归 0 + 超大 timer + 清频道
+    // 玩家结构化输入立离开标记：与 NPC 同规——程序当场归 0 + timer 置 null + 清频道
     await session.handlePlayerInput(
       JSON.stringify(decision({ action: "独自离开", markers: [{ type: "leave" }] })),
     );
     const player = charState(session, "C0");
     assert.equal(player.group, 0);
-    assert.equal(player.timer, LEAVE_TIMER);
+    assert.equal(player.timer, null);
     assert.equal(player.channel, null);
     assert.notEqual(worldVars(session)["gm_trigger"], true, "玩家离开不置 GM 触发");
     assert.equal(calls.filter((c) => c.agent === "gm").length, 0, "玩家离开不触发 GM");
-    // 全员无计时器（玩家冻结、甲本就没有）→ 死锁防御停等玩家，不空转
+    // 全员无计时器（玩家离场置 null、甲本就没有）→ 死锁防御停等玩家，不空转
     assert.equal(session.pipelineInfo.phase, "await_player");
     assert.equal(session.turnCount, 1);
   });
@@ -283,11 +282,11 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     ];
     llm.characterQueues["character:C1002"] = [decision({ dialogue: "乙的回应" })];
 
-    // seq1 C1001 行动并立 leave（归 0 + 超大 timer）→ seq2 C1002（同值批）→ 停等玩家
+    // seq1 C1001 行动并立 leave（归 0 + timer 置 null）→ seq2 C1002（同值批）→ 停等玩家
     await session.continuePipeline();
     assert.equal(session.pipelineInfo.phase, "await_player");
     assert.equal(charState(session, "C1001").group, 0);
-    assert.equal(charState(session, "C1001").timer, LEAVE_TIMER);
+    assert.equal(charState(session, "C1001").timer, null);
     assert.equal(calls.filter((c) => c.agent === "gm").length, 0, "离开不触发 GM");
 
     // C1002 与 C1001 同值批：离开者的条目产生时仍在组内，对原组成员保持可见（不受同值批隔离）
@@ -296,7 +295,89 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     assert.ok(!scene.includes("甲的隐秘内心"), "他人 inner 隐藏规则不变");
   });
 
-  it("邀请·接受：contact 触发 GM 立即结算 → 邀请者组下次弹出激活 → confirm 入组（远程 -1）→ timer 归 0 待 GM 重设", async () => {
+  it("未结算离开者不挡 GM 激活闸：行动后立 leave（timer=null、group=0），周期末 GM 正常结算", async () => {
+    const worldId = `w-t3d-${process.pid}`;
+    setupWorld(worldId, [
+      { id: "C0", name: "玩家", location: "loc_A", timer: 0, isPlayer: true },
+      { id: "C1001", name: "甲", location: "loc_A", timer: 0 },
+    ]);
+    const runId = `run-t3d-${process.pid}`;
+    // 骰子按 cid 升序消费：C0=5+5=10，C1001=20+5=25 → C1001 先动
+    const session = makeSession(runId, worldId, [5, 20], 1, [
+      gmPkg({ // seq3：周期末 GM（X=1 达阈值），durations 覆盖行动者 C0 与未结算离开者 C1001
+        durations: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }],
+      }),
+    ]);
+    llm.characterQueues["character:C1001"] = [decision({ markers: [{ type: "leave" }] })];
+
+    // C1001 行动并立 leave（seq1：归 0 + timer 置 null）→ 停等玩家
+    await session.continuePipeline();
+    assert.equal(session.pipelineInfo.phase, "await_player");
+    assert.equal(charState(session, "C1001").group, 0);
+    assert.equal(charState(session, "C1001").timer, null);
+
+    // 玩家行动（seq2）→ 周期完成 X=1 达阈值 → 周期末 GM（seq3）：闸放行未结算离开者，正常结算
+    await session.handlePlayerInput("玩家行动");
+    assert.deepEqual(
+      session.getArchive().map((e) => `${e.seq}:${e.kind}`),
+      ["1:character:C1001", "2:player", "3:gm"],
+    );
+    assert.equal(calls.filter((c) => c.agent === "gm").length, 1);
+    assert.equal(worldVars(session)["cycles_since_gm"], 0);
+    assert.equal(charState(session, "C1001").timer, 5, "离开者由 GM durations 覆盖结算");
+    assert.equal(charState(session, "C0").timer, 5);
+  });
+
+  it("减员至单人 = 独奏节奏起点：幸存者 acted 重置 + X 归 0，幸存者一次单人行动后才周期末 GM", async () => {
+    const worldId = `w-t3e-${process.pid}`;
+    setupWorld(worldId, [
+      { id: "C0", name: "玩家", location: "loc_A", timer: 0, isPlayer: true },
+      { id: "C1001", name: "甲", location: "loc_A", timer: 0 },
+    ]);
+    const runId = `run-t3e-${process.pid}`;
+    // gmIntervalCycles=5（远大于硬保险阈值 1）：GM 在 seq6 触发即证明独奏节奏从 leave 起计
+    const session = makeSession(runId, worldId, [5, 20], 5, [
+      gmPkg({ durations: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }] }), // seq6：独奏周期末
+    ]);
+    session.setPauseOptions({ everyStep: false, beforeGm: false, afterGm: true, afterProse: false });
+    llm.characterQueues["character:C1001"] = [
+      decision({ dialogue: "甲一周期" }),
+      decision({ dialogue: "甲二周期" }),
+      decision({ dialogue: "甲独奏" }),
+    ];
+
+    // 周期 1：seq1 C1001 → 停等玩家；玩家行动（seq2）→ 周期完成 X=1 → 周期 2：seq3 C1001 → 停等
+    await session.continuePipeline();
+    await session.handlePlayerInput("玩家一周期");
+    assert.equal(session.turnCount, 3);
+    assert.equal(worldVars(session)["cycles_since_gm"], 1);
+    assert.equal(charState(session, "C1001").acted, true);
+
+    // 玩家立 leave（seq4）：幸存者 C1001 acted 重置 + X 归 0（本步 effects 留痕）
+    // → C1001 一次单人行动（seq5）→ 独奏周期完成 X+1 达硬保险阈值 1 → 周期末 GM（seq6）
+    await session.handlePlayerInput(
+      JSON.stringify(decision({ action: "独自离开", markers: [{ type: "leave" }] })),
+    );
+    const seq4 = session.getArchive()[3]!;
+    assert.equal(seq4.kind, "player");
+    assert.ok(
+      flat(seq4).some((c) => c.path === "characters.C1001.acted" && c.before === true && c.after === false),
+      "幸存者本周期已行动也重置 acted",
+    );
+    assert.ok(
+      flat(seq4).some((c) => c.path === "world.cycles_since_gm" && c.before === 1 && c.after === 0),
+      "减员至单人时 X 归 0",
+    );
+    assert.deepEqual(
+      [...session.getArchive(), session.getPipelineCurrent()!].map((e) => `${e.seq}:${e.kind}`),
+      ["1:character:C1001", "2:player", "3:character:C1001", "4:player", "5:character:C1001", "6:gm"],
+      "幸存者一次单人行动后才 GM（双人期累积的 X 不得立即满足周期完成判定）",
+    );
+    assert.equal(worldVars(session)["cycles_since_gm"], 0);
+    assert.equal(charState(session, "C0").timer, 5, "离开者由 GM durations 覆盖结算");
+  });
+
+  it("邀请·接受：contact 触发 GM 立即结算 → 邀请者组下次弹出激活 → confirm 入组（远程 -1）→ timer 归当前时钟（立即到期）待 GM 重设", async () => {
     const worldId = `w-t4-${process.pid}`;
     setupWorld(worldId, [
       { id: "C0", name: "玩家", location: "loc_A", timer: 0, isPlayer: true },
@@ -305,9 +386,9 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     ]);
     const runId = `run-t4-${process.pid}`;
     const session = makeSession(runId, worldId, [5, 20, 8], 1, [
-      gmPkg({ timer: [{ cid: "C1001", span: { min: 5 } }, { cid: "C0", span: { min: 5 } }] }), // seq2：contact 触发 GM 立即结算（覆盖同组未行动的 C0）
+      gmPkg({ durations: [{ cid: "C1001", span: { min: 5 } }, { cid: "C0", span: { min: 5 } }] }), // seq2：contact 触发 GM 立即结算（覆盖同组未行动的 C0）
       gmPkg({ // seq6：新组周期末（覆盖应答者与新组全部行动者）
-        timer: [
+        durations: [
           { cid: "C1001", span: { min: 10 } },
           { cid: "C1002", span: { min: 10 } },
           { cid: "C0", span: { min: 10 } },
@@ -323,21 +404,21 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     ];
 
     // seq1 C1001 contact：频道分配（双方同 id）+ 触发立即 GM（seq2，C0/C1001 一并推远到 t=5）
-    // → 时钟跳到 5 组弹出：邀请激活，C1002 timer→0 应答（seq3，confirm 入组、远程 -1）
+    // → 时钟跳到 5 组弹出：邀请激活，C1002 timer→当前时钟（t=5）应答（seq3，confirm 入组、远程 -1）
     // → C1001 补完（seq4）→ 停等玩家
     await session.continuePipeline();
     assert.equal(session.turnCount, 4);
     assert.equal(charState(session, "C1001").channel, 1);
     assert.equal(charState(session, "C1002").channel, 1);
     assert.equal(session.pipelineInfo.phase, "await_player");
-    // 邀请延迟生效：邀请时 timer 不动，激活落账才从邀请前值 60 置 0（应答步 changes 留痕）
+    // 邀请延迟生效：邀请时 timer 不动，激活落账才从邀请前值 60 置当前时钟（应答步 changes 留痕）
     const answer = session.getArchive()[2]!;
     assert.equal(answer.kind, "character:C1002");
     assert.ok(
-      flat(answer).some((c) => c.path === "characters.C1002.timer" && c.before === 60 && c.after === 0),
-      "邀请激活：timer 置 0 弹出（before 留存邀请前值）",
+      flat(answer).some((c) => c.path === "characters.C1002.timer" && c.before === 60 && c.after === 5),
+      "邀请激活：timer 置当前时钟弹出（立即到期；before 留存邀请前值）",
     );
-    // confirm：并入邀请者组（新组）、位置 ≠ 组位置 → 先攻 8+5-1=12、timer 归 0、计入已行动
+    // confirm：并入邀请者组（新组）、位置 ≠ 组位置 → 先攻 8+5-1=12、timer 归当前时钟、计入已行动
     const invitee = charState(session, "C1002");
     const inviter = charState(session, "C1001");
     assert.equal(invitee.group, inviter.group);
@@ -347,7 +428,7 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
       flat(answer).some((c) => c.path === "characters.C1002.acted" && c.after === true),
       "首轮回复计入已行动（confirm 效应置 acted）",
     );
-    // incoming_contact 注入（无状态 activation §4，逐调用 Context）：应答步（seq3）激活的 prompt
+    // incoming_contact 注入（无状态 activation，逐调用 Context）：应答步（seq3）激活的 prompt
     // 含邀请者 + 途径通知；其后的常规激活（seq8，见下方续跑）不再注入该通知
     assert.ok(
       callsText("character:C1002", 3).includes("@C1001 正在通过「电话」联系你"),
@@ -385,9 +466,9 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     ]);
     const runId = `run-t5-${process.pid}`;
     const session = makeSession(runId, worldId, [5, 20], 1, [
-      gmPkg({ timer: [{ cid: "C1001", span: { min: 5 } }, { cid: "C0", span: { min: 5 } }] }), // seq2（覆盖同组未行动的 C0）
+      gmPkg({ durations: [{ cid: "C1001", span: { min: 5 } }, { cid: "C0", span: { min: 5 } }] }), // seq2（覆盖同组未行动的 C0）
       gmPkg({ // seq6：周期末（拒绝应答在工作集中，契约须覆盖）
-        timer: [
+        durations: [
           { cid: "C1001", span: { min: 10 } },
           { cid: "C1002", span: { min: 10 } },
           { cid: "C0", span: { min: 10 } },
@@ -408,10 +489,10 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     // seq5 玩家 → 周期完成 → seq6 周期末 GM → t=15 弹出：seq7 C1001（C1002 单人组串行在后）→ 停等玩家
     assert.equal(session.turnCount, 7);
     assert.equal(session.pipelineInfo.phase, "await_player");
-    // 拒绝：timer 自动还原为邀请前值（应答步 changes：0 → 60），不调用 GM
+    // 拒绝：timer 自动还原为邀请前值（应答步 changes：5 → 60），不调用 GM
     const answer = session.getArchive()[2]!;
     assert.ok(
-      flat(answer).some((c) => c.path === "characters.C1002.timer" && c.before === 0 && c.after === 60),
+      flat(answer).some((c) => c.path === "characters.C1002.timer" && c.before === 5 && c.after === 60),
       "拒绝：timer 自动还原为邀请前值",
     );
     assert.ok(
@@ -433,9 +514,9 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     ]);
     const runId = `run-t6-${process.pid}`;
     const gmScripts = () => [
-      gmPkg({ timer: [{ cid: "C1001", span: { min: 5 } }, { cid: "C0", span: { min: 5 } }] }), // seq2（覆盖同组未行动的 C0）
-      gmPkg({ timer: [{ cid: "C1001", span: { min: 10 } }, { cid: "C1002", span: { min: 10 } }, { cid: "C0", span: { min: 10 } }] }), // seq6（新组完整周期末）
-      gmPkg({ timer: [{ cid: "C1001", span: { min: 10 } }, { cid: "C1002", span: { min: 10 } }, { cid: "C0", span: { min: 10 } }] }), // seq10（回溯前继续）
+      gmPkg({ durations: [{ cid: "C1001", span: { min: 5 } }, { cid: "C0", span: { min: 5 } }] }), // seq2（覆盖同组未行动的 C0）
+      gmPkg({ durations: [{ cid: "C1001", span: { min: 10 } }, { cid: "C1002", span: { min: 10 } }, { cid: "C0", span: { min: 10 } }] }), // seq6（新组完整周期末）
+      gmPkg({ durations: [{ cid: "C1001", span: { min: 10 } }, { cid: "C1002", span: { min: 10 } }, { cid: "C0", span: { min: 10 } }] }), // seq10（回溯前继续）
     ];
     const session = makeSession(runId, worldId, [5, 20, 8, 8], 1, gmScripts());
     llm.characterQueues["character:C1001"] = [
@@ -486,8 +567,8 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     ]);
     const runId = `run-t7-${process.pid}`;
     const session = makeSession(runId, worldId, [5, 20], 1, [
-      gmPkg({ narrativity: "full", timer: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }] }), // seq3
-      gmPkg({ timer: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }] }), // seq7（abort 后继续）
+      gmPkg({ narrativity: "full", durations: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }] }), // seq3
+      gmPkg({ durations: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }] }), // seq7（abort 后继续）
     ]);
     await session.continuePipeline(); // seq1 → 停等
     llm.abortAt = { agent: "character:C1001", seq: 5, partial: "半截" };
@@ -517,7 +598,7 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     await session.handlePlayerInput("玩家行动"); // seq2 → seq3 GM abort
     const pkg = gmPkg({
       narrativity: "skip",
-      timer: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }],
+      durations: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }],
       location: [{ cid: "C0", location: { name: "分开地点", level: 1 } }],
     });
     session.editResult(JSON.stringify(pkg));
@@ -536,7 +617,7 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     ]);
     const runId = `run-t9-${process.pid}`;
     const session = makeSession(runId, worldId, [5, 20], 1, [
-      gmPkg({ narrativity: "full", timer: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }] }), // seq3
+      gmPkg({ narrativity: "full", durations: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }] }), // seq3
     ]);
     llm.abortAt = { agent: "prose", seq: 4, partial: "停住" };
     await session.continuePipeline(); // seq1
@@ -546,7 +627,7 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     const edited = gmPkg({
       events: [{ text: "@C0 对 @C1001 说：\"玩家行动\"", tags: ["known_by:C0"], location: "loc_A" }],
       narrativity: "full",
-      timer: [{ cid: "C0", span: { min: 10 } }, { cid: "C1001", span: { min: 10 } }],
+      durations: [{ cid: "C0", span: { min: 10 } }, { cid: "C1001", span: { min: 10 } }],
     });
     session.editResult(JSON.stringify(edited));
 
@@ -580,8 +661,11 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     const validate = (session as unknown as { validateWorkingSetRound: (cids: string[]) => void }).validateWorkingSetRound.bind(session);
     assert.doesNotThrow(() => validate(["C0", "C1001"]));
     assert.throws(() => validate([]), /工作集为空/);
-    const characters = (session as unknown as { characters: { setVars: (cid: string, patch: { timer: null }) => unknown } }).characters;
-    characters.setVars("C1001", { timer: null });
+    const characters = (session as unknown as { characters: { setVars: (cid: string, patch: { timer: null; group?: number }) => unknown } }).characters;
+    // 未结算离开者（group=0 + timer=null）豁免；无法用离场解释的缺计时器（group≠0）仍拒绝
+    characters.setVars("C1001", { timer: null, group: 0 });
+    assert.doesNotThrow(() => validate(["C1001"]));
+    characters.setVars("C1001", { timer: null, group: 1 });
     assert.throws(() => validate(["C1001"]), /无计时器/);
   });
 

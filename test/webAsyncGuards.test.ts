@@ -1,5 +1,5 @@
 /**
- * web/async-guards.js 单元测试（unit 层，优化阶段 D5）：四个竞态的可测纯逻辑——
+ * web/async-guards.js 单元测试（unit 层）：四个竞态的可测纯逻辑——
  * 竞态 1 会话详情 epoch 守卫 + fetchRunDetail 取数归一（fake apiFn 驱动）；
  * 竞态 2 fetchKnownChars 身份取数 + sameCharsIdentity 写闸；
  * 竞态 3 loadSessionThenNavigate（fake sendCommand 可控 resolve/reject，成功才导航）；

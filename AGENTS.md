@@ -1,8 +1,27 @@
-# Agent-AIRP
+# Ofair（Open Framework of AI Roleplay）
 
-多 Agent 架构的 AI 角色扮演系统，取代 SillyTavern 式单上下文结构。核心：**一个 GM 导演 + 拥有私域上下文的角色 Subagent + 受约束的正文渲染器**，真相存于结构化事件日志而非聊天文本。
+多 Agent 架构的 AI 角色扮演系统：**一个 GM 导演 + 拥有私域上下文的角色 Subagent + 受约束的正文渲染器**，真相存于结构化事件日志而非聊天文本。
 
-**架构唯一基准是 `DESIGN.md`**——任何架构性修改必须先读它并与之对齐；修改架构必须同步更新它。P1 阶段细化（多角色与事件记录体系）见 `DESIGN-P1.md`；领域词汇表见 `CONTEXT.md`（术语含义与冲突消解以此为准），架构决策记录见 `docs/adr/`。
+## 文档体系
+
+文档只有两类：**现在**（当前状态）与**规划**（未来计划）；ADR 记录难逆决策的理由。除本文件外全部文档在 `docs/` 下。
+
+| 文档 | 类 | 职责 |
+|---|---|---|
+| `docs/DESIGN.md` | 现在 | 架构基准：现行机制的唯一设计出处；架构性修改必须先读并对齐，修改后同步更新 |
+| `docs/ROADMAP.md` | 规划 | 未来计划；规划项落地即移入 DESIGN.md 并从此处删除 |
+| `docs/CONTEXT.md` | 现在 | 领域词汇表：术语定义与冲突消解的唯一口径 |
+| `docs/CODEINDEX.md` | 现在 | 改动指向地图：逐文件职责/IO/依赖方向；新文件必须先登记再写码 |
+| `docs/adr/` | 决策记录 | 难逆且理由不显然的取舍 |
+| `docs/BUGS.md` | 现在 | 未解决、难复现 bug 登记 |
+
+治理纪律：
+
+1. **单一出处**：同一内容只在一个文档出现一次，他处只给指针，不重复维护。
+2. **只记现状**：已完成的改动只写改后的状态，不写"从 A 改成 B"；已移除的机制视作从未存在。代码注释同此纪律。
+3. **注释不引文档**：代码注释只说功能，不引用文档名与章节号。
+4. **规划落地即迁移**：规划项完成时把内容从规划移入"现在"文档，规划处不留记录。
+5. **写入触发**：改代码 → 同步 CODEINDEX.md；改机制 → 同步 DESIGN.md 与 CONTEXT.md；难逆取舍 → ADR。文档间发现矛盾 → 以代码现状为准，当场修正文档。
 
 ## 技术栈
 
@@ -24,42 +43,31 @@ npm run test:unit / test:contract / test:application / test:integration
 npm run check      # 日常门禁 = typecheck + test:arch + test:fast
 ```
 
-启动器：`Agent-AIRP.bat`（CLI）、`Agent-AIRP-WebUI.bat`（WebUI + 自动开浏览器）。
-
-配置：根目录 `config.json`（已 gitignore，模板 `config.example.json`）。顶层 `api_key/base_url/model` 为公共默认，`agents.{character|gm|prose}` 块可逐 agent 覆盖；`json_mode`（默认 false）与 `reasoning_effort`（原样透传不锁枚举）同样支持顶层 + 逐 agent 覆盖；`memory.prose_window_turns` 为正文滑窗大小（默认 5）；环境变量 `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL` / `DEEPSEEK_MODEL` 优先于顶层字段。设置页保存**立即热生效**（PUT /api/config → GameSession.reloadConfig 原地更新三个 OpenAI adapter 与滑窗/GM 间隔，不走 markStale）；world/character 域仍是新会话生效。服务端绑定地址可用 `AIRP_HOST` / `AIRP_PORT` 覆盖。
+启动器：`Ofair-WebUI.bat`（WebUI + 自动开浏览器）。
 
 ## 目录结构
 
-**逐文件职责/IO/依赖方向见 `docs/architecture.md`（改动指向地图；新文件必须先登记再写码）。**
+逐文件职责/IO/依赖方向的唯一出处是 `docs/CODEINDEX.md`；新文件必须先登记再写码。顶层布局：
 
-- `src/types.ts` — 全部契约（zod schema）：Event（@ID 占位 + 统一 known_by tags）/ DecisionPackage（**inner 必填**（内心与意图，intent 已并入）；action/dialogue 至少其一；relations/markers 可选——markers = 五标记结构化数组 gm_request/leave/recall/contact/confirm，gm_request 与 leave 互斥）/ AdjudicationPackage v2（events 数组 + narrativity + deltas + timer + location）/ Span·Location（时间偏移与结构化地点）；玩家固定 `C0`，角色 ID 为 C+编号
-- `src/scheduler/` — `simulator.ts`（**纯逻辑派生函数集**：nextDue / reconcileGroups（timer+location 并组 + id 保稳继承：精确>增员>减员>人少并入人多）/ groupLocation（组位置 = 先攻最高者 location）/ orderGroups（同刻多组串行）/ visibleEvents（known_by 唯一通道）/ rollInitiative·initiativeBatches·rerollInitiative（d20+reaction，同值同批，{value,group} 结构，补投不波及全组）；禁 IO import，`test/simulator.test.ts` 有元测试守护）
-- `src/compile/` — `template.ts`（模板 schema/加载/占位符校验）+ `compiler.ts`（**纯渲染器**：模板 × 占位符注册表 × 注入上下文 → ChatMessage[]；占位符注册表 = 唯一出口，新占位符 = 注册新 provider）
-- `src/truth/` — **统一版本存档核心文件**：events/lore/world/characters/archive/time 均带同一 `schema_version`（saveSchema.ts 校验，旧版或混合版本明确拒绝且不迁移）；**六个 Store 是纯内存容器（无 fs），唯一写盘出口 = `generationRepository.ts`，唯一提交入口 = `commitExecutor.ts`**（存档 v7：Generation 布局，步边界一次写整代；TruthStores/cloneTruth/adoptTruth/collectSave 公共化在 `stores.ts`，loop 与 application 规划器共用；CommitPlan = transactionId/baseRevision/reason(init·step·gm·rollback·admin_edit)/changes，plan 不落盘；runDir 注入，禁 import config）；`world.json={schema_version,world:{time:{y,m,d,h,min},...},pipeline}`（clock 由 world.time 派生，不落盘）；characters 单文件仅含同构 C* 角色（name/gender/age/personality + 调度变量 + relations/长期记忆/vars；无 gm key、无 persona/voice_anchor）；archive 正文结果持久化 `participants+scenes`（正文滑窗按 CID+连续场景过滤的数据源）；timeStore（time.json 档内副本 + 结构化时间渲染）；snapshot（注入层状态序列化：timer 分钟标量 → {y,m,d,h,min} 结构化，LEAVE_TIMER → "已离开待结算"；**DeepReadonly/deepFreeze 恒冻结**：loadGeneration 返回前 + 每次 commit/adopt 后递归冻结，查询出口只读，越界写入测试期立刻爆炸）；另有 lorebook/identity/workingSet
-- `src/llm/` — chatPort（ChatPort/ChatRequest/ChatResult/LLMAbortedError 端口定义）/ openaiChatAdapter（OpenAI 兼容 adapter，buildRequestParams 等纯函数）/ callLog（recent+cacheStats 落盘 decorator，写盘失败只告警）/ cacheStats（埋点）/ recent（llm-recent/{agent}.json 最近 5 轮滚动窗）
-- `src/agents/` — **无状态 activation**（§4：构造只持 ChatPort，全量上下文逐调用传入，实例零跨调用缓存）：character（私域上下文+人际关系库自维护；单一 CharacterActivation 服务全部 NPC）/ gm（重裁决+@ID 转写，**红线：不替主要角色决策**，写在 `data/prompts/gm.prompt.json` 的裁决协议模块里）/ prose（**无工具纯渲染器**）；各自导出占位符注册表 `*_PLACEHOLDERS`；注入上下文由 `src/application/activationContexts.ts` 逐调用现算（cast 现建、lore 逐调用渲染档内副本）
-- `src/shared/` — 跨层基础工具（safeSegment 路径安全段校验；不依赖 src 内任何模块）；`src/contracts/` — 共享 zod 契约（配置/Secrets/Preset/脱敏视图，阶段 A4 起契约先行，不依赖 truth/agents/server/llm/loop；**config.json 文件形状唯一出处 = `FileConfigSchema`**，D3 起取代 server 手工字段表）+ **WS 入站协议唯一权威 `protocol.ts`**（阶段 D1：ClientCommandSchema + parseClientCommand → ProtocolError；旧 reroll 已删，重 roll = rollback_and_continue 单命令；前端唯一适配器 `web/protocol.js` 的 buildCommand/serialize，契约测试对拍）；`src/resources/` — 用户资源目录解析（UserDirectories(default_user)，现行 legacy 路径映射，config.ts 路径常量由此派生）+ **仓储层**（D3：`runRepository` 存档列表/别名/删除/回放产物——旧平铺档 LEGACY_RUN_UNSUPPORTED 不回落；`worldRepository` 世界三文件/角色 manifest/提示词文件读写 + 世界集解析 canonical 实现）
-- `data/prompts/{character,gm,prose}.prompt.json` — 模块化提示词模板（模块 = {key, role, content}，content 内 `{{placeholder}}`；Web 可编辑，**每轮激活前热加载**，保存后下一轮即生效；旧的 `src/prompts/` md 已废除）
-- `src/server/` — WebUI 后端（http + ws，**D3 边界收敛**：`index.ts` 仅装配启动；`static.ts` 静态服务；`ws-transport.ts` 连接/广播 + `ws-controller.ts` 协议→Coordinator→回复成形，线协议 D2 定稿不变；`http/` = envelope（`{ok:true,data}`/`{ok:false,error:{code,message}}`，response/errors/router）+ 分域 routes（config/worlds/characters/prompts/sessions/activeSession），旧 `api.ts` 已消亡；状态码纪律：400 BAD_JSON/VALIDATION_ERROR、404 各 NOT_FOUND/LEGACY_RUN_UNSUPPORTED、405+Allow、409 SESSION_BUSY/SESSION_ACTIVE/REVISION_CONFLICT、500 INTERNAL_ERROR/RUN_CORRUPT）；会话生命周期与命令队列在 `src/application/sessionCoordinator.ts`（server 直接持有 Coordinator）；`PUT /api/session/state` 状态直编（经 direct_edit 命令入队——串行队列即空闲闸不置 busy，LLM 在途拒绝；world/characters/events 整体替换；变量域经 varDiff 净额并入当前步 changes.effects——可回溯，事件域按 seq 截断口径）；状态同步 = onCommit → transition 单条广播 + snapshot（重连单播/会话切换广播）
-- `src/application/` — 应用层（禁依赖 server，scheduler/truth/contracts/compile 不得依赖它，审计守护）：
-  - **统一效果规划器**（正常输出与编辑重放同一入口，只变异 draft 并返回 `VarChange[]`，永不持久化）：`actorEffects.ts`（planActorDecision：玩家/NPC/编辑统一，工作集/relations/acted/邀请应答/五标记）/ `gmEffects.ts`（planGmAdjudication：deltas/timer/location/复位/组派生/事件 commit/工作集清算）/ `scheduleEffects.ts`（applyScheduleSetup 轮首 setup 段落账 + rederiveGroups/cleanupChannels + 调度视图工具）/ `workingSetProjection.ts`（projectWorkingSet 纯函数，切片由调用方传入）/ `prepareNextCommand.ts`（执行入口统一收口）
-  - `activationContexts.ts` — activation 上下文构建器（§4）：三个无状态 activation 的注入上下文从真相 + 派生投影逐调用现算（cast 现建 / lore 逐调用渲染 / 可见事件 / 正文滑窗 / 当前场景 / 被联系通知），持有世界集静态文本（setting/toneCard）
-  - `gameSession.ts` — GameSession 会话内核（注入式构造；M2 计时器 DES：deriveNext 派生"下一步该谁"（无快照，回溯零特例）、单活跃组 + 同刻多组串行、行动顺序 = initiative 现排、已行动位 = 角色 acted 变量、周期计数 X = world 变量、无判定轮（GM 标记立即激活/硬保险 N 周期末激活）+ 五标记即时执行 + 邀请延迟生效 + 频道变量、GM 多事件裁决（timer 必非 0 + 精确覆盖全体同步组成员与刚离组者契约）+ 工作集清算、分步流水线；**编辑/回滚/直编 = draft 机制**：cloneTruth → draft 变异 → commitTruth 一次提交 → adoptTruth（Store 身份不变），失败零副作用；activation 无状态（§4），commit 后无 agent 缓存需重建/通知）；phase 不落盘，pipelineInfo 现算；无独立 reroll——重 roll = Coordinator 的 rollback_and_continue 复合命令）
-  - `sessionFactory.ts` — 会话装配（configs/runId/options/worldSetId → GameSession）：ChatPort/adapter 装配、模板启动校验、世界设定集读取、meta.json（world_set）读写、六 Store 初始/续档装载、无状态 activation 装配；`SessionFactory` 端口 + `productionSessionFactory`（config 读取与存档存在性校验）
-  - `sessionCoordinator.ts` — **单一命令协调器**（唯一串行 mutation 入口，含 new/load）：`SessionCommand` 分发 + 串行队列 + busy 闸 + baseRevision 乐观并发校验（RevisionConflictError；协议字段接线留阶段 D）+ rollback_and_continue 复合命令（同一队列任务内 rollback→continue，不可插队）+ stale 标记/pauseOptions 记忆/stop 队列外中止/reloadConfig 热更新转发；epoch/晚到结果丢弃/强制结束属阶段 D 消息身份（注释登记）
-  - `historyProjection.ts` — 历史回显与正文素材投影（buildHistory/proseWindow 系列/participantTags；纯展示，零 IO）
-- `src/cli.ts` / `src/display.ts` — CLI（经 SessionCoordinator 发命令）与显示层接口
-- `web/` — Vanilla 单页前端（无构建），六页签：游玩/会话/角色/世界/提示词/配置（`web/pages/*.js` 一页一文件）；游玩历史一轮可显示多张角色卡。D5：`resource-context.js`（资源 URL 唯一构造口，捕获 {username, worldSetId} 即不可变，全程 `?set=`）+ `async-guards.js`（四竞态可测纯逻辑：epoch 守卫/CID 写闸/modal 存活判定/读档成功后导航）+ `views/{play-stream,play-input,state-editor}.js`（play.js 已收口为编排层；view 全注入 el/api 不 import app.js）
-- `data/worlds/{setId}/` — 世界设定集（setting.md / tone-card.md / lorebook.json / time.json / player.json / characters/*.json）；示例集 `baitan` 含 C0 开局配置与 C1001–C1003 三名 NPC，新会话可选
-- `runs/{runId}/` — 存档 v7（Generation 布局，统一 `schema_version` 当前 v7）：`CURRENT`（文本 = 6 位零填充 revision）+ `generations/{revision}/`（world.json / characters.json / events.json / archive.json / lore.json / time.json 六真相文件）；步变化分段 `changes={setup,effects}`（v7 起，取代 var_changes 扁平记录与 effects_from/markers_from 下标；pipeline.phase 已删除，一律现算）；旁路产物留 run 根不进 Generation：meta.json（世界设定集选择）/ save-meta.json（别名）/ cache-stats.jsonl / llm-recent/{agent}.json（**旧平铺档（无 CURRENT 而有六平铺文件）即拒绝加载，须新建会话，旧档永不迁移**；步边界整代提交经 CommitExecutor → GenerationRepository，唯一写盘出口）
+- `src/` — 后端源码：`types.ts`（zod 契约）/ `scheduler/`（纯逻辑调度派生）/ `compile/`（模板渲染）/ `truth/`（真相层与存档）/ `llm/`（ChatPort 与 OpenAI adapter）/ `agents/`（无状态 activation）/ `application/`（会话内核与协调器）/ `server/`（HTTP+WS 后端）/ `contracts/` `resources/` `shared/`
+- `web/` — 无构建 Vanilla 单页前端：`pages/*.js` 六页签（游玩/会话/角色/世界/提示词/配置）+ `views/` + store/transport/protocol 三件套
+- `test/` — node:test 测试（`builders/` `fakes/` `harness/` 测试基建）
+- `scripts/` — 依赖审计与四层套件 runner
+- `docs/` — 全部项目文档（见「文档体系」）
+- `data/assets/{setId}/` — 世界包：`setting.md` / `tone-card.md` / `lorebook.json` / `time.json` / `player.json` / `characters/*.json` / `prompts/*.prompt.json`（示例包 `baitan`，新会话可选）
+- `data/users/{username}/` — 用户资源：`secrets.json` / `api-presets/` / `settings.json` / `save/{runId}/` 存档（Generation 布局：`CURRENT` + `generations/{revision}/` 六真相文件，旁路产物留 run 根）
 
-## 不可违反的架构纪律
+## 配置
 
-1. **真相层唯一写入者 = GM**（经裁决包 commit，@ID 占位 + 统一 tags）；玩家/角色言行先进当前轮工作集，GM 转写才成事件；任何 agent 不读 GM 进行中状态；正文只是视图，不得反向污染真相。
-2. **缓存友好是模板编辑约定**（动态内容——近期事件/正文滑窗/#当前场景——放尾部模块）：compiler 是纯渲染器，不做逐字节/append-only 断言；时间戳/轮次禁令已取消（时间、地点经占位符注入）。新注入内容必须经过占位符注册表（provider），不得在组装代码里散落硬编码拼接；**provider 纯净化——只输出数据本身，标题/节名/包装前缀一律写在模板静态文案里**。
-3. **simulator.ts 必须保持纯逻辑**（无 IO/LLM import，元测试断言守护）。
-4. **正文 agent 永不加工具/检索权**；GM 不得替主要角色决策、事件写作为**摘要制**（不完整转述台词、禁人称代词、保言行顺序、只记已发生）、写 events 用 @CID 占位（红线写进 `data/prompts/gm.prompt.json`）。
-5. 每次激活 = 全新调用，无对话历史；连续性靠编译器从真相层+记忆结构化注入。
+用户资源三件（`data/users/{username}/` 下）：`secrets.json`（密钥，同 kind 至多一条 active，公共视图只出末 4 位掩码）、`api-presets/{id}.json`（base_url/model/json_mode/reasoning_effort，引用 secret 不复制 key）、`settings.json`（proseWindowTurns 滑窗默认 5 / gmIntervalCycles / agentPresets 三 activation→preset 绑定 / configRevision 配置版本）。根目录旧版 `config.json` 存在且 secrets.json 不存在时，首次读取自动迁移为三资源并改名 `config.json.migrated.bak`（幂等闸）。环境变量 `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL` / `DEEPSEEK_MODEL`（及 OPENAI_*）为部署级覆盖。全部修改走**配置事务**（`src/application/configService.ts`：baseConfigRevision 乐观并发闸（409）→ 草稿 → 解析三 activation（失败 400 零落盘）→ 原子保存（configRevision+1，与游戏 revision 分离）→ 同一份 resolved 热应用运行中会话（原地更新三个 adapter 与滑窗/GM 间隔；失败回滚资源文件报 500））；world/character 域新会话生效。
+
+服务端部署配置为 `server.json`（项目根，已 gitignore，模板 `server.json.example`）：listen/hostWhitelist/ipWhitelist/allowKeysExposure；`OFAIR_HOST` / `OFAIR_PORT` 优先于 listen 块；缺文件 = 全默认 loopback 放开；basicAuth/ssl/proxy/broadcast 四块接受配置但加载时 warn「已配置但未实现，忽略」（不做半成品假安全）。HTTP 与 WS upgrade 入口统一过 `src/server/accessControl.ts` 纯判定（Host 白名单——loopback 默认放行 localhost/127.*/[::1]；WS Origin 须匹配 Host；ipWhitelist 非空必命中），拒绝 → 403 FORBIDDEN。
+
+## 工程纪律
+
+1. **高内聚**：功能模块化，深模块优于浅模块，反对上帝模块。一个模块一个明确职责，接口窄、实现深；新功能优先落进已有模块的职责边界，装不下才开新文件，开新文件必须先登记 `docs/CODEINDEX.md` 再写码。
+2. **低耦合**：多复用已有，少建立专线；重复逻辑公共化。新能力优先走既有的唯一通道——注入经占位符注册表、写盘经 CommitExecutor、mutation 经 SessionCoordinator 队列；层间依赖方向由 `npm run test:arch` 机械守护，禁边不得新增。
+3. **重审核**：所有改动动手前先汇报——改动对象、影响范围、能否利用已有内容实现；确认后才动手；范围超出汇报即停下来重新汇报；改完必跑门禁并汇报实测结果。
 
 ## 开发约定
 
@@ -67,15 +75,10 @@ npm run check      # 日常门禁 = typecheck + test:arch + test:fast
 - 测试用 Node 内置 `node:test`，不加测试框架；测试文件在 `test/*.test.ts`，与源码模块大致一一对应（含 config/compiler/各 truth store/server API/回溯等）。
 - Display 接口（`src/display.ts`）是 UI 协议层：CLI 与 WebUI 各是一个实现，GameSession 不感知前端。
 - **提示词模板热加载，但代码不热重载**——改代码后必须重启服务再新建会话验证（存档版本不符会拒绝加载，这是防"旧代码+新模板"混合态的设计，不是故障）。
-- GM 事件写作纪律（@CID 占位、known_by 谁感知标谁）是**提示词协议层**约束，不做程序强校验；提示词模板示例禁用真实 CID（用 `<CID_甲>` 抽象占位）。
 - 改动后必须 `npm run typecheck` 干净 + `npm test` 全绿。
 
 ## 安全注意
 
-- `config.json` 含 LLM API key，已 gitignore，**绝不提交**；对外只发 `config.example.json` 模板。
-- WebUI 默认只绑 loopback（`127.0.0.1:8787`）；`AIRP_HOST` 绑非 loopback 地址时服务端会打印公网暴露警告——这是有意设计，不要绕过。
-- 读档内副本原则：新会话把世界 lorebook 拷入 `runs/{id}/lore.json`，运行期增删改只动副本，不污染 `data/` 原始设定集。
-
-## 当前阶段
-
-P1-M1 已完成（事件记录体系 + 存档 v2 + 回溯/停止/编辑/继续/重 roll，DESIGN-P1 §10.1/§10.2）。**M2-a 已完成**：计时器 DES 异步多角色核心、存档 v3、快照注入、GM 裁决包 v2、白滩镇开局。**M2-b 已实现（DESIGN-P1 §5/§10.4，ADR-0004）**：无判定轮与五标记体系（gm_request/leave/recall/contact/confirm，结构化 markers 数组，不进工作集不进注入）、GM 按需激活（标记立即/硬保险 N 周期末，N = `gm_interval_cycles` 默认 3）、inScene/inTalk 合并为单 group 变量（组位置派生、入组位置不同先攻 -1）、initiative 结构化 {value,group}、行动顺序表（顺序派生 + acted 角色变量 + X 世界变量）、邀请延迟生效与频道变量、玩家三块输入（台词/行动/内心（含意图））+ 标记按钮 + 暂停选项（自动继续/每轮/GM 前/GM 后/正文后）、契约简化（inner 必填、action/dialogue 至少其一）、存档 v5（旧档拒绝）。编辑语义（优化 C2 起）：编辑 = 该步的一次新输出——setup 段保留、`changes.effects` 整段反向后经**同一效果规划器**（src/application/）重放（relations/邀请应答/标记/GM 效应无手工复制，步落账另记 invitation 上下文）。遗留：标记注入渲染与远程成员标注的提示词组装细化（与 P2 TAG 过滤一并做）、§6 GM 正文滑窗的连续判定细粒度、突发鉴定触发流程（仅数据结构就绪）。
+- `config.json` 与 `server.json` 已 gitignore，**绝不提交**（含 LLM API key / 部署配置）；对外配置模板只有 `server.json.example`（用户三资源经 WebUI 配置页维护）。
+- WebUI 默认绑 loopback（`127.0.0.1:8787`）；`OFAIR_HOST` 绑非 loopback 地址时服务端会打印公网暴露警告——这是有意设计，不要绕过。
+- 读档内副本原则：新会话把世界 lorebook 拷入存档 `save/{runId}/lore.json`，运行期增删改只动副本，不污染 `data/assets/` 原始世界包。

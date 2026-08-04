@@ -1,8 +1,8 @@
 /**
- * 存档仓储（优化阶段 D3，docs/optimization-review.md §9「服务端职责边界」迁移顺序步 5）。
+ * 存档仓储。
  *
- * runs/ 目录的读取与旁路产物（别名 save-meta.json）读写、存档删除、回放产物读取。
- * 全部函数显式接收 runsDir（组成根经 UserDirectories 注入），本模块不 import config。
+ * save/ 目录（data/users/{username}/save/，原 runs/ 改名）的读取与旁路产物（别名 save-meta.json）读写、存档删除、回放产物读取。
+ * 全部函数显式接收 saveDir（组成根经 UserDirectories 注入），本模块不 import config。
  *
  * 错误一律抛 RunRepositoryError（稳定 code），HTTP 层（server/http/errors.ts）负责
  * code → 状态码映射；本模块不知道 HTTP 存在。
@@ -49,7 +49,7 @@ function readAlias(dir: string): string | undefined {
   }
 }
 
-/** 列出 runs/ 下的会话目录（按修改时间倒序；只认目录；附别名）。 */
+/** 列出 save/ 下的会话目录（按修改时间倒序；只认目录；附别名）。 */
 export function listRuns(runsDir: string): RunInfo[] {
   if (!fs.existsSync(runsDir)) return [];
   return fs
@@ -78,7 +78,7 @@ export function validateAlias(raw: unknown): string {
   return alias;
 }
 
-/** 写存档别名（runs/{id}/save-meta.json）。 */
+/** 写存档别名（save/{id}/save-meta.json）。 */
 export function writeAlias(runsDir: string, id: string, alias: string): void {
   const dir = path.join(runsDir, safeSegment(id));
   if (!fs.existsSync(dir)) throw new RunRepositoryError("RUN_NOT_FOUND", `存档不存在: ${id}`);

@@ -2,6 +2,8 @@
  * prompts 域路由（提示词模板读写 + 占位符目录）。
  * 模板文件 IO 在 resources/worldRepository（readPromptFile/writePromptFile）；
  * 结构 + 占位符校验（依赖 agents 占位符注册表与 compile/template）留在本路由层。
+ * 提示词归世界包内（data/assets/{包}/prompts/）：?set= 定位包（缺省 DEFAULT_WORLD_SET，
+ * 包不存在 → WORLD_SET_NOT_FOUND 404；前端包选择器界面后做，缺省包即可）。
  * 提示词热加载（每轮激活前重读），保存后下一轮对话即生效，无需 markStale。
  */
 import { CHARACTER_PLACEHOLDERS } from "../../../agents/character.js";
@@ -13,8 +15,13 @@ import {
   validateTemplate,
   type PromptTemplate,
 } from "../../../compile/template.js";
-import { AGENT_KINDS, type AgentKind } from "../../../config.js";
-import { readPromptFile, writePromptFile } from "../../../resources/worldRepository.js";
+import { AGENT_KINDS, DEFAULT_WORLD_SET, type AgentKind } from "../../../config.js";
+import {
+  packPromptsDir,
+  readPromptFile,
+  resolveWorldDir,
+  writePromptFile,
+} from "../../../resources/worldRepository.js";
 import { ApiError, validate } from "../errors.js";
 import { parseJsonBody, readBody } from "../response.js";
 import type { ApiDeps, Route } from "../router.js";
@@ -56,7 +63,11 @@ export function validatePromptPayload(agent: AgentKind, raw: unknown): PromptTem
 }
 
 export function promptRoutes(deps: ApiDeps): Route[] {
-  const promptsDir = deps.dirs.promptsDir;
+  // ?set= 定位包内 prompts/（缺省 DEFAULT_WORLD_SET；包不存在 → WORLD_SET_NOT_FOUND 404）
+  const promptsDirOf = (url: URL): string =>
+    packPromptsDir(
+      resolveWorldDir(deps.dirs.assetsDir, url.searchParams.get("set") ?? undefined, DEFAULT_WORLD_SET),
+    );
   return [
     {
       method: "GET",
@@ -66,19 +77,19 @@ export function promptRoutes(deps: ApiDeps): Route[] {
     {
       method: "GET",
       pattern: "/api/prompts",
-      handler: () => readPromptTemplates(promptsDir),
+      handler: ({ url }) => readPromptTemplates(promptsDirOf(url)),
     },
     {
       method: "PUT",
       pattern: "/api/prompts/:agent",
-      handler: async ({ req, params }) => {
+      handler: async ({ req, url, params }) => {
         const agent = params.agent!;
         if (!(AGENT_KINDS as readonly string[]).includes(agent)) {
           throw new ApiError(400, "VALIDATION_ERROR", `未知模板: ${agent}（只允许 ${AGENT_KINDS.join(" / ")}）`);
         }
         const body = parseJsonBody(await readBody(req));
         const template = validate(() => validatePromptPayload(agent as AgentKind, body));
-        writePromptFile(promptsDir, agent, JSON.stringify(template, null, 2) + "\n");
+        writePromptFile(promptsDirOf(url), agent, JSON.stringify(template, null, 2) + "\n");
         // 提示词热加载（每轮激活前重读），无需 markStale——下一轮对话即生效
         return { note: "已保存，下一轮对话生效" };
       },

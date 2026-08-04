@@ -1,5 +1,5 @@
 /**
- * 会话状态 store（优化阶段 D4，docs/optimization-review.md §10「三类状态所有权」第 1 类）：
+ * 会话状态 store：
  * 服务端权威状态的唯一前端持有者——runId/revision/连接态/快照三域（world/characters/events）/
  * 历史回显/流水线/当前流式槽。其余两类（transient UI 态、view 局部态）仍归 play.js。
  *

@@ -1,15 +1,17 @@
 /**
  * GameSession 级测试 harness：收敛各 application 测试反复手写的装配——
- * 临时根（runs/ + worlds/，随套件结束自动清理）+ FakeChatScript + 确定性骰子队列
- * + 临时世界设定集构造。GameSession 的注入点（SessionOptions.baseDir/worldsDir/
- * chatPorts/rollDice）为既有生产端口，harness 只做组装，不改生产行为。
+ * 临时根（save/ + assets/，随套件结束自动清理）+ FakeChatScript + 确定性骰子队列
+ * + 临时世界包构造（含包内 prompts/，从真实默认包拷贝三份模板）。
+ * GameSession 的注入点（SessionOptions.baseDir/assetsDir/chatPorts/rollDice）
+ * 为既有生产端口，harness 只做组装，不改生产行为。
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import type { AgentKind, LLMConfig } from "../../src/config.js";
+import { AGENT_KINDS, resolveWorldDir, type AgentKind, type LLMConfig } from "../../src/config.js";
 import type { GameSession } from "../../src/application/gameSession.js";
 import { createGameSession, resumeGameSession, type SessionOptions } from "../../src/application/sessionFactory.js";
+import { packPromptsDir } from "../../src/resources/worldRepository.js";
 import type { CharacterState } from "../../src/truth/charactersStore.js";
 import { buildManifest } from "../builders/index.js";
 import { FakeChatScript, type RecordedCall } from "../fakes/chatPort.js";
@@ -28,8 +30,8 @@ const DUMMY_CFG: LLMConfig = { apiKey: "dummy", baseURL: "http://127.0.0.1:9", m
 
 export class SessionHarness {
   readonly root: string;
-  readonly runsDir: string;
-  readonly worldsDir: string;
+  readonly saveDir: string;
+  readonly assetsDir: string;
   readonly llm = new FakeChatScript();
   readonly configs: Record<AgentKind, LLMConfig> = { character: DUMMY_CFG, gm: DUMMY_CFG, prose: DUMMY_CFG };
   /** 先攻骰子队列（rollDice 依序消费；耗尽抛错——暴露预期外的先攻投掷）。 */
@@ -37,8 +39,8 @@ export class SessionHarness {
 
   constructor(prefix = "airp-session-") {
     this.root = tempDir(prefix);
-    this.runsDir = path.join(this.root, "runs");
-    this.worldsDir = path.join(this.root, "worlds");
+    this.saveDir = path.join(this.root, "save");
+    this.assetsDir = path.join(this.root, "assets");
   }
 
   /** 全部已记录 LLM 调用（含被 abort 的）。 */
@@ -46,16 +48,23 @@ export class SessionHarness {
     return this.llm.port.calls;
   }
 
-  /** 每测试独立世界：写 setting/tone-card/lorebook/time + 各角色 manifest。 */
+  /** 每测试独立世界包：写 setting/tone-card/lorebook/time + 各角色 manifest + 包内 prompts/。 */
   setupWorld(worldId: string, specs: CharSpec[]): void {
-    const dir = path.join(this.worldsDir, worldId);
+    const dir = path.join(this.assetsDir, worldId);
     fs.mkdirSync(path.join(dir, "characters"), { recursive: true });
     fs.writeFileSync(path.join(dir, "setting.md"), "测试世界设定\n");
     fs.writeFileSync(path.join(dir, "tone-card.md"), "测试基调\n");
     fs.writeFileSync(path.join(dir, "lorebook.json"), "[]\n");
+    // 包内提示词三副本：从真实默认包拷贝（activation 热加载与装配启动校验都读包内 prompts/）
+    const from = packPromptsDir(resolveWorldDir());
+    const to = packPromptsDir(dir);
+    fs.mkdirSync(to, { recursive: true });
+    for (const agent of AGENT_KINDS) {
+      fs.copyFileSync(path.join(from, `${agent}.prompt.json`), path.join(to, `${agent}.prompt.json`));
+    }
     fs.writeFileSync(
       path.join(dir, "time.json"),
-      JSON.stringify({ start: { y: 1, m: 1, d: 1, h: 0, min: 0 }, periods: [{ key: "白天", from: 0, to: 24 }] }),
+      JSON.stringify({ start: { y: 0, m: 1, d: 1, h: 0, min: 0 }, periods: [{ key: "白天", from: 0, to: 24 }] }),
     );
     for (const spec of specs) {
       const file = spec.isPlayer === true
@@ -74,13 +83,13 @@ export class SessionHarness {
   }
 
   /**
-   * SessionOptions 基座：临时 baseDir/worldsDir + fake ChatPort + 队列骰子。
+   * SessionOptions 基座：临时 baseDir/assetsDir + fake ChatPort + 队列骰子。
    * 需要真实 OpenAI adapter 的测试（reloadConfig）可经 overrides 显式去掉 chatPorts。
    */
   sessionOptions(runId: string, overrides?: Partial<SessionOptions>): SessionOptions {
     const base: SessionOptions = {
-      baseDir: path.join(this.runsDir, runId),
-      worldsDir: this.worldsDir,
+      baseDir: path.join(this.saveDir, runId),
+      assetsDir: this.assetsDir,
       proseWindowTurns: 5,
       chatPorts: this.llm.ports,
       rollDice: () => {
@@ -148,7 +157,7 @@ export class SessionHarness {
 
   /** 读某代（rev 数字）或 CURRENT 指向代（"current"）的真相文件原文。 */
   readGenerationFile(runId: string, rev: number | "current", file: string): string {
-    const dir = path.join(this.runsDir, runId);
+    const dir = path.join(this.saveDir, runId);
     const name =
       rev === "current"
         ? fs.readFileSync(path.join(dir, "CURRENT"), "utf8").trim()

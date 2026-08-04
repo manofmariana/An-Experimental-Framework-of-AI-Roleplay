@@ -1,5 +1,5 @@
 /**
- * HTTP 响应与请求体工具（优化阶段 D3，docs/optimization-review.md §9「HTTP envelope」）。
+ * HTTP 响应与请求体工具。
  *
  * 全部 /api/* 响应统一外围结构：
  *   成功 { ok: true, data }（mutation 的 note/revision 等信息放 data 内）；

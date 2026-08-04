@@ -1,5 +1,5 @@
 /**
- * validateSaveSet：两级校验的第二级（docs/optimization-review.md §7「两级校验」）。
+ * validateSaveSet：两级校验的第二级。
  *
  * 第一级 = 各 File codec（单文件 JSON/版本/字段类型，readSaveSet 内逐文件过 schema）；
  * 本级 = 完整加载一个 Generation 后的跨文件不变量，失败抛 SaveLoadError("invariant")。
@@ -9,7 +9,7 @@
  * 与文件 codec 同一入口，保证任何外部可观察到的 Generation 都过同一套校验。
  *
  * v1 检查项全部提取自现状不变量；动作/规则/UI/schema 引用闭包校验待对应实体存在后再补。
- * 玩家模型不写死 C0：多个 isPlayer:true 合法（§7 明确；建档期恰一玩家检查是创建规则，
+ * 玩家模型不写死 C0：多个 isPlayer:true 合法（建档期恰一玩家检查是创建规则，
  * 留在 charactersStore.fromManifests，不是存档不变量）。
  *
  * 纯函数零 IO；依赖方向 = truth 内部（SaveSet 类型经 type-import，无运行时环）。

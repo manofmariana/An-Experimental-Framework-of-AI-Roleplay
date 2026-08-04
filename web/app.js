@@ -1,5 +1,5 @@
 /**
- * Agent-AIRP WebUI 入口：页签路由 + 共用 fetch 助手。
+ * Ofair WebUI 入口：页签路由 + 共用 fetch 助手。
  * 「游玩」页常驻（DOM 不销毁，流式追加不中断），其余页签每次激活重渲染。
  */
 import { renderPlay } from "./pages/play.js";

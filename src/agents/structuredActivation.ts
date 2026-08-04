@@ -1,10 +1,10 @@
 /**
- * 结构化 activation 统一控制流（docs/optimization-review.md §4「调用端口」）：
+ * 结构化 activation 统一控制流：
  * ChatPort 调用（流式回调透传 display）→ parse（extractJson + schema + 语义校验，抛错即失败）
  * → 失败 display.retry 通知并重试一次 → 再失败抛带 failureLabel 的错误。
  * LLMAbortedError（停止按钮）不重试、直接上抛。
  *
- * 重试携带首次错误（§4）：第二次尝试在 messages 尾部追加一条 user 消息
+ * 重试携带首次错误：第二次尝试在 messages 尾部追加一条 user 消息
  * （首次校验错误内容 + 重新输出指引）；首次调用发送的 messages 原样不变（不突变入参数组）。
  *
  * 本文件只依赖 chatPort 端口类型与 display 接口，遵守 agents 禁则

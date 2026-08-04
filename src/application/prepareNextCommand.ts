@@ -1,14 +1,13 @@
 /**
- * 执行入口统一收口 + 确定性计算层端口（优化阶段 C3，docs/optimization-review.md §3
- * 「确定性计算层与执行入口」）。
+ * 执行入口统一收口 + 确定性计算层端口。
  *
  * 玩家输入权限检查、手动继续、自动继续、编辑/直编/回滚后的派生态刷新共用同一入口
  * prepareNextCommand：先在不可见事务草稿上把固定规则跑到固定点（只累积一份 changes，
  * 不产生中间 Generation），有变化才一次原子提交并重建投影，最后 deriveNext 返回
  * NextCommand——随后才允许玩家输入或执行 NPC/GM/prose。
  *
- * 边界（本阶段固定）：
- * - 本阶段 rules 默认空，不填任何 P2 规则；空 rules 走性能短路（不建 draft），
+ * 边界：
+ * - rules 当前为空，不注册任何具体规则；空 rules 走性能短路（不建 draft），
  *   语义与直接 deriveNext 完全等价。
  * - 投骰不进入本层：先攻补投在效果规划器（actorEffects/gmEffects/scheduleEffects）内，
  *   属该步骤的 effects，随步骤落账可回溯；本层规则必须是确定性的固定点计算。
@@ -23,7 +22,7 @@ import type { VarChange } from "../truth/varChanges.js";
 /** 固定点最大迭代轮数（一轮 = 全部规则各跑一次 runPass）。 */
 export const DEFAULT_MAX_ITERATIONS = 16;
 
-/** 确定性规则端口（P2 固定规则/从动变量规则的接入点；本阶段不实现任何具体规则）。 */
+/** 确定性规则端口（固定规则/从动变量规则的接入点；当前不实现任何具体规则）。 */
 export interface DeterministicRulePort {
   readonly id: string;
   /** 在 draft 上跑一轮固定规则；返回本轮产生的 changes（空 = 该规则已达固定点） */

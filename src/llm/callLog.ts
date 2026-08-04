@@ -1,7 +1,7 @@
 /**
- * 调用记录 decorator（docs/optimization-review.md §4「旁路日志」）：
+ * 调用记录 decorator：
  * chat 成功后把 {seq, messages, reasoning} 滚入 llm-recent/{agent}.json（最近 5 轮窗口），
- * 并把 prompt_cache_hit/miss 埋点追加到 runs/{runId}/cache-stats.jsonl（口径与原 LLMClient 一致）。
+ * 并把 prompt_cache_hit/miss 埋点追加到 save/{runId}/cache-stats.jsonl。
  * 失败不记录；写盘失败只告警（console.warn），不改模型调用的成功语义。
  * runId 在构造时绑定（会话级不变），agent 取自每次 request（同一端口可服务多个角色 agent）。
  */

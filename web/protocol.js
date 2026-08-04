@@ -1,5 +1,5 @@
 /**
- * 浏览器唯一协议适配器（优化阶段 D1「协议单一来源」+ D2「消息身份」+ D4「装配收口」）：
+ * 浏览器唯一协议适配器：
  * 所有 WS 上行命令经 buildCommand 构造 + serialize 序列化，页面不再散落 {type: ...} 字面量。
  * 权威定义是服务端 src/contracts/protocol.ts 的 ClientCommandSchema（契约测试双向对拍）。
  *

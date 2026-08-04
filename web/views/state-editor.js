@@ -1,5 +1,5 @@
 /**
- * 状态编辑器 view（优化阶段 D5 抽取，docs/optimization-review.md §10「状态编辑器与 modal」）：
+ * 状态编辑器 view：
  * 直编 modal——变量 {world, characters} + 事件数组两个 JSON 编辑区，保存走
  * PUT /api/session/state（直编，commit → transition 广播刷新面板）。
  *

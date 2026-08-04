@@ -1,5 +1,5 @@
 /**
- * web/session-store.js 单元测试（unit 层，优化阶段 D4）：
+ * web/session-store.js 单元测试（unit 层）：
  * snapshot 替换/runId 变化信号、transition 各分支（world 整换/characters 增删/events
  * append/truncate/pipeline）、跳号置 needsResync、旧 runId 丢弃、streaming 身份校验、
  * selectBusy 语义锁（busy = streaming 非空 || phase !== await_player）。
@@ -195,7 +195,7 @@ describe("session-store：streaming 身份校验", () => {
   });
 });
 
-describe("session-store：selectBusy 语义锁（D4 busy 终稿）", () => {
+describe("session-store：selectBusy 语义锁", () => {
   it("busy = streaming 非空 || phase !== await_player", () => {
     const store = createSessionStore();
     store.dispatch(snapshotMsg("000001", 3)); // phase await_player、无流式

@@ -1,8 +1,7 @@
 /**
- * 调度派生（纯逻辑，docs/optimization-review.md §2）：从最小调度快照派生下一命令。
+ * 调度派生（纯逻辑）：从最小调度快照派生下一命令。
  *
- * 逻辑逐行对照自原 loop.ts deriveNext/expectedGmTimerCids（语义不变），组合复用
- * simulator 基础算法（nextDue/orderGroups/initiativeBatches），不复制实现。
+ * 组合复用 simulator 基础算法（nextDue/orderGroups/initiativeBatches），不复制实现。
  * 不读 Store / archive / LLM，无任何 IO——表驱动单测只喂内存快照字面量。
  * 邀请历史解释不在此模块（见 invitations.ts）：快照只携带当前 pending invitation 视图。
  */
@@ -13,7 +12,7 @@ export const NO_INITIATIVE_BATCH = -Number.MAX_SAFE_INTEGER;
 
 /**
  * 调度视图中的角色（SimChar + acted 行动位）。
- * timer 已归一：未结算离开者（≥ LEAVE_TIMER）与无计时器同为 null（由快照构建方完成）。
+ * timer 即存储原值：null = 无计时器（含未结算离开者），调度永不弹出。
  */
 export interface SchedulerCharacter {
   timer: number | null;
@@ -120,7 +119,7 @@ export function selectFront(chars: Record<string, SchedulerCharacter>, clock: nu
 }
 
 /**
- * 调度派生（§5/§10.4：游标与 phase ← 角色变量 + 末步状态推断）：
+ * 调度派生（游标与 phase ← 角色变量 + 末步状态推断）：
  * 分支序 = 正文衔接 > 死锁防御 > 邀请应答 > GM 标记触发（批完成判定）> 行动顺序表 > 周期完成。
  */
 export function deriveNext(snapshot: SchedulerSnapshot): NextCommand {
@@ -178,18 +177,20 @@ export function deriveNext(snapshot: SchedulerSnapshot): NextCommand {
   const next = order.find((c) => !chars[c]!.acted);
   if (next !== undefined) return actorCmd(next, withSetup());
 
-  // 6. 周期完成：X+1 达 N → 周期末 GM（X 由 GM 激活清零）；否则 X+1 + 清全员 acted 进下一周期
-  if (snapshot.cycleCount + 1 >= snapshot.gmIntervalCycles) return { type: "gm", setup: withSetup() };
+  // 6. 周期完成：X+1 达有效阈值 → 周期末 GM（X 由 GM 激活清零）；否则 X+1 + 清全员 acted 进下一周期。
+  // 前台仅 1 人时阈值恒为 1（单人连续行动不成立，每行动一次周期末即 GM 结算；多人组残余单人同算）。
+  const gmThreshold = front.length === 1 ? 1 : snapshot.gmIntervalCycles;
+  if (snapshot.cycleCount + 1 >= gmThreshold) return { type: "gm", setup: withSetup() };
   return actorCmd(order[0]!, withSetup({ cycleIncrement: true, actedClears: front }));
 }
 
 /**
- * GM 裁决包 timer 必须精确覆盖的 cid 集（去重排序）：
+ * GM 裁决包 durations 必须精确覆盖的 cid 集（去重排序）：
  * 全体同步组成员（行动者所在非零组的全体成员，以组成员身份为准、无论其 timer 值——
- * 组成员 timer 本就同步；timer 为 null 者同样包含，GM 给其设 timer 无害）
+ * 组成员 timer 本就同步；timer 为 null 者同样包含，GM 给其设时长无害）
  * ∪ 刚从同步组离开的成员（已由 roundCids 覆盖）。
  */
-export function expectedGmTimerCids(
+export function expectedGmDurationCids(
   chars: Record<string, SchedulerCharacter>,
   roundCids: readonly string[],
 ): string[] {

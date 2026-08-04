@@ -21,7 +21,7 @@ if not exist node_modules (
 )
 
 rem 延迟约 2 秒后自动打开浏览器（等 server 就绪）
-start "airp-browser" /min cmd /c "ping 127.0.0.1 -n 3 >nul & start """" http://127.0.0.1:8787"
+start "ofair-browser" /min cmd /c "ping 127.0.0.1 -n 3 >nul & start """" http://127.0.0.1:8787"
 
 call npm run serve
 

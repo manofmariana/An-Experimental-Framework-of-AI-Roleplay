@@ -1,9 +1,9 @@
 /**
- * 模型调用最小端口（docs/optimization-review.md §4「调用端口」）。
+ * 模型调用最小端口。
  * agents 只依赖本文件的端口类型，不 import 任何具体 adapter/decorator 实现；
  * model/jsonMode/reasoningEffort 是 adapter 构造配置，不进 request。
  * AbortController 属于单次 activation：signal 由调用方（loop）按次创建传入，
- * 消除旧 LLMClient 共享 this.current 的隐藏状态。
+ * 端口本身不持有在途调用状态。
  */
 
 export interface ChatMessage {

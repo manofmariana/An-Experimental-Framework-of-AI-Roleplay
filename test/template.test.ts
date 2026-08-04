@@ -8,6 +8,11 @@ import {
   loadTemplate,
   validateTemplate,
 } from "../src/compile/template.js";
+import { resolveWorldDir } from "../src/config.js";
+import { packPromptsDir } from "../src/resources/worldRepository.js";
+
+/** 出厂模板目录 = 默认世界包内 prompts/。 */
+const FACTORY_PROMPTS_DIR = packPromptsDir(resolveWorldDir());
 
 describe("extractPlaceholders", () => {
   it("按出现顺序去重提取", () => {
@@ -60,7 +65,7 @@ describe("validateTemplate（结构 + 占位符合法性）", () => {
   });
 });
 
-describe("出厂模板 × 注册表（data/prompts/*.prompt.json）", () => {
+describe("出厂模板 × 注册表（data/assets/{包}/prompts/*.prompt.json）", () => {
   const cases = [
     ["character", CHARACTER_PLACEHOLDERS],
     ["gm", GM_PLACEHOLDERS],
@@ -69,7 +74,7 @@ describe("出厂模板 × 注册表（data/prompts/*.prompt.json）", () => {
 
   for (const [agent, reg] of cases) {
     it(`${agent}：模板可加载，占位符全部在注册表内`, () => {
-      const t = loadTemplate(agent, Object.keys(reg));
+      const t = loadTemplate(agent, Object.keys(reg), FACTORY_PROMPTS_DIR);
       assert.equal(t.id, agent);
       assert.ok(t.modules.length >= 2);
       // 尾部模块是动态内容（编辑约定：动态置尾）
@@ -80,6 +85,6 @@ describe("出厂模板 × 注册表（data/prompts/*.prompt.json）", () => {
 
   it("模板 id 与文件名不一致时报错", () => {
     // gm 的注册表不含 character 专有占位符，交叉加载必失败
-    assert.throws(() => loadTemplate("character", Object.keys(GM_PLACEHOLDERS)));
+    assert.throws(() => loadTemplate("character", Object.keys(GM_PLACEHOLDERS), FACTORY_PROMPTS_DIR));
   });
 });

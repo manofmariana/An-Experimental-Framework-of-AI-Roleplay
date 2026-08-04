@@ -15,7 +15,7 @@ const CAST = [
   { cid: "C1001", name: "林雾" },
 ];
 
-describe("renderForReader（身份替换，§1）", () => {
+describe("renderForReader（身份替换）", () => {
   it("自己 → 我；不认识 → 陌生人", () => {
     assert.equal(
       renderForReader("@C1001打量@C0，神色戒备", "C1001", {}),

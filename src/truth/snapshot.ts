@@ -1,21 +1,18 @@
-import { LEAVE_TIMER } from "../scheduler/simulator.js";
 import type { CharacterState } from "./charactersStore.js";
 import { minutesToWorldTime, type TimeAnchor } from "./timeStore.js";
 
 /**
- * 快照注入/展示层的 timer 渲染：程序内部状态始终是"分钟标量"（或 null / LEAVE_TIMER 冻结值），
+ * 快照注入/展示层的 timer 渲染：程序内部状态始终是"分钟标量"（或 null = 无计时器），
  * 这里只在注入 LLM 快照时把 timer 渲染成与世界时钟一致的结构化时间。
  * 返回值与 CharacterState 同形、可 JSON 化，除 timer 外所有字段原样透传。
  */
 export type SnapshotCharacterState = Omit<CharacterState, "timer"> & {
-  timer: TimeAnchor | "已离开待结算" | null;
+  timer: TimeAnchor | null;
 };
 
 export function snapshotCharacterState(state: CharacterState): SnapshotCharacterState {
   const { timer, ...rest } = state;
   if (timer === null) return { ...rest, timer: null };
-  // LEAVE_TIMER：离开标记的冻结值，渲染为语义文本而非天文数字
-  if (timer >= LEAVE_TIMER) return { ...rest, timer: "已离开待结算" };
   return { ...rest, timer: minutesToWorldTime(timer) };
 }
 
@@ -26,7 +23,7 @@ export function snapshotCharacterStates(
 }
 
 // ---------------------------------------------------------------------------
-// 只读快照（docs/optimization-review.md §7「不可变 Snapshot 与只读查询」）
+// 只读快照
 // ---------------------------------------------------------------------------
 
 /** 递归 readonly 映射：查询出口（getState/getEvents/snapshot 等）的返回类型，编译期挡写入。 */

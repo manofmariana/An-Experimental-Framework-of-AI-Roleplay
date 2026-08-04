@@ -1,5 +1,5 @@
 /**
- * 历史回显与正文素材投影（C4 从 loop.ts 迁入；纯展示函数群，零 IO，可单测）。
+ * 历史回显与正文素材投影（纯展示函数群，零 IO，可单测）。
  * 数据源 = archive.json + world.json 流水线 current（进行中的最后一步），由调用方传入。
  */
 import type { ArchiveEntry } from "../truth/archive.js";
@@ -11,7 +11,7 @@ import type { AdjudicationPackage, DecisionPackage, Event } from "../types.js";
 // 历史回显（载入存档后广播给前端；纯函数，可单测）
 // ---------------------------------------------------------------------------
 
-/** 一轮的一张角色卡（M2：一轮可有多张，NPC 独立轮没有玩家步）。 */
+/** 一轮的一张角色卡（一轮可有多张，NPC 独立轮没有玩家步）。 */
 export interface HistoryCharacterCard {
   cid: string;
   /** 该角色步的 seq（卡片级回滚/重 roll/llm-recent 查询用） */
@@ -143,7 +143,7 @@ export function proseWindow(archive: ArchiveEntry[], n: number): string[] {
 }
 
 /**
- * 角色正文滑窗：只取该 cid 亲身参与、且其当时所在组（连续场景 = 同一组编号存续期间，§6）
+ * 角色正文滑窗：只取该 cid 亲身参与、且其当时所在组（连续场景 = 同一组编号存续期间）
  * 与当前值一致的最近 n 块。存档不做旧格式兼容；participants/scenes 是连续场景过滤的必要归档契约。
  */
 export function proseWindowFor(
@@ -188,7 +188,7 @@ export function lastProse(archive: ArchiveEntry[]): string {
   return proseWindow(archive, 1)[0] ?? "";
 }
 
-/** 参与角色的固定标签并集（去重；正文 lore 触发制的输入，§10.1）。 */
+/** 参与角色的固定标签并集（去重；正文 lore 触发制的输入）。 */
 export function participantTags(list: readonly { tags: string[] }[]): string[] {
   return [...new Set(list.flatMap((m) => m.tags))];
 }

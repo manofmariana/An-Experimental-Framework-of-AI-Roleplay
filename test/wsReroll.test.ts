@@ -5,8 +5,8 @@ import { parseClientCommand, ProtocolError } from "../src/contracts/protocol.js"
 import { serverHarness } from "./harness/server.js";
 
 /**
- * 原子重 roll = rollback_and_continue 单条复合命令（优化阶段 D1）：
- * 旧 reroll WS 消息已删除、不留兼容映射；协议权威 = contracts/protocol.ts。
+ * 原子重 roll = rollback_and_continue 单条复合命令：
+ * 协议权威 = contracts/protocol.ts。
  * server 侧语义 = SessionCoordinator 的 rollback_and_continue 复合命令——
  * 回滚与续跑同处一个队列任务，两步间不接受其他命令。
  * 领域行为（串行不交错/复合命令不可插队）的系统断言见 test/sessionCoordinator.test.ts。

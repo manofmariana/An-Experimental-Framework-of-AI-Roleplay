@@ -9,11 +9,11 @@ import type { SessionTransition } from "../src/application/transitionProjection.
 import { RevisionConflictError, SessionSwitchedError } from "../src/truth/validation/errors.js";
 
 // ---------------------------------------------------------------------------
-// SessionCoordinator（C4 单一命令协调器 + D2 消息身份/增量同步/会话切换隔离）：
+// SessionCoordinator（单一命令协调器 + 消息身份/增量同步/会话切换隔离）：
 // fake factory + fake session（零 IO）：并发 execute 串行不交错、
 // rollback_and_continue 单任务不可插队 + 只发一条合并 Transition、陈旧 baseRevision 拒绝、
 // stop 定向中止（runId/activationId 核对）、new/load 强制切换 dispose 旧会话、
-// onCommit → Transition 投影广播（取代已删除的 onStateRefresh）、一致快照 query。
+// onCommit → Transition 投影广播、一致快照 query。
 // ---------------------------------------------------------------------------
 
 const ROOTS = { world: {}, characters: {}, events: [] };
@@ -39,7 +39,11 @@ class FakeSession {
   dispose(): void { this.disposedFlag = true; this.abortCurrent(); }
   get disposed(): boolean { return this.disposedFlag; }
   get currentActivationId(): string | null { return this.activationId; }
-  reloadConfig(): void { this.reloaded += 1; }
+  applyResolvedConfig(resolved: unknown, settings: unknown): void {
+    this.reloaded += 1;
+    this.appliedConfig = { resolved, settings };
+  }
+  appliedConfig: { resolved: unknown; settings: unknown } | null = null;
   /** 模拟一次提交（onCommit 通知；reason/revision 由调用方给定语义）。 */
   fireCommit(reason: string): void {
     this.revision += 1;
@@ -122,7 +126,7 @@ describe("SessionCoordinator 串行队列", () => {
   });
 });
 
-describe("SessionCoordinator stop 定向中止（D2 消息身份）", () => {
+describe("SessionCoordinator stop 定向中止（消息身份）", () => {
   it("stop 队列外即时中止（不等在途任务完成）", async () => {
     const { coordinator, session } = makeCoordinator();
     let release!: () => void;
@@ -159,7 +163,7 @@ describe("SessionCoordinator stop 定向中止（D2 消息身份）", () => {
   });
 });
 
-describe("SessionCoordinator 一致快照 query（D2）", () => {
+describe("SessionCoordinator 一致快照 query", () => {
   it("snapshot = 单 revision 一致视图（runId/revision/state/events/history/pipeline 同根）", () => {
     const { coordinator } = makeCoordinator();
     const snap = coordinator.query("snapshot");
@@ -179,7 +183,7 @@ describe("SessionCoordinator 一致快照 query（D2）", () => {
   });
 });
 
-describe("SessionCoordinator Transition 投影（D2：替代已删除的 onStateRefresh 散装广播）", () => {
+describe("SessionCoordinator Transition 投影", () => {
   /** 经 factory create 路径建会话（onCommit 钩子由 wireSession 接线）。 */
   function wiredCoordinator(): { coordinator: SessionCoordinator; session: FakeSession; transitions: SessionTransition[] } {
     const session = new FakeSession("run-a");
@@ -229,7 +233,7 @@ describe("SessionCoordinator Transition 投影（D2：替代已删除的 onState
   });
 });
 
-describe("SessionCoordinator 会话切换与生命周期（D2 强制切换隔离）", () => {
+describe("SessionCoordinator 会话切换与生命周期（强制切换隔离）", () => {
   /** fake factory：create/resume 各回各的会话，记录装配入参。 */
   function fakeFactory(a: FakeSession, b: FakeSession): { factory: SessionFactory; made: string[] } {
     const made: string[] = [];
@@ -333,14 +337,18 @@ describe("SessionCoordinator 会话切换与生命周期（D2 强制切换隔离
     assert.equal(coordinator.needsReset, false);
   });
 
-  it("reloadConfig 热更新转发（不入队，无会话 no-op）", async () => {
+  it("applyResolvedConfig 热更新转发（不入队，同一份 resolved 对象，无会话 no-op）", async () => {
     const { coordinator, session } = makeCoordinator();
-    coordinator.reloadConfig();
+    const resolved = { character: {}, gm: {}, prose: {} };
+    const settings = { configRevision: 1 };
+    coordinator.applyResolvedConfig(resolved as never, settings as never);
     assert.equal(session.reloaded, 1);
+    assert.strictEqual(session.appliedConfig?.resolved, resolved); // 同一对象引用转发
+    assert.strictEqual(session.appliedConfig?.settings, settings);
     const empty = new SessionCoordinator(() => ({}) as never, { newRunId: () => "x" }, {
       create() { throw new Error("不应建会话"); },
       resume() { throw new Error("不应续档"); },
     });
-    empty.reloadConfig(); // 无会话：no-op，不触发装配
+    empty.applyResolvedConfig(resolved as never, settings as never); // 无会话：no-op，不触发装配
   });
 });

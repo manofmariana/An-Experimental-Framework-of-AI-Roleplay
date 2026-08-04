@@ -1,19 +1,16 @@
 /**
- * 配置契约（优化阶段 A4，docs/optimization-review.md §8「配置事务与共享契约」）。
- *
- * 消除 src/config.ts 手写 interface、server 手工字段表、前端字段数组三份定义漂移
- * 的第一步：共享 zod schema 先行。运行行为不变——消费方见：
- * ① src/config.ts resolveAgentConfigs 输出经 ResolvedAgentConfigSchema 校验后返回；
- * ② PublicConfigViewSchema/toPublicConfigView 为 config GET 脱敏视图（见该处注释）。
+ * 配置契约：共享 zod schema 唯一出处。GET /api/config 返回 ConfigStateView（脱敏，
+ * secrets 只有掩码态）；FileConfigSchema/validateFileConfig 为迁移专用——唯一消费方是
+ * configService 的一次性迁移闸（旧 config.json → 三资源），长期保留供旧版升级。
  * contracts/ 不依赖 truth / agents / server / llm / loop（依赖审计守护）。
  */
 import { z } from "zod";
-import { MaskedSecretSchema, maskSecret, SecretKindSchema } from "./secrets.js";
+import { SecretKindSchema, SecretMutationSchema, SecretStateSchema } from "./secrets.js";
 
 // ---------------------------------------------------------------------------
-// config.json 文件形状（优化阶段 D3：取代 server 手工字段表，三份定义收敛为一份）
+// config.json 文件形状（迁移闸读取源）
 // 顶层 passthrough——未知字段（如 "_说明" 注释）原样保留；agents/memory 块 strict——
-// 未知 agent / 块内未知字段即拒（与原手工表口径一致）。
+// 未知 agent / 块内未知字段即拒。
 // ---------------------------------------------------------------------------
 
 /** 顶层与 agents 块同规的覆盖块（json_mode 布尔、reasoning_effort 字符串原样透传）。 */
@@ -53,7 +50,7 @@ export const FileConfigSchema = z
 export type FileConfigPayload = z.infer<typeof FileConfigSchema>;
 
 /**
- * 校验 config.json 结构（PUT /api/config 前置闸；取代 api.ts 手工字段表）。
+ * 校验旧 config.json 结构（迁移专用：唯一消费方 = configService 迁移闸，长期保留供旧版升级）。
  * 未知顶层字段（注释）原样保留；结构非法抛 Error（消息 = 逐 issue 路径 + 原因）。
  */
 export function validateFileConfig(raw: unknown): FileConfigPayload {
@@ -71,23 +68,66 @@ export function validateFileConfig(raw: unknown): FileConfigPayload {
 }
 
 // ---------------------------------------------------------------------------
-// 服务端/部署配置（最小骨架；docs §8「服务端配置」的字段在阶段 E 逐项填充）
+// 服务端/部署配置（server.json 文件形状）
+// 只管部署面（listen/白名单/密钥暴露/认证/SSL/代理/广播），不承担用户 API
+// preset/secret（那是 data/<username>/ 三资源）。顶层 passthrough——
+// 未知字段（如 "_说明" 注释）原样保留；嵌套块 strict，笔误即拒。
+// basicAuth/ssl/proxy/broadcast 四块接受配置但加载时 warn「未实现，忽略」
+// （见 src/serverConfig.ts——不做半成品假安全）。
 // ---------------------------------------------------------------------------
-export const ServerConfigSchema = z.object({
-  listen: z
-    .object({
-      host: z.string().min(1).optional(),
-      port: z.number().int().min(0).max(65535).optional(),
-    })
-    .optional(),
-  /** 明文密钥暴露开关：仅服务端配置可持有，普通 Secrets API 不得自行修改 */
-  allowKeysExposure: z.boolean().optional(),
-});
+export const ServerConfigSchema = z
+  .object({
+    listen: z
+      .object({
+        host: z.string().min(1).optional(),
+        port: z.number().int().min(0).max(65535).optional(),
+      })
+      .strict()
+      .optional(),
+    /** Host 头白名单（hostname 精确匹配，大小写不敏感；空 = 只放行监听地址/loopback 默认） */
+    hostWhitelist: z.array(z.string().min(1)).optional(),
+    /** 来源 IP 白名单（非空时 remoteAddress 必须命中；"::ffff:" 前缀归一后比较） */
+    ipWhitelist: z.array(z.string().min(1)).optional(),
+    /** 明文密钥暴露开关：仅服务端配置可持有，普通 Secrets API 不得自行修改 */
+    allowKeysExposure: z.boolean().optional(),
+    /** 未实现：浏览器 WS 无法携带 Authorization 头，凭证需 cookie/session 设计 */
+    basicAuth: z
+      .object({ username: z.string().min(1), password: z.string().min(1) })
+      .strict()
+      .optional(),
+    /** 未实现：SSL 需 https server 分叉，超出本地应用可行性边界 */
+    ssl: z
+      .object({
+        cert: z.string().min(1),
+        key: z.string().min(1),
+        passphrase: z.string().optional(),
+      })
+      .strict()
+      .optional(),
+    /** 未实现：出站请求代理 */
+    proxy: z
+      .object({ url: z.string().min(1), bypass: z.array(z.string().min(1)).optional() })
+      .strict()
+      .optional(),
+    /** 未实现：局域网广播/发现 */
+    broadcast: z.boolean().optional(),
+  })
+  .passthrough();
 export type ServerConfig = z.infer<typeof ServerConfigSchema>;
 
 // ---------------------------------------------------------------------------
-// 用户设置（data/<username>/settings.json，最小骨架，optional 为主）
+// 用户设置（data/<username>/settings.json）
+// agentPresets（三 activation → presetId 绑定）+ configRevision
+// （配置乐观并发版本，与游戏 Generation revision 分离；缺省 0）。
 // ---------------------------------------------------------------------------
+/** 三 activation 的 preset 绑定（值 = presetId；缺省 = 未绑定，resolver 解析不出即 null）。 */
+export const AgentPresetBindingsSchema = z.object({
+  character: z.string().min(1).optional(),
+  gm: z.string().min(1).optional(),
+  prose: z.string().min(1).optional(),
+});
+export type AgentPresetBindings = z.infer<typeof AgentPresetBindingsSchema>;
+
 export const UserSettingsSchema = z.object({
   proseWindowTurns: z.number().int().min(0).optional(),
   gmIntervalCycles: z.number().int().min(1).optional(),
@@ -99,11 +139,14 @@ export const UserSettingsSchema = z.object({
       afterProse: z.boolean().optional(),
     })
     .optional(),
+  agentPresets: AgentPresetBindingsSchema.optional(),
+  /** 配置事务版本号（mutation 携带 baseConfigRevision 防静默互覆；缺文件/旧文件 = 0）。 */
+  configRevision: z.number().int().min(0).default(0),
 });
 export type UserSettings = z.infer<typeof UserSettingsSchema>;
 
 // ---------------------------------------------------------------------------
-// API 预设（docs §8「API 预设」：引用 secret，不复制 key）
+// API 预设（引用 secret，不复制 key）
 // ---------------------------------------------------------------------------
 export const ApiPresetSchema = z.object({
   id: z.string().min(1),
@@ -120,6 +163,22 @@ export const ApiPresetSchema = z.object({
 });
 export type ApiPreset = z.infer<typeof ApiPresetSchema>;
 
+/** 预设列表状态（api-presets/ 目录的内存投影）。 */
+export const PresetsStateSchema = z.array(ApiPresetSchema);
+export type PresetsState = z.infer<typeof PresetsStateSchema>;
+
+/**
+ * 配置状态公共视图（GET /api/config 的返回形状）。
+ * secrets 只有掩码 state（SecretState），绝不含明文；agent 绑定与 configRevision
+ * 收在 settings 内（单一出处，不在视图顶层重复）。
+ */
+export const ConfigStateViewSchema = z.object({
+  secrets: SecretStateSchema,
+  presets: PresetsStateSchema,
+  settings: UserSettingsSchema,
+});
+export type ConfigStateView = z.infer<typeof ConfigStateViewSchema>;
+
 // ---------------------------------------------------------------------------
 // 解析后的单 agent 调用配置（对齐 src/config.ts 的 LLMConfig）
 // ---------------------------------------------------------------------------
@@ -133,76 +192,44 @@ export const ResolvedAgentConfigSchema = z.object({
 export type ResolvedAgentConfig = z.infer<typeof ResolvedAgentConfigSchema>;
 
 // ---------------------------------------------------------------------------
-// 公共脱敏视图（GET /api/config 的目标形状：密钥只出现掩码，不出现明文）
+// 配置事务 mutation（applyConfigMutation 的唯一入参契约）
 // ---------------------------------------------------------------------------
 
-/** 单个配置块（顶层或 agents.*）的脱敏形状；未设置的字段不出现。 */
-export const PublicAgentBlockSchema = z.object({
-  api_key: MaskedSecretSchema.optional(),
-  base_url: z.string().optional(),
-  model: z.string().optional(),
-  json_mode: z.boolean().optional(),
-  reasoning_effort: z.string().optional(),
-});
-export type PublicAgentBlock = z.infer<typeof PublicAgentBlockSchema>;
-
-export const PublicConfigViewSchema = z.object({
-  api_key: MaskedSecretSchema.optional(),
-  base_url: z.string().optional(),
-  model: z.string().optional(),
-  json_mode: z.boolean().optional(),
-  reasoning_effort: z.string().optional(),
-  agents: z
-    .object({
-      character: PublicAgentBlockSchema.optional(),
-      gm: PublicAgentBlockSchema.optional(),
-      prose: PublicAgentBlockSchema.optional(),
-    })
-    .optional(),
-  memory: z.object({ prose_window_turns: z.number().int().min(0).optional() }).optional(),
-  gm_interval_cycles: z.number().int().min(1).optional(),
-});
-export type PublicConfigView = z.infer<typeof PublicConfigViewSchema>;
-
-/** toPublicConfigView 的输入：config.json 文件形状的结构子集（与 src/config.ts FileConfig 对齐，避免反向依赖）。 */
-export interface FileConfigLike {
-  api_key?: string;
-  base_url?: string;
-  model?: string;
-  json_mode?: boolean;
-  reasoning_effort?: string;
-  agents?: Partial<Record<"character" | "gm" | "prose", FileConfigLike>>;
-  memory?: { prose_window_turns?: number };
-  gm_interval_cycles?: number;
-}
-
-function maskBlock(block: FileConfigLike): PublicAgentBlock {
-  const out: PublicAgentBlock = {};
-  if (block.api_key !== undefined) out.api_key = maskSecret(block.api_key);
-  if (block.base_url !== undefined) out.base_url = block.base_url;
-  if (block.model !== undefined) out.model = block.model;
-  if (block.json_mode !== undefined) out.json_mode = block.json_mode;
-  if (block.reasoning_effort !== undefined) out.reasoning_effort = block.reasoning_effort;
-  return out;
-}
+/** preset 变更（save = upsert，id 缺省由服务端生成；delete/duplicate 按 id）。 */
+export const PresetMutationSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("save"),
+    preset: ApiPresetSchema.extend({ id: z.string().min(1).optional() }),
+  }),
+  z.object({ type: z.literal("delete"), id: z.string().min(1) }),
+  z.object({ type: z.literal("duplicate"), id: z.string().min(1) }),
+]);
+export type PresetMutation = z.infer<typeof PresetMutationSchema>;
 
 /**
- * config.json 形状 → 脱敏公共视图（api_key 一律掩码，其余字段原样）。
- * 注：当前 GET /api/config 仍返回原文——前端设置页（web/pages/config.js）依赖
- * 明文回填且留空=删除，直接改脱敏会把掩码当真值写回。本构建器与 schema 先行，
- * 接线待前端改为「留空 = 保持不变」语义后进行（docs §8 脱敏方向）。
+ * settings patch（运行设置与 agent 绑定修改；configRevision 由事务自增，不接受 patch）。
+ * 各字段缺省 = 保持不变；agentPresets 携带时整体替换绑定表。
  */
-export function toPublicConfigView(file: FileConfigLike): PublicConfigView {
-  const view: PublicConfigView = maskBlock(file);
-  if (file.agents !== undefined) {
-    const agents: NonNullable<PublicConfigView["agents"]> = {};
-    for (const kind of ["character", "gm", "prose"] as const) {
-      const block = file.agents[kind];
-      if (block !== undefined) agents[kind] = maskBlock(block);
-    }
-    view.agents = agents;
-  }
-  if (file.memory !== undefined) view.memory = file.memory;
-  if (file.gm_interval_cycles !== undefined) view.gm_interval_cycles = file.gm_interval_cycles;
-  return PublicConfigViewSchema.parse(view);
-}
+export const SettingsPatchSchema = z
+  .object({
+    proseWindowTurns: z.number().int().min(0).optional(),
+    gmIntervalCycles: z.number().int().min(1).optional(),
+    pauseOptions: UserSettingsSchema.shape.pauseOptions,
+    agentPresets: AgentPresetBindingsSchema.optional(),
+  })
+  .strict();
+export type SettingsPatch = z.infer<typeof SettingsPatchSchema>;
+
+/** PUT /api/config 请求体：settings patch + baseConfigRevision 乐观并发闸。 */
+export const ConfigPutBodySchema = SettingsPatchSchema.extend({
+  baseConfigRevision: z.number().int().min(0),
+});
+export type ConfigPutBody = z.infer<typeof ConfigPutBodySchema>;
+
+/** 配置事务 mutation 判别联合（secret/preset/settings 三域）。 */
+export const ConfigMutationSchema = z.discriminatedUnion("domain", [
+  z.object({ domain: z.literal("secret"), mutation: SecretMutationSchema }),
+  z.object({ domain: z.literal("preset"), mutation: PresetMutationSchema }),
+  z.object({ domain: z.literal("settings"), patch: SettingsPatchSchema }),
+]);
+export type ConfigMutation = z.infer<typeof ConfigMutationSchema>;

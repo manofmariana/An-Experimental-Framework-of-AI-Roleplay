@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   deriveNext,
-  expectedGmTimerCids,
+  expectedGmDurationCids,
   phaseOf,
   selectFront,
   type NextCommand,
@@ -263,6 +263,33 @@ describe("deriveNext：分支序全谱（快照字面量 → NextCommand）", ()
     } satisfies NextCommand);
   });
 
+  it("前台仅 1 人时 GM 硬保险阈值恒为 1：每行动一次周期末即 GM（多人组残余单人同算）", () => {
+    // 单人前台（group=0）：cycleCount+1 >= 1 恒真 → 周期末 GM
+    const solo = { C1001: ch({ timer: 10, initiative: { value: 25, group: 0 }, acted: true }) };
+    assert.deepEqual(deriveNext(snap(solo, { cycleCount: 0, gmIntervalCycles: 3 })), {
+      type: "gm",
+      setup: { due: 10, actedClears: [], cycleIncrement: false },
+    } satisfies NextCommand);
+    // 多人组的最后一名在场成员（组员 timer=null 已离场）同样按单人计
+    const remnant = {
+      C1001: ch({ timer: 10, group: 1, initiative: { value: 25, group: 1 }, acted: true }),
+      C1002: ch({ timer: null, group: 1, initiative: { value: 12, group: 1 }, acted: true }),
+    };
+    assert.deepEqual(deriveNext(snap(remnant, { cycleCount: 0, gmIntervalCycles: 3 })), {
+      type: "gm",
+      setup: { due: 10, actedClears: ["C1002"], cycleIncrement: false },
+    } satisfies NextCommand);
+    // 多人前台：阈值不变（未达 N → 下一周期）
+    const multi = {
+      C1001: ch({ timer: 10, group: 1, initiative: { value: 25, group: 1 }, acted: true }),
+      C1002: ch({ timer: 10, group: 1, initiative: { value: 12, group: 1 }, acted: true }),
+    };
+    assert.equal(
+      deriveNext(snap(multi, { cycleCount: 0, gmIntervalCycles: 3 })).type,
+      "character",
+    );
+  });
+
   it("actedClears 合并：后台已行动（排序）+ 周期完成追加前台全员（既有口径，不全局重排）", () => {
     const cmd = deriveNext(
       snap({
@@ -279,7 +306,7 @@ describe("deriveNext：分支序全谱（快照字面量 → NextCommand）", ()
   });
 });
 
-describe("phaseOf / expectedGmTimerCids", () => {
+describe("phaseOf / expectedGmDurationCids", () => {
   it("phaseOf 四分支映射", () => {
     assert.equal(phaseOf({ type: "player", reason: "turn", setup: NO_SETUP }), "await_player");
     assert.equal(phaseOf({ type: "player", reason: "deadlock", setup: NO_SETUP }), "await_player");
@@ -288,15 +315,15 @@ describe("phaseOf / expectedGmTimerCids", () => {
     assert.equal(phaseOf({ type: "prose", setup: NO_SETUP }), "await_prose");
   });
 
-  it("expectedGmTimerCids：同步组全体成员（含 timer=null 者）∪ 行动者；后台他组不进", () => {
+  it("expectedGmDurationCids：同步组全体成员（含 timer=null 者）∪ 行动者；后台他组不进", () => {
     const chars = {
       C0: ch({ group: 1 }),
       C1001: ch({ group: 1, timer: null }),
       C1002: ch({ group: 2 }),
       C1003: ch({ group: 0 }),
     };
-    assert.deepEqual(expectedGmTimerCids(chars, ["C0"]), ["C0", "C1001"]);
-    assert.deepEqual(expectedGmTimerCids(chars, ["C0", "C1002"]), ["C0", "C1001", "C1002"]);
-    assert.deepEqual(expectedGmTimerCids(chars, ["C1003"]), ["C1003"], "单人组行动者：期望集 = 自身");
+    assert.deepEqual(expectedGmDurationCids(chars, ["C0"]), ["C0", "C1001"]);
+    assert.deepEqual(expectedGmDurationCids(chars, ["C0", "C1002"]), ["C0", "C1001", "C1002"]);
+    assert.deepEqual(expectedGmDurationCids(chars, ["C1003"]), ["C1003"], "单人组行动者：期望集 = 自身");
   });
 });

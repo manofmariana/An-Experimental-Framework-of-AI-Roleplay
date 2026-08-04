@@ -1,0 +1,20 @@
+{
+  "_说明": "本文件是模板：复制为 server.json 后按需修改。server.json 已 gitignore，绝不提交。server.json 只管服务端/部署面；用户 API key 与 preset 在 data/users/default_user/ 下（经 WebUI 配置页管理），不写入本文件。改动需重启服务生效。",
+  "_优先级": "环境变量 OFAIR_HOST / OFAIR_PORT 优先于 listen 块；缺 server.json = 全默认（127.0.0.1:8787、空白名单 = 不限制、allowKeysExposure=false）。",
+  "_listen": "监听地址与端口。默认 127.0.0.1:8787（只接受本机访问）；绑非 loopback 地址前请配置下方白名单",
+  "listen": {
+    "host": "127.0.0.1",
+    "port": 8787
+  },
+  "_hostWhitelist": "Host 头白名单（hostname 精确匹配，大小写不敏感，可带端口）。空 = 只放行监听地址本身；监听 loopback 时默认另放行 localhost / 127.* / [::1]。绑非 loopback 地址时把本机局域网主机名加进来",
+  "hostWhitelist": [],
+  "_ipWhitelist": "来源 IP 白名单（精确匹配，\"::ffff:\" 前缀自动归一）。空 = 不限制；非空时不在表内的来源一律 403",
+  "ipWhitelist": [],
+  "_allowKeysExposure": "true = 允许 GET /api/secrets/:kind/:id/view 返回密钥明文（默认 false → 403）。仅本机自用建议保持 false",
+  "allowKeysExposure": false,
+  "_未实现": "以下四块接受配置但当前版本未实现——加载时只会 warn「已配置但未实现，忽略」，不产生任何安全效果（不做半成品假安全）：basicAuth（浏览器 WS 无法携带 Authorization 头，凭证需 cookie/session 设计）、ssl（需 https server 分叉）、proxy（出站代理）、broadcast（局域网发现）",
+  "basicAuth": { "username": "admin", "password": "改掉我" },
+  "ssl": { "cert": "path/to/cert.pem", "key": "path/to/key.pem" },
+  "proxy": { "url": "http://127.0.0.1:7890", "bypass": ["localhost"] },
+  "broadcast": false
+}

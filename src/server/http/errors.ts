@@ -1,18 +1,26 @@
 /**
- * HTTP API 错误模型（优化阶段 D3，docs/optimization-review.md §9「HTTP envelope」）。
+ * HTTP API 错误模型。
  *
  * ApiError = 路由主动抛出的带状态码错误；toApiError 把任意抛错收敛为 ApiError：
  * - ApiError 原样透传；
  * - ZodError → 400 VALIDATION_ERROR；
  * - RunRepositoryError / WorldRepositoryError → 按仓储 code 映射；
+ * - 配置三仓储（secrets/presets/settings）按 code 映射（SECRET_NOT_FOUND/PRESET_NOT_FOUND→404，
+ *   INVALID_PRESET_ID/INVALID_PRESET→400，SECRETS_CORRUPT/PRESET_CORRUPT/SETTINGS_CORRUPT→500）；
+ * - ConfigServiceError（配置事务）→ CONFIG_INVALID 400 / CONFIG_REVISION_CONFLICT·PRESET_IN_USE 409
+ *   / CONFIG_APPLY_FAILED 500；
  * - RevisionConflictError → 409 REVISION_CONFLICT（details 附 baseRevision/currentRevision）；
  * - 协调器/真相层的少量历史消息约定（LLM 在途、safeSegment 非法名）按消息映射；
- * - 其余未预期异常 → 500 INTERNAL_ERROR（不再一律 400）。
+ * - 其余未预期异常 → 500 INTERNAL_ERROR。
  *
- * 401/403 码位预留（认证属阶段 E），本片不触发。
+ * 403 用于 secrets view 未开启 allowKeysExposure 等场景（FORBIDDEN）；401 留码位（认证未实现）。
  */
 import { ZodError } from "zod";
+import { ConfigServiceError } from "../../application/configService.js";
+import { PresetsRepositoryError } from "../../resources/presetsRepository.js";
 import { RunRepositoryError } from "../../resources/runRepository.js";
+import { SecretsRepositoryError } from "../../resources/secretsRepository.js";
+import { SettingsRepositoryError } from "../../resources/settingsRepository.js";
 import { WorldRepositoryError } from "../../resources/worldRepository.js";
 import { RevisionConflictError } from "../../truth/validation/errors.js";
 
@@ -30,9 +38,15 @@ export type ApiErrorCode =
   | "SESSION_BUSY"
   | "SESSION_ACTIVE"
   | "RUN_CORRUPT"
+  | "SECRET_NOT_FOUND"
+  | "PRESET_NOT_FOUND"
+  | "CONFIG_REVISION_CONFLICT"
+  | "PRESET_IN_USE"
+  | "CONFIG_APPLY_FAILED"
   | "INTERNAL_ERROR"
-  /** 预留（认证属阶段 E，本片不触发） */
+  /** 预留（认证未实现，不触发） */
   | "UNAUTHORIZED"
+  /** 未开启 allowKeysExposure 的明文查看等 */
   | "FORBIDDEN";
 
 export class ApiError extends Error {
@@ -66,6 +80,29 @@ const WORLD_ERROR_STATUS: Record<string, { status: number; code: ApiErrorCode }>
   INVALID_WORLD_SET: { status: 400, code: "VALIDATION_ERROR" },
 };
 
+const SECRETS_ERROR_STATUS: Record<string, { status: number; code: ApiErrorCode }> = {
+  SECRET_NOT_FOUND: { status: 404, code: "SECRET_NOT_FOUND" },
+  SECRETS_CORRUPT: { status: 500, code: "INTERNAL_ERROR" },
+};
+
+const PRESETS_ERROR_STATUS: Record<string, { status: number; code: ApiErrorCode }> = {
+  PRESET_NOT_FOUND: { status: 404, code: "PRESET_NOT_FOUND" },
+  PRESET_CORRUPT: { status: 500, code: "INTERNAL_ERROR" },
+  INVALID_PRESET_ID: { status: 400, code: "VALIDATION_ERROR" },
+  INVALID_PRESET: { status: 400, code: "VALIDATION_ERROR" },
+};
+
+const SETTINGS_ERROR_STATUS: Record<string, { status: number; code: ApiErrorCode }> = {
+  SETTINGS_CORRUPT: { status: 500, code: "INTERNAL_ERROR" },
+};
+
+const CONFIG_SERVICE_ERROR_STATUS: Record<string, { status: number; code: ApiErrorCode }> = {
+  CONFIG_INVALID: { status: 400, code: "VALIDATION_ERROR" },
+  CONFIG_REVISION_CONFLICT: { status: 409, code: "CONFIG_REVISION_CONFLICT" },
+  PRESET_IN_USE: { status: 409, code: "PRESET_IN_USE" },
+  CONFIG_APPLY_FAILED: { status: 500, code: "CONFIG_APPLY_FAILED" },
+};
+
 /** 任意抛错 → ApiError（路由/仓储/协调器错误的唯一收敛出口）。 */
 export function toApiError(err: unknown): ApiError {
   if (err instanceof ApiError) return err;
@@ -82,6 +119,22 @@ export function toApiError(err: unknown): ApiError {
   if (err instanceof WorldRepositoryError) {
     const mapped = WORLD_ERROR_STATUS[err.code]!;
     return new ApiError(mapped.status, mapped.code, err.message);
+  }
+  if (err instanceof SecretsRepositoryError) {
+    const mapped = SECRETS_ERROR_STATUS[err.code]!;
+    return new ApiError(mapped.status, mapped.code, err.message);
+  }
+  if (err instanceof PresetsRepositoryError) {
+    const mapped = PRESETS_ERROR_STATUS[err.code]!;
+    return new ApiError(mapped.status, mapped.code, err.message);
+  }
+  if (err instanceof SettingsRepositoryError) {
+    const mapped = SETTINGS_ERROR_STATUS[err.code]!;
+    return new ApiError(mapped.status, mapped.code, err.message);
+  }
+  if (err instanceof ConfigServiceError) {
+    const mapped = CONFIG_SERVICE_ERROR_STATUS[err.code]!;
+    return new ApiError(mapped.status, mapped.code, err.message, err.details);
   }
   if (err instanceof RevisionConflictError) {
     return new ApiError(409, "REVISION_CONFLICT", err.message, {

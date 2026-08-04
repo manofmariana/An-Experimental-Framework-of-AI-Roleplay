@@ -1,11 +1,10 @@
 /**
- * 单一命令协调器（C4，docs/optimization-review.md §5「单一命令协调器」「会话切换与强制结束」）：
- * 取代 server/sessionManager.ts——所有会话 mutation（含 new/load）经 execute 进入唯一串行队列；
+ * 单一命令协调器：
+ * 所有会话 mutation（含 new/load）经 execute 进入唯一串行队列；
  * rollback_and_continue 复合命令在同一队列任务内顺序 rollback→continue（两步间不接受其他命令）。
  *
- * 阶段 D2「消息身份 + Snapshot/Transition + 一致 query + 会话切换隔离」（本片落地）：
- * - GameSession.onCommit → buildTransition → onTransition 广播（替代已删除的 onStateRefresh
- *   与散装 state/events/pipeline 广播）：每次提交一条 Transition；
+ * 核心机制——消息身份 + Snapshot/Transition + 一致 query + 会话切换隔离：
+ * - GameSession.onCommit → buildTransition → onTransition 广播：每次提交一条 Transition；
  * - rollback_and_continue 只发一条合并 Transition（suppressTransitions 抑制中间 rollback
  *   提交，fromRevision = 命令开始前 revision → 终 revision）；
  * - query 重构为 snapshot/stats：snapshot 在同步函数内一次取 revision + 全部视图，
@@ -15,9 +14,11 @@
  * - stop 定向中止：runId 不符 → SessionSwitchedError；activationId 不符 → 幂等空成功。
  *
  * 资源修改生效规则（缓存铁律精神）：world/character 经 API 修改后只打"需重建"标记，
- * 运行中的会话前缀不被抽换；下次 new_session 生效。config 域例外：保存后立即热重载
- * 到运行中会话（reloadConfig，不入队），不打 stale 标记。
+ * 运行中的会话前缀不被抽换；下次 new_session 生效。config 域例外：配置事务保存
+ * 成功后经 applyResolvedConfig 立即热应用到运行中会话（不入队），不打 stale 标记。
  */
+import type { AgentKind } from "../configResolver.js";
+import type { ResolvedAgentConfig, UserSettings } from "../contracts/config.js";
 import type { Display } from "../display.js";
 import { systemIds, type IdPorts } from "../ports.js";
 import { RevisionConflictError, SessionSwitchedError } from "../truth/validation/errors.js";
@@ -63,7 +64,7 @@ export type SessionCommandResult<C extends SessionCommand> =
       : C extends { type: "load_session" } ? { runId: string; history: HistoryPayload }
         : void;
 
-/** 一致 query 返回映射（D2：旧 state/events 零散查询已删除，snapshot = 单 revision 一致快照）。 */
+/** 一致 query 返回映射（snapshot = 单 revision 一致快照）。 */
 export interface QueryResultMap {
   snapshot: SessionSnapshotData;
   stats: CacheStat[];
@@ -78,7 +79,7 @@ export class SessionCoordinator {
   private queue: Promise<unknown> = Promise.resolve();
   /** 暂停选项（内存态）：记住以便新会话/读档自动套用；自动继续 = 全 false。 */
   private pauseOptions: PauseOptions = AUTO_CONTINUE;
-  /** 会话代际（D2 消息身份）：每次原子替换 active session 递增（晚到结果丢弃的判据之一）。 */
+  /** 会话代际（消息身份）：每次原子替换 active session 递增（晚到结果丢弃的判据之一）。 */
   private epoch = 0;
   /** rollback_and_continue 抑制窗口：中间提交只记账不广播，任务结束发一条合并 Transition。 */
   private suppressTransitions = false;
@@ -87,7 +88,7 @@ export class SessionCoordinator {
   /** edit_result 命令上下文：onCommit 钩子据此给 Transition 附 editedResult。 */
   private editingResult = false;
 
-  /** Transition 广播回调（server 挂接；每次提交一条，替代已删除的 onStateRefresh）。 */
+  /** Transition 广播回调（server 挂接；每次提交一条）。 */
   onTransition: ((transition: SessionTransition) => void) | null = null;
 
   constructor(
@@ -147,13 +148,16 @@ export class SessionCoordinator {
     this.stale = true;
   }
 
-  /** config 域专属：保存后立即热重载到运行中会话（不入队；无会话则 no-op，下次 new_session 自然读新配置）。 */
-  reloadConfig(): void {
-    this.session?.reloadConfig();
+  /**
+   * config 域专属（配置事务热应用回调）：configService 保存成功后以同一份 resolved
+   * 对象原地热应用（不入队；无会话则 no-op，下次 new_session 由 factory 读新配置）。
+   */
+  applyResolvedConfig(resolved: Record<AgentKind, ResolvedAgentConfig>, settings: UserSettings): void {
+    this.session?.applyResolvedConfig(resolved, settings);
   }
 
   /**
-   * 停止（队列外定向中止，D2 消息身份）：runId 携带且 ≠ 当前 → SessionSwitchedError；
+   * 停止（队列外定向中止，消息身份）：runId 携带且 ≠ 当前 → SessionSwitchedError；
    * activationId 携带且 ≠ 当前在途 → 幂等空成功（旧 activation 的迟到 stop 不动当前 activation）。
    */
   stop(identity?: { runId?: string; activationId?: string }): void {
@@ -175,8 +179,8 @@ export class SessionCoordinator {
    * 状态栏直接编辑（PUT /api/session/state）：走统一命令入口（direct_edit 入队，不置 busy——
    * 串行队列本身即空闲闸），api 层 await 同步等结果；校验失败由 GameSession 抛错
    * （HTTP 层映射 400 VALIDATION_ERROR；「LLM 运行中」409 仅剩 GameSession 直调防御路径）。
-   * 广播 = commit 的 onCommit → Transition（onStateRefresh 已删除）。
-   * baseRevision（D5 状态编辑器乐观并发闸）：携带时与当前 revision 比对，不符抛
+   * 广播 = commit 的 onCommit → Transition。
+   * baseRevision（状态编辑器乐观并发闸）：携带时与当前 revision 比对，不符抛
    * RevisionConflictError（HTTP 层映射 409 REVISION_CONFLICT）；缺省跳过校验。
    */
   async applyDirectEdit(payload: DirectEditPayload, baseRevision?: number): Promise<void> {
@@ -194,7 +198,7 @@ export class SessionCoordinator {
   }
 
   /**
-   * 一致快照 query（D2「一致快照 query」）：不产生 Generation、不入 mutation 队列，
+   * 一致快照 query：不产生 Generation、不入 mutation 队列，
    * 但在同一个同步函数内一次取 revision + state/events/history/pipeline，末尾断言
    * revision 未变（防御性——同步代码内不可触发，触发即 bug）。
    */
@@ -251,7 +255,7 @@ export class SessionCoordinator {
           s.rollbackTo(cmd.targetSeq);
         }) as Promise<R>;
       case "rollback_and_continue":
-        // 原子重 roll：回滚与续跑同处一个队列任务，两步间不接受其他命令（取代已删除的 GameSession.reroll）；
+        // 原子重 roll：回滚与续跑同处一个队列任务，两步间不接受其他命令；
         // 中间 rollback 提交不广播——任务结束只发一条合并 Transition（fromRevision→终 revision）
         return this.runOnSession(cmd, async (s) => {
           if (!Number.isInteger(cmd.targetSeq) || cmd.targetSeq <= 1) {
@@ -312,7 +316,7 @@ export class SessionCoordinator {
     return { runId: session.runId, history: this.currentHistory() };
   }
 
-  /** 旧会话在途 → 强制结束（D2 会话切换）：dispose 置旗标 + abort 在途 LLM；commit 闸拒绝晚到提交。 */
+  /** 旧会话在途 → 强制结束（会话切换）：dispose 置旗标 + abort 在途 LLM；commit 闸拒绝晚到提交。 */
   private disposeCurrentIfBusy(): void {
     if (this.session !== null && this.session.isBusy) {
       this.session.dispose();

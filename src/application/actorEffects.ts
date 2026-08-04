@@ -1,9 +1,9 @@
 /**
- * 统一效果规划器——角色决策（docs/optimization-review.md §3「统一效果规划器」）。
+ * 统一效果规划器——角色决策。
  *
  * 玩家与 NPC 同一入口：两者只在取得 DecisionPackage 的方式上不同（玩家输入解析 /
  * NPC LLM + schema 校验），随后统一进入 planActorDecision；编辑重放 = 在 draft 上
- * 反转旧 effects 后用同一规划器生成新 effects（见 loop.ts editResult）。
+ * 反转旧 effects 后用同一规划器生成新 effects（见 gameSession.ts editResult）。
  *
  * 统一处理：working set 追加、relations、普通行动 acted、邀请接受/拒绝（confirm/
  * 还原 timer + 清频道）、markers（gm_request/leave/recall/contact；游离 confirm 忽略）。
@@ -13,13 +13,14 @@
  */
 import type { DicePort } from "../ports.js";
 import { NO_INITIATIVE_BATCH } from "../scheduler/derive.js";
-import { groupLocation, LEAVE_TIMER } from "../scheduler/simulator.js";
+import { groupLocation } from "../scheduler/simulator.js";
 import { normalizeCid } from "../truth/identity.js";
 import type { TruthStores } from "../truth/stores.js";
 import type { VarChange } from "../truth/varChanges.js";
 import type { DecisionPackage, Marker } from "../types.js";
 import {
   cleanupChannels,
+  cycleCountOf,
   playableCharacters,
   playerCidOf,
   rederiveGroups,
@@ -57,7 +58,7 @@ function setGmTrigger(truth: TruthStores, cid: string): VarChange[] {
 }
 
 /**
- * 标记执行（§5.2：程序即时作用，全部走 VarChange；标记不进工作集、不进任何注入）。
+ * 标记执行（程序即时作用，全部走 VarChange；标记不进工作集、不进任何注入）。
  * confirm 不在此处理——它只在邀请应答步生效（applyInvitationAnswer），游离 confirm 忽略。
  */
 function applyMarkers(truth: TruthStores, cid: string, markers: Marker[], rollDice: DicePort): VarChange[] {
@@ -67,10 +68,28 @@ function applyMarkers(truth: TruthStores, cid: string, markers: Marker[], rollDi
       case "gm_request":
         changes.push(...setGmTrigger(truth, cid));
         break;
-      case "leave":
-        // 离开标记对所有角色（含玩家）统一程序化：组归 0 + 超大 timer 冻结 + 清频道，绝不触发 GM
-        changes.push(...truth.characters.setVars(cid, { group: 0, timer: LEAVE_TIMER, channel: null }));
+      case "leave": {
+        // 离开标记对所有角色（含玩家）统一程序化：组归 0 + timer 置 null（无计时器，待 GM 结算）+ 清频道，绝不触发 GM
+        const oldGroup = truth.characters.get(cid).group;
+        changes.push(...truth.characters.setVars(cid, { group: 0, timer: null, channel: null }));
+        // 减员至单人 = 新的独奏节奏起点：幸存者 acted 重置（本周期已行动也重来）+ 周期计数 X 归 0，
+        // 独奏周期（前台仅 1 人阈值恒为 1）从下一次单人行动起计
+        if (oldGroup !== 0) {
+          const survivors = Object.keys(truth.characters.all()).filter(
+            (c) => truth.characters.get(c).group === oldGroup,
+          );
+          if (survivors.length === 1) {
+            const survivor = survivors[0]!;
+            if (truth.characters.get(survivor).acted) {
+              changes.push(...truth.characters.setVars(survivor, { acted: false }));
+            }
+            if (cycleCountOf(truth) !== 0) {
+              changes.push(...truth.world.apply([{ path: "cycles_since_gm", op: "=", value: 0 }]));
+            }
+          }
+        }
         break;
+      }
       case "recall": {
         const target = normalizeCid(marker.target);
         const state = truth.characters.all()[target];
@@ -78,8 +97,8 @@ function applyMarkers(truth: TruthStores, cid: string, markers: Marker[], rollDi
           console.warn(`召回标记指向未知角色 ${target}，已忽略`);
           break;
         }
-        // 未结算离开集合：group=0 且 timer=LEAVE_TIMER；timer 归当前 clock（组原到期时刻）、按进组规则归组
-        if (state.group === 0 && state.timer === LEAVE_TIMER) {
+        // 未结算离开集合：group=0 且 timer=null；timer 归当前 clock（组原到期时刻）、按进组规则归组
+        if (state.group === 0 && state.timer === null) {
           changes.push(...truth.characters.setVars(target, { timer: truth.world.clock }));
           changes.push(...rederiveGroups(truth, rollDice));
         } else {
@@ -134,7 +153,7 @@ function applyReject(truth: TruthStores, cid: string, preTimer: number | null): 
 /**
  * 接受（confirm + 首轮回复）：并入邀请者组（邀请者单人则配对成新组并补投），
  * 先攻 = 已存值组编号对上则复用、否则单独补投；位置 ≠ 组位置 → 先攻 -1；
- * timer 归 0 待 GM 重设；首轮回复计入已行动（acted=true）。
+ * timer 归当前时钟（立即到期）待 GM 重设；首轮回复计入已行动（acted=true）。
  */
 function applyConfirm(truth: TruthStores, cid: string, contactSeq: number, rollDice: DicePort): VarChange[] {
   const current = truth.world.pipeline.current;
@@ -168,7 +187,7 @@ function applyConfirm(truth: TruthStores, cid: string, contactSeq: number, rollD
   // 入组位置 ≠ 组位置 → 先攻 -1（远程参与的劣后）
   const gl = groupLocation(simCharsOf(truth), g);
   if (gl !== null && truth.characters.get(cid).location.name !== gl) value -= 1;
-  changes.push(...truth.characters.setVars(cid, { initiative: { value, group: g }, timer: 0, acted: true }));
+  changes.push(...truth.characters.setVars(cid, { initiative: { value, group: g }, timer: truth.world.clock, acted: true }));
   return changes;
 }
 

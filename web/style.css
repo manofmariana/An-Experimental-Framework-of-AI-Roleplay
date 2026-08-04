@@ -1,4 +1,4 @@
-/* Agent-AIRP WebUI · 暗色主题 · 配色纪律与 CLI 一致：思维链/JSON 弱色，正文亮色 */
+/* Ofair WebUI · 暗色主题 · 配色纪律与 CLI 一致：思维链/JSON 弱色，正文亮色 */
 
 * { box-sizing: border-box; }
 
@@ -156,7 +156,7 @@ th { color: #9aa3af; font-weight: 500; }
   line-height: 1.9;
   white-space: pre-wrap;
 }
-/* 玩家输入卡（简单卡片，无按钮） */
+/* 玩家输入卡（"你"标签 + 右上角 "..." 菜单） */
 .player-card {
   background: #161a20;
   border: 1px solid #232a34;
@@ -166,6 +166,12 @@ th { color: #9aa3af; font-weight: 500; }
   padding: 8px 12px;
   color: #a8c69f;
   font-size: 13.5px;
+}
+.player-card .player-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 .player-card .player-card-label {
   color: #7a8a72;

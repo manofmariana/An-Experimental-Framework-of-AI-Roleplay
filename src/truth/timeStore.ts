@@ -3,8 +3,9 @@ import path from "node:path";
 import { z } from "zod";
 import { SAVE_SCHEMA_VERSION } from "./saveSchema.js";
 
+// 世界时间口径：y 0 基（允许 0 年开局），m/d 1 基（30 日/月、12 月/年），h/min 常规 0 基。
 export const TimeAnchorSchema = z.object({
-  y: z.number().int().min(1), m: z.number().int().min(1).max(12), d: z.number().int().min(1).max(35),
+  y: z.number().int().min(0), m: z.number().int().min(1).max(12), d: z.number().int().min(1).max(35),
   h: z.number().int().min(0).max(23), min: z.number().int().min(0).max(59),
 });
 export type TimeAnchor = z.infer<typeof TimeAnchorSchema>;
@@ -24,14 +25,14 @@ export const DEFAULT_TIME_FILE: TimeFile = {
 };
 
 export function worldTimeToMinutes(time: TimeAnchor): number {
-  return ((((time.y - 1) * 365 + (time.m - 1) * 30 + (time.d - 1)) * 24 + time.h) * 60) + time.min;
+  return ((((time.y * 365 + (time.m - 1) * 30 + (time.d - 1)) * 24 + time.h) * 60) + time.min);
 }
 
 export function minutesToWorldTime(totalMinutes: number): TimeAnchor {
   let value = Math.max(0, Math.floor(totalMinutes));
   const min = value % 60; value = Math.floor(value / 60);
   const h = value % 24; value = Math.floor(value / 24);
-  const y = Math.floor(value / 365) + 1;
+  const y = Math.floor(value / 365);
   const dayOfYear = value % 365;
   // 每年 12 月承接 30 日月制余下的 5 天，避免产生第 13 月。
   const m = Math.min(12, Math.floor(dayOfYear / 30) + 1);
@@ -52,7 +53,7 @@ export function renderTimeHeader(time: TimeAnchor, data: Pick<TimeFile, "periods
   return period === undefined ? date : `${date}·${period.key}`;
 }
 
-/** time.json 档内副本容器（纯内存，无 IO）：落盘由 GenerationRepository 在步边界整代提交（存档 v6）。 */
+/** time.json 档内副本容器（纯内存，无 IO）：落盘由 GenerationRepository 在步边界整代提交。 */
 export class TimeStore {
   private data: TimeFile;
 

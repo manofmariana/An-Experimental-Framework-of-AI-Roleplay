@@ -3,7 +3,7 @@ import path from "node:path";
 import { runDir } from "../config.js";
 import type { CacheStat } from "../types.js";
 
-/** 追加一条缓存埋点到 runs/{runId}/cache-stats.jsonl。 */
+/** 追加一条缓存埋点到 save/{runId}/cache-stats.jsonl。 */
 export function recordCacheStat(runId: string, stat: CacheStat): void {
   const dir = runDir(runId);
   fs.mkdirSync(dir, { recursive: true });

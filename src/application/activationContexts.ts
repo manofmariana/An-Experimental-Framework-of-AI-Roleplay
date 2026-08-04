@@ -1,19 +1,19 @@
 /**
- * activation 上下文构建器（docs/optimization-review.md §4 主体片）：
+ * activation 上下文构建器：
  * 三个无状态 activation 的全部注入上下文在这里从**最新真相 + 派生投影现算**——
  * 每次调用读 live stores 的只读数据（恒冻结保证不被误写），无任何跨调用缓存：
  * - cast 每次现建（动态改名/增角色后下一次调用直接读到最新）；
  * - lore 逐调用从 loreStore 档内副本渲染（运行期可编辑，必须读到最新）；
  * - setting/toneCard 是世界设定集静态文本（运行期不变），由装配层注入并持有。
- * 数据同源同渲染函数（与原 agent 内推入缓存的取数口径逐一对应），只改就绪时机。
+ * 取数与渲染函数同源。
  *
- * 阶段 D 登记：旧 run 在途 activation 完成结果的丢弃（消息身份 runId/activationId/epoch）
- * 不在本片范围，属 SessionCoordinator 会话隔离收敛（见 sessionCoordinator.ts 注释）。
+ * 旧 run 在途 activation 完成结果的丢弃（消息身份 runId/activationId/epoch）
+ * 不在本文件范围，由 SessionCoordinator 会话隔离负责（见 sessionCoordinator.ts 注释）。
  */
 import type { CharacterContext } from "../agents/character.js";
 import type { GmContext } from "../agents/gm.js";
 import type { ProseContext } from "../agents/prose.js";
-import { groupLocation, LEAVE_TIMER } from "../scheduler/simulator.js";
+import { groupLocation } from "../scheduler/simulator.js";
 import {
   renderForGm,
   renderForReader,
@@ -66,8 +66,8 @@ export function remoteCidsOf(truth: TruthStores): Set<string> {
 /**
  * 本轮 #当前场景（角色视角）：同值批次注入隔离——
  * 与行动者同组且先攻同值的他人本轮条目不可见（同时性的迷雾；从角色变量派生，续档安全）。
- * 自己的条目恒可见；未结算离开者（group=0 + timer=LEAVE_TIMER）的条目产生时仍在组内，
- * 对原组成员保持可见；位置 ≠ 组位置的成员标注"远程"（§5.3 注入标注）。
+ * 自己的条目恒可见；未结算离开者（group=0 + timer=null）的条目产生时仍在组内，
+ * 对原组成员保持可见；位置 ≠ 组位置的成员标注"远程"。
  */
 export function sceneForCid(truth: TruthStores, cid: string): string {
   const initiative = truth.characters.get(cid).initiative;
@@ -75,7 +75,7 @@ export function sceneForCid(truth: TruthStores, cid: string): string {
     if (e.cid === cid) return true; // 自己的过往言行可见（同值批隔离只对他人条目生效）
     const otherState = truth.characters.get(e.cid);
     // 未结算离开者：同值批隔离不适用（其条目是在组内时产生的，继续对原组成员可见）
-    if (otherState.group === 0 && otherState.timer !== null && otherState.timer >= LEAVE_TIMER) return true;
+    if (otherState.group === 0 && otherState.timer === null) return true;
     if (initiative === null) return true;
     const other = otherState.initiative;
     return other === null || other.group !== initiative.group || other.value !== initiative.value;

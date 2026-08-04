@@ -2,9 +2,14 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { CharacterActivation, type CharacterContext, type CharacterManifest } from "../src/agents/character.js";
 import { GmActivation, validateAdjudicationRound, type GmContext } from "../src/agents/gm.js";
+import { resolveWorldDir } from "../src/config.js";
 import { LLMAbortedError } from "../src/llm/chatPort.js";
 import { OpenAIChatAdapter } from "../src/llm/openaiChatAdapter.js";
+import { packPromptsDir } from "../src/resources/worldRepository.js";
 import { CharactersStore } from "../src/truth/charactersStore.js";
+
+/** 出厂模板目录 = 默认世界包内 prompts/（activation 构造注入，热加载即读它）。 */
+const FACTORY_PROMPTS_DIR = packPromptsDir(resolveWorldDir());
 
 const manifest: CharacterManifest = {
   id: "C1001", name: "林雾", gender: "女", age: "26", personality: "谨慎。",
@@ -75,14 +80,14 @@ describe("abort 不触发重试（停止 ≠ 可重试的失败）", () => {
 
   it("character.decide：LLMAbortedError 直接向上传播，只调用一次", async () => {
     const llm = failingLlm(new LLMAbortedError("半截", ""));
-    const activation = new CharacterActivation(llm as never);
+    const activation = new CharacterActivation(llm as never, FACTORY_PROMPTS_DIR);
     await assert.rejects(() => activation.decide(characterCtx(), 1, new AbortController().signal), LLMAbortedError);
     assert.equal(llm.state.calls, 1);
   });
 
   it("gm.adjudicate：LLMAbortedError 直接向上传播，只调用一次", async () => {
     const llm = failingLlm(new LLMAbortedError("", ""));
-    const gm = new GmActivation(llm as never);
+    const gm = new GmActivation(llm as never, FACTORY_PROMPTS_DIR);
     await assert.rejects(() => gm.adjudicate(gmCtx(), 1, ["C1001"], new AbortController().signal), LLMAbortedError);
     assert.equal(llm.state.calls, 1);
   });
@@ -95,21 +100,21 @@ describe("abort 不触发重试（停止 ≠ 可重试的失败）", () => {
         const pkg = state.calls === 1
           ? {
               events: [], narrativity: "skip", deltas: [],
-              timer: [{ cid: "C1001", span: { min: 1 } }, { cid: "C1002", span: { min: 1 } }],
+              durations: [{ cid: "C1001", span: { min: 1 } }, { cid: "C1002", span: { min: 1 } }],
               location: [{ cid: "C1002", location: { name: "越界地点", level: 1 } }],
             }
           : {
               events: [], narrativity: "skip", deltas: [],
-              timer: [{ cid: "C1001", span: { min: 1 } }],
+              durations: [{ cid: "C1001", span: { min: 1 } }],
               location: [{ cid: "C1001", location: { name: "合法地点", level: 1 } }],
             };
         return { text: JSON.stringify(pkg), reasoning: "" };
       },
     };
-    const gm = new GmActivation(llm as never);
+    const gm = new GmActivation(llm as never, FACTORY_PROMPTS_DIR);
     const { pkg } = await gm.adjudicate(gmCtx(), 1, ["C1001"], new AbortController().signal);
     assert.equal(state.calls, 2);
-    assert.deepEqual(pkg.timer.map((item) => item.cid), ["C1001"]);
+    assert.deepEqual(pkg.durations.map((item) => item.cid), ["C1001"]);
     assert.doesNotThrow(() => validateAdjudicationRound(pkg, ["C1001"]));
     assert.throws(
       () => validateAdjudicationRound({ ...pkg, location: [{ cid: "C1002", location: { name: "越界", level: 1 } }] }, ["C1001"]),
@@ -126,7 +131,7 @@ describe("abort 不触发重试（停止 ≠ 可重试的失败）", () => {
         return { text: '{"action": "点头", "inner": "先看看。", "dialogue": "好。"}', reasoning: "" };
       },
     };
-    const activation = new CharacterActivation(llm as never);
+    const activation = new CharacterActivation(llm as never, FACTORY_PROMPTS_DIR);
     const { pkg } = await activation.decide(characterCtx(), 1, new AbortController().signal);
     assert.equal(state.calls, 2);
     assert.equal(pkg.dialogue, "好。");

@@ -1,7 +1,9 @@
 import readline from "node:readline";
+import { loadConfigState } from "./application/configService.js";
 import { SessionCoordinator } from "./application/sessionCoordinator.js";
-import { loadAgentConfigs } from "./config.js";
+import { CONFIG_FILE } from "./config.js";
 import type { Display } from "./display.js";
+import { resolveUserDirectories } from "./resources/userDirectories.js";
 
 const DIM = "\x1b[2m";
 const ITALIC = "\x1b[3m";
@@ -76,23 +78,29 @@ function printHelp(): void {
 }
 
 async function main(): Promise<void> {
-  const configs = loadAgentConfigs();
-  if (!configs) {
+  // 配置状态（E2：含 config.json → 三资源的一次性迁移闸，CLI 同样生效）
+  const state = loadConfigState({
+    dirs: resolveUserDirectories(),
+    env: process.env,
+    legacyConfigFile: CONFIG_FILE,
+  });
+  if (!state.resolved) {
     console.error(
       [
         "未找到 LLM API Key，无法启动。",
         "任选一种方式配置：",
-        "  1. 复制 config.example.json 为 config.json，填入 api_key（可在 agents 块给单个 agent 单独配置）；",
+        "  1. 经 WebUI「配置」页写入密钥（secrets）并绑定 API 预设；",
         '  2. 设置环境变量：export DEEPSEEK_API_KEY="sk-..."',
-        "可选：base_url（默认 https://api.deepseek.com）、model（默认 deepseek-chat），环境变量优先于 config.json 顶层。",
+        "旧 config.json 会在首次启动时自动迁移为 data/users/default_user/ 下的 secrets/api-presets/settings（原文件改名 .migrated.bak）。",
       ].join("\n"),
     );
     process.exit(1);
   }
+  const configs = state.resolved;
 
   const coordinator = new SessionCoordinator(makeDisplay);
   const runId = await coordinator.execute({ type: "new_session" });
-  console.log(`Agent-AIRP P1-M2a · 运行目录 runs/${runId}/`);
+  console.log(`Ofair · 存档目录 save/${runId}/`);
   console.log(
     `模型：角色=${configs.character.model} · GM=${configs.gm.model} · 正文=${configs.prose.model}`,
   );

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { GameSession } from "../src/application/gameSession.js";
-import { LEAVE_TIMER } from "../src/scheduler/simulator.js";
 import {
   buildAdjudication as gmPkg,
   buildDecision as decision,
@@ -33,7 +32,7 @@ function makeSession(
 }
 
 describe("编辑执行标记（editResult 重放 applyMarkers，与普通路径同语义）", () => {
-  it("编辑插入 leave → 归 0+超大 timer；再编辑移除 → 旧效应被反向", async () => {
+  it("编辑插入 leave → 归 0+timer 置 null；再编辑移除 → 旧效应被反向", async () => {
     const session = makeSession("leave", [
       { id: "C0", name: "玩家", location: "loc_A", timer: 0, isPlayer: true },
       { id: "C1001", name: "甲", location: "loc_A", timer: 0 },
@@ -44,10 +43,10 @@ describe("编辑执行标记（editResult 重放 applyMarkers，与普通路径�
     assert.equal(session.pipelineInfo.kind, "character:C1001");
     assert.equal(charState(session, "C1001").group, 1);
 
-    // 编辑插入 leave：组归 0 + 超大 timer（同普通路径）
+    // 编辑插入 leave：组归 0 + timer 置 null（同普通路径）
     session.editResult(JSON.stringify(decision({ action: "离开现场", markers: [{ type: "leave" }] })));
     assert.equal(charState(session, "C1001").group, 0);
-    assert.equal(charState(session, "C1001").timer, LEAVE_TIMER);
+    assert.equal(charState(session, "C1001").timer, null);
     let current = session.getPipelineCurrent()!;
     assert.equal((current.result as { decision: { action?: string } }).decision.action, "离开现场");
 
@@ -99,7 +98,7 @@ describe("编辑执行标记（editResult 重放 applyMarkers，与普通路径�
     await session.continuePipeline();
     assert.equal(session.pipelineInfo.kind, "character:C1002");
     assert.equal(charState(session, "C1001").group, 0);
-    assert.equal(charState(session, "C1001").timer, LEAVE_TIMER);
+    assert.equal(charState(session, "C1001").timer, null);
 
     // 编辑 C1002 步插入 recall：C1001 归组 + timer 归当前 clock + 先攻复用
     session.editResult(
@@ -112,7 +111,37 @@ describe("编辑执行标记（editResult 重放 applyMarkers，与普通路径�
     // 再编辑移除 recall：C1001 回到未结算离开集合
     session.editResult(JSON.stringify(decision({ dialogue: "乙的台词" })));
     assert.equal(charState(session, "C1001").group, 0);
-    assert.equal(charState(session, "C1001").timer, LEAVE_TIMER);
+    assert.equal(charState(session, "C1001").timer, null);
+  });
+
+  it("回滚到 recall 步后编辑移除 recall：A 回未结算离开集合（group=0 + timer=null）", async () => {
+    // 复现用户场景：A leave → B recall（A 回组）→ 推进若干步 → 回滚到 B 的 recall 步 →
+    // 对该步做原始返回编辑删除 recall 标记 → 召回效应必须被撤销
+    const session = makeSession("recall-rollback-edit", [
+      { id: "C0", name: "玩家", location: "loc_A", timer: 0, isPlayer: true },
+      { id: "C1001", name: "甲", location: "loc_A", timer: 0 },
+      { id: "C1002", name: "乙", location: "loc_A", timer: 0 },
+    ], [5, 20, 15], 5); // 先攻：C1001=25 / C1002=20 / C0=10，开局同组
+    llm.characterQueues["character:C1001"] = [decision({ markers: [{ type: "leave" }] })];
+    llm.characterQueues["character:C1002"] = [
+      decision({ dialogue: "喊住甲", markers: [{ type: "recall", target: "C1001" }] }),
+    ];
+
+    // seq1 C1001 leave → seq2 C1002 recall（C1001 回组；其 acted 在 seq2 setup 按"组进后台清零"已清）
+    // → seq3 C1001 补行动 → 停等玩家
+    await session.continuePipeline();
+    assert.equal(session.turnCount, 3);
+    assert.equal(charState(session, "C1001").group, charState(session, "C1002").group);
+
+    // 回滚到 B 的 recall 步（recall 效应仍在：A 在组内）
+    session.rollbackTo(2);
+    assert.equal(session.getPipelineCurrent()!.kind, "character:C1002");
+    assert.notEqual(charState(session, "C1001").group, 0, "回滚到 seq2：recall 效应仍在（A 在组内）");
+
+    // 对 B 的该步编辑删除 recall 标记：旧 effects 反转 → A 回未结算离开集合
+    session.editResult(JSON.stringify(decision({ dialogue: "乙的台词" })));
+    assert.equal(charState(session, "C1001").group, 0, "删除 recall 标记后 A 必须离组");
+    assert.equal(charState(session, "C1001").timer, null, "删除 recall 标记后 A timer 必须还原为 null");
   });
 });
 
@@ -123,7 +152,7 @@ describe("工作集跨周期注入（#当前场景：GM 清算前的全体言行
       { id: "C1001", name: "甲", location: "loc_A", timer: 0 },
     ], [5, 20], 2, [
       gmPkg({
-        timer: [
+        durations: [
           { cid: "C0", span: { min: 5 } },
           { cid: "C1001", span: { min: 5 } },
         ],
@@ -166,7 +195,7 @@ describe("编辑 = 重读整个输出并完整处理（changes.effects 整段反
       { id: "C1001", name: "甲", location: "loc_A", timer: 0 },
       { id: "C1002", name: "乙", location: "loc_B", timer: 60 },
     ], [10, 8, 10, 8], 5, [
-      gmPkg({ timer: [{ cid: "C1001", span: { min: 5 } }] }), // seq2：contact 触发 GM 立即结算
+      gmPkg({ durations: [{ cid: "C1001", span: { min: 5 } }] }), // seq2：contact 触发 GM 立即结算
     ]);
     session.setPauseOptions({ everyStep: true, beforeGm: false, afterGm: false, afterProse: false });
     llm.characterQueues["character:C1001"] = [
@@ -181,13 +210,13 @@ describe("编辑 = 重读整个输出并完整处理（changes.effects 整段反
     await session.continuePipeline(); // seq3 C1002 应答（confirm）：C1001 单人 → 配对成新组并补投
     assert.equal(session.turnCount, 3);
     assert.equal(session.pipelineInfo.kind, "character:C1002");
-    // 接受落账：双方入新组、各补投先攻（乙远程 -1）、乙 timer 归 0、计入已行动
+    // 接受落账：双方入新组、各补投先攻（乙远程 -1）、乙 timer 归当前时钟（立即到期）、计入已行动
     const acceptedInvitee = charState(session, "C1002");
     assert.notEqual(acceptedInvitee.group, 0);
     assert.equal(charState(session, "C1001").group, acceptedInvitee.group);
     assert.deepEqual(charState(session, "C1001").initiative, { value: 15, group: acceptedInvitee.group });
     assert.deepEqual(acceptedInvitee.initiative, { value: 12, group: acceptedInvitee.group });
-    assert.equal(acceptedInvitee.timer, 0);
+    assert.equal(acceptedInvitee.timer, 5);
     assert.equal(acceptedInvitee.acted, true);
 
     // 编辑移除 confirm（改为普通拒绝言辞）：setup 之后整段反向 → 按拒绝重放
@@ -218,7 +247,7 @@ describe("编辑 = 重读整个输出并完整处理（changes.effects 整段反
     assert.equal(charState(session, "C1001").group, reaccepted.group);
     assert.deepEqual(charState(session, "C1001").initiative, { value: 15, group: reaccepted.group });
     assert.deepEqual(reaccepted.initiative, { value: 12, group: reaccepted.group });
-    assert.equal(reaccepted.timer, 0);
+    assert.equal(reaccepted.timer, 5);
     assert.equal(reaccepted.acted, true);
     current = session.getPipelineCurrent()!;
     result = current.result as {
@@ -251,5 +280,52 @@ describe("编辑 = 重读整个输出并完整处理（changes.effects 整段反
     session.editResult(JSON.stringify(decision({ dialogue: "再改台词" })));
     assert.deepEqual(charState(session, "C1001").relations, {});
     assert.equal(charState(session, "C1001").acted, true);
+  });
+});
+
+describe("玩家步编辑（与角色步同一路径：反转旧 effects + 同一 planner 重放）", () => {
+  it("玩家立 leave → 编辑删除 leave 标记 → 组/timer 还原", async () => {
+    // 骰子按 cid 升序消费：C0=20+5=25 > C1001=5+5=10 → 开局即等玩家
+    const session = makeSession("player-leave", [
+      { id: "C0", name: "玩家", location: "loc_A", timer: 0, isPlayer: true },
+      { id: "C1001", name: "甲", location: "loc_A", timer: 0 },
+    ], [20, 5], 5);
+    session.setPauseOptions({ everyStep: true, beforeGm: false, afterGm: false, afterProse: false });
+
+    // 玩家结构化输入立 leave：组归 0、timer 置 null；everyStep 暂停使玩家步停在 current
+    assert.equal(session.pipelineInfo.phase, "await_player");
+    await session.handlePlayerInput(JSON.stringify(decision({ action: "离开现场", markers: [{ type: "leave" }] })));
+    assert.equal(session.getPipelineCurrent()!.kind, "player");
+    assert.equal(charState(session, "C0").group, 0);
+    assert.equal(charState(session, "C0").timer, null);
+
+    // 编辑删除 leave 标记：旧 effects 反转 → 组/timer 还原；result.input 同步为新文本
+    const edited = JSON.stringify(decision({ action: "留下" }));
+    session.editResult(edited);
+    assert.equal(charState(session, "C0").group, 1);
+    assert.equal(charState(session, "C0").timer, 0);
+    const current = session.getPipelineCurrent()!;
+    assert.equal(current.kind, "player");
+    assert.equal(current.edited, true);
+    const result = current.result as { input: string; decision: { action?: string } };
+    assert.equal(result.input, edited);
+    assert.equal(result.decision.action, "留下");
+  });
+
+  it("玩家原输入无标记 → 编辑加入 leave → 立即生效（组归 0/timer=null）", async () => {
+    const session = makeSession("player-leave-add", [
+      { id: "C0", name: "玩家", location: "loc_A", timer: 0, isPlayer: true },
+      { id: "C1001", name: "甲", location: "loc_A", timer: 0 },
+    ], [20, 5], 5);
+    session.setPauseOptions({ everyStep: true, beforeGm: false, afterGm: false, afterProse: false });
+
+    await session.handlePlayerInput(JSON.stringify(decision({ dialogue: "先聊着" })));
+    assert.equal(session.getPipelineCurrent()!.kind, "player");
+    assert.equal(charState(session, "C0").group, 1);
+    assert.equal(charState(session, "C0").timer, 0);
+
+    session.editResult(JSON.stringify(decision({ action: "起身离开", markers: [{ type: "leave" }] })));
+    assert.equal(charState(session, "C0").group, 0);
+    assert.equal(charState(session, "C0").timer, null);
   });
 });

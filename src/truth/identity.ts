@@ -1,5 +1,5 @@
 /**
- * 身份替换（§1）：事件库只存 @ID 占位文本，渲染给读者时按身份替换。
+ * 身份替换：事件库只存 @ID 占位文本，渲染给读者时按身份替换。
  *  - 自己 → "我"；
  *  - 人际关系库有 name → 真名；
  *  - 只有 impression → 印象称谓（"鞋上有青苔的男人"）；
@@ -10,7 +10,7 @@
  */
 import { z } from "zod";
 
-/** 人际关系库单条：认识的名字 / 印象称谓（§3）。 */
+/** 人际关系库单条：认识的名字 / 印象称谓。 */
 export const RelationEntrySchema = z.object({
   name: z.string().optional(),
   impression: z.string().optional(),

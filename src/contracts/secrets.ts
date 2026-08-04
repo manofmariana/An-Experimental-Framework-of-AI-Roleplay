@@ -1,8 +1,5 @@
 /**
- * 密钥契约（优化阶段 A4，docs/optimization-review.md §8「Secrets 独立管理」「共享契约」）。
- *
- * 契约先行：本阶段只定义 schema 与掩码工具，集中式 SecretManager / /api/secrets/*
- * 在阶段 E 实现。原始 secret 值只允许出现在服务端 SecretManager/Resolver 内，
+ * 密钥契约：schema 与掩码工具。原始 secret 值只允许出现在服务端 SecretManager/Resolver 内，
  * 不得进入公共配置响应、WS 消息或日志。
  * contracts/ 不依赖 truth / agents / server / llm / loop（依赖审计守护）。
  */
@@ -40,10 +37,10 @@ export const SecretsFileSchema = z
   });
 export type SecretsFile = z.infer<typeof SecretsFileSchema>;
 
-/** 掩码视图中的密钥值：星号 + 至多末 4 位（"****3456"；短值整体掩码为 "****"）。 */
+/** 掩码视图中的密钥值：星号 + 至多末 4 位（"****3456"；短值整体掩码为 "****"；末 4 位不限字符集——真实 key 可能含 \w 外字符）。 */
 export const MaskedSecretSchema = z
   .string()
-  .regex(/^\*{4}[\w-]{0,4}$/, "掩码值必须是 **** 加至多末 4 位");
+  .regex(/^\*{4}.{0,4}$/, "掩码值必须是 **** 加至多末 4 位");
 export type MaskedSecret = z.infer<typeof MaskedSecretSchema>;
 
 /** 明文 → 掩码（仅留末 4 位；≤4 字符整体掩码）。纯函数。 */

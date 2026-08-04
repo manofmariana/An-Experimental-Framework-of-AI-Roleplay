@@ -5,7 +5,7 @@ import { buildAdjudication as gmPkg, buildDecision as decision } from "./builder
 import { SessionHarness } from "./harness/session.js";
 
 // ---------------------------------------------------------------------------
-// 多人邀请集成（application，docs/optimization-review.md §2 验收清单）：
+// 多人邀请集成（application）：
 // InvitationProjection 增量/重建在 GameSession 各提交路径上的行为。
 // ---------------------------------------------------------------------------
 
@@ -48,9 +48,9 @@ describe("多人邀请：多目标按序应答（先攻降序 + CID 升序），
     // 开局先攻：C0=10，C1001=25（组 1）；C1002=13，C1003=20（组 2）；
     // C1003 入组补投 10+5-1=14；seq7 GM 合组后 C1002 补投 12+5-1=16
     const session = makeSession(runId, worldId, [5, 20, 8, 15, 10, 12], [
-      gmPkg({ timer: [{ cid: "C1001", span: { min: 5 } }, { cid: "C0", span: { min: 5 } }] }), // seq2：contact 触发 GM
+      gmPkg({ durations: [{ cid: "C1001", span: { min: 5 } }, { cid: "C0", span: { min: 5 } }] }), // seq2：contact 触发 GM
       gmPkg({ // seq7：周期末（邀请双方 + 拒绝者都在工作集，契约全覆盖）
-        timer: [
+        durations: [
           { cid: "C1001", span: { min: 10 } },
           { cid: "C1002", span: { min: 10 } },
           { cid: "C1003", span: { min: 10 } },
@@ -115,9 +115,9 @@ describe("多人邀请：目标含玩家", () => {
     const runId = `run-if2-${process.pid}`;
     // 全员单人组（开局无投掷）；confirm 配对补投：C1001=25，C0=10-1=9（异地 -1）
     const session = makeSession(runId, worldId, [20, 5], [
-      gmPkg({ timer: [{ cid: "C1001", span: { min: 5 } }] }), // seq2：contact 触发 GM（工作集仅 C1001）
+      gmPkg({ durations: [{ cid: "C1001", span: { min: 5 } }] }), // seq2：contact 触发 GM（工作集仅 C1001）
       gmPkg({ // seq5：周期末（配对组全体成员）
-        timer: [{ cid: "C1001", span: { min: 10 } }, { cid: "C0", span: { min: 10 } }],
+        durations: [{ cid: "C1001", span: { min: 10 } }, { cid: "C0", span: { min: 10 } }],
       }),
     ]);
     llm.characterQueues["character:C1001"] = [
@@ -130,7 +130,7 @@ describe("多人邀请：目标含玩家", () => {
     assert.equal(session.turnCount, 2);
     assert.equal(session.pipelineInfo.phase, "await_player");
 
-    // 玩家 confirm 应答（seq3）：入组（配对成新组）、timer 置 0、计入已行动 → C1001 补完（seq4）
+    // 玩家 confirm 应答（seq3）：入组（配对成新组）、timer 置当前时钟（立即到期）、计入已行动 → C1001 补完（seq4）
     // → 周期末 GM（seq5）→ t=15 弹出：C1001（先攻 25，seq6）→ 再停等玩家
     await session.handlePlayerInput(
       JSON.stringify({ action: "赴约", inner: "去看看", markers: [{ type: "confirm" }] }),
@@ -162,7 +162,7 @@ describe("多人邀请：回滚 / 读档 / 编辑后只继续未应答目标", (
     const runId = `run-if3-${process.pid}`;
     // 开局 4 投 + C1003 入组补投（10）+ 编辑重放 confirm 再补投（11，反向后 initiative 组编号不符）
     const session = makeSession(runId, worldId, [5, 20, 8, 15, 10, 11], [
-      gmPkg({ timer: [{ cid: "C1001", span: { min: 5 } }, { cid: "C0", span: { min: 5 } }] }), // seq2
+      gmPkg({ durations: [{ cid: "C1001", span: { min: 5 } }, { cid: "C0", span: { min: 5 } }] }), // seq2
     ]);
     llm.characterQueues["character:C1001"] = [
       decision({ markers: [{ type: "contact", channel: "电话", targets: ["C1002", "C1003"] }] }),

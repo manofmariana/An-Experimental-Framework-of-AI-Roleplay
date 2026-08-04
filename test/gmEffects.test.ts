@@ -18,7 +18,7 @@ import { AdjudicationPackageSchema, type AdjudicationPackage } from "../src/type
 // deltas/timer/location/复位/acted/组派生/events 提交形状/工作集清算 + 重放等价。
 // ---------------------------------------------------------------------------
 
-const START = { y: 1, m: 1, d: 1, h: 0, min: 0 };
+const START = { y: 0, m: 1, d: 1, h: 0, min: 0 };
 
 function makeTruth(): TruthStores {
   const truth = {
@@ -49,7 +49,7 @@ function adjudication(overrides?: Record<string, unknown>): AdjudicationPackage 
     events: [],
     narrativity: "skip",
     deltas: [],
-    timer: [],
+    durations: [],
     location: [],
     ...overrides,
   });
@@ -78,7 +78,7 @@ function revert(truth: TruthStores, changes: readonly VarChange[]): void {
 const fullPkg = () =>
   adjudication({
     deltas: [{ path: "region.fog", op: "=", value: true }],
-    timer: [
+    durations: [
       { cid: "C0", span: { min: 5 } },
       { cid: "C1001", span: { min: 5 } },
     ],
@@ -165,7 +165,7 @@ describe("planGmAdjudication（提交形状）", () => {
     planGmAdjudication(truth, {
       seq: 1,
       pkg: adjudication({
-        timer: [
+        durations: [
           { cid: "C9999", span: { min: 1 } },
           { cid: "C0", span: { min: 5 } },
         ],
@@ -193,7 +193,7 @@ describe("planGmAdjudication（重放等价：正常裁决与编辑重放同一�
   it("编辑重放 = 反转旧 effects + 事件截断 + 同一 planner：终态与全新规划逐字节一致", () => {
     const pkgOld = fullPkg();
     const pkgNew = adjudication({
-      timer: [
+      durations: [
         { cid: "C0", span: { min: 7 } },
         { cid: "C1001", span: { min: 7 } },
       ],

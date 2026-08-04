@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { CharacterActivation } from "../src/agents/character.js";
 import { ActivationContextBuilder, buildCast } from "../src/application/activationContexts.js";
+import { resolveWorldDir } from "../src/config.js";
+import { packPromptsDir } from "../src/resources/worldRepository.js";
 import { ArchiveStore } from "../src/truth/archive.js";
 import { CharactersStore, type CharacterState } from "../src/truth/charactersStore.js";
 import { EventsStore } from "../src/truth/events.js";
@@ -14,15 +16,18 @@ import { buildManifest } from "./builders/index.js";
 import { ScriptedChatPort } from "./fakes/chatPort.js";
 
 // ---------------------------------------------------------------------------
-// activation 上下文构建器（docs/optimization-review.md §4 验收）：
+// activation 上下文构建器：
 // ① 连续两次 activation 用不同 Context，第二次 prompt 不含第一次独有内容；
 // ② cast 现建（改名后下一次调用直接读到最新）；
 // ③ lore 逐调用渲染（改 loreStore 后 GM ctx 的 loreFull 反映新内容）。
-// 零服务零存档：六 Store 全内存构造 + fake ChatPort（decide 会热加载 data/prompts 模板）。
+// 零服务零存档：六 Store 全内存构造 + fake ChatPort（decide 热加载默认包内 prompts/ 模板）。
 // ---------------------------------------------------------------------------
 
-const START = { y: 1, m: 1, d: 1, h: 8, min: 0 };
+const START = { y: 0, m: 1, d: 1, h: 8, min: 0 };
 const STATICS = { setting: "测试设定", toneCard: "测试基调" };
+
+/** 出厂模板目录 = 默认世界包内 prompts/（activation 构造注入）。 */
+const FACTORY_PROMPTS_DIR = packPromptsDir(resolveWorldDir());
 
 /** 全内存六真相 Store（与 sessionFactory 新档装配同序：NPC manifests → ensurePlayer）。 */
 function makeTruth(options?: { visibleEvent?: string }): TruthStores {
@@ -49,14 +54,14 @@ function makeTruth(options?: { visibleEvent?: string }): TruthStores {
 
 const signal = () => new AbortController().signal;
 
-describe("activationContexts（§4 验收）", () => {
+describe("activationContexts", () => {
   it("连续两次 activation 用不同 Context：第二次 prompt 不含第一次独有内容", async () => {
     const port = new ScriptedChatPort(() => ({
       text: JSON.stringify({ action: "环顾", inner: "警惕。", dialogue: "谁？" }),
       reasoning: "",
       usage: { hit: 0, miss: 0, output: 0 },
     }));
-    const activation = new CharacterActivation(port);
+    const activation = new CharacterActivation(port, FACTORY_PROMPTS_DIR);
     const builder = new ActivationContextBuilder(STATICS);
 
     // 第一次：真相 A（含独有事件 + 角色名「林雾」）

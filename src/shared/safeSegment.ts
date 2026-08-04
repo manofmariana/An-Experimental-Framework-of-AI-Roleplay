@@ -1,7 +1,6 @@
 /**
- * 跨层基础工具：路径安全段校验（docs/optimization-review.md §9 服务端边界收敛）。
- * 原属旧 src/server/api.ts（D3 已消亡）；移出后 HTTP transport、协调器、resources 等共用，
- * 消除 SessionManager 对 transport 层的反向依赖。
+ * 跨层基础工具：路径安全段校验。
+ * HTTP transport、协调器、resources 等共用，消除 SessionManager 对 transport 层的反向依赖。
  * shared/ 不依赖 src 内任何域模块（依赖审计守护）。
  */
 

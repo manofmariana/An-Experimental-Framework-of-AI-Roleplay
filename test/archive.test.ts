@@ -62,7 +62,7 @@ describe("seq 计数约定（说明性断言）", () => {
   it("M1 固定顺序：一轮 = 4 个 seq（玩家轮也算一个 seq）", () => {
     // 总轮次计数 = 每次 API 调用 + 玩家输入。
     // 未来工具 Agent 调用【不计入】seq：工具 Agent 有独立计数器，与 seq 一一对应记录；
-    // 回溯跨越含工具 Agent 结构变更的 seq 时强制绑定回滚（P2+，DESIGN-P1 §10.2）。
+    // 回溯跨越含工具 Agent 结构变更的 seq 时强制绑定回滚。
     const store = new ArchiveStore();
     const kinds = ["player", "character:C1001", "gm", "prose"];
     kinds.forEach((kind, i) =>

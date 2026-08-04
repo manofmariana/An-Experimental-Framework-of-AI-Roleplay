@@ -1,5 +1,5 @@
 /**
- * 测试 fake：挂起可控的 ChatPort（优化阶段 D2 集成测试基建）。
+ * 测试 fake：挂起可控的 ChatPort（集成测试基建）。
  * chat() 返回的 Promise 由测试手动 resolve/reject，或经 AbortSignal 中止（reject
  * LLMAbortedError，模拟 SDK 中止语义）——用于"延迟 LLM 期间强制切换会话"
  * "stop 定向中止""挂起中一致 query"等时序场景。

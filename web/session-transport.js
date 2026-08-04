@@ -1,5 +1,5 @@
 /**
- * WebSocket 传输层（优化阶段 D4，docs/optimization-review.md §10「SessionTransport」）：
+ * WebSocket 传输层：
  * 独占本页唯一 socket——任意时刻至多一个有效连接、一个 reconnect timer。
  *
  * 生命周期守卫（本片核心）：

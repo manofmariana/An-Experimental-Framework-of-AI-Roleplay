@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { AdjudicationPackageSchema, DecisionPackageSchema, MarkerSchema, spanToMinutes } from "../src/types.js";
 
-describe("SpanSchema 仅供 GM timer", () => {
+describe("SpanSchema 仅供 GM durations", () => {
   it("按 y=365d、m=30d 换算并钳制负总量", () => {
     assert.equal(spanToMinutes({ y: 1, m: 1, d: 1, h: 1, min: 1 }), (365 + 30 + 1) * 1440 + 61);
     assert.equal(spanToMinutes({ h: -2 }), 0);
@@ -28,13 +28,13 @@ describe("SpanSchema 仅供 GM timer", () => {
 });
 
 describe("AdjudicationPackageSchema", () => {
-  it("timer span 与 world delta 合法", () => {
-    const pkg = AdjudicationPackageSchema.parse({ events: [{ text: "@C0 下山", tags: ["known_by:C0"] }], narrativity: "full", deltas: [{ path: "weather", op: "=", value: "fog" }], timer: [{ cid: "C0", span: { min: 5 } }], location: [] });
-    assert.equal(pkg.timer[0]!.span.min, 5);
+  it("durations span 与 world delta 合法", () => {
+    const pkg = AdjudicationPackageSchema.parse({ events: [{ text: "@C0 下山", tags: ["known_by:C0"] }], narrativity: "full", deltas: [{ path: "weather", op: "=", value: "fog" }], durations: [{ cid: "C0", span: { min: 5 } }], location: [] });
+    assert.equal(pkg.durations[0]!.span.min, 5);
   });
 });
 
-describe("MarkerSchema（M2-b 五标记）", () => {
+describe("MarkerSchema（五标记）", () => {
   const base = { action: "x", inner: "x" };
 
   it("五种标记各自合法；markers 可省略", () => {

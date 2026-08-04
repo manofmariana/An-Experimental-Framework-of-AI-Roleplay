@@ -4,7 +4,7 @@
  * 提交广播 = Coordinator onCommit → transition（前端输入权限立刻跟随 phase 变化）。
  * 错误映射：LLM 在途 → 409 SESSION_BUSY（toApiError 消息约定）；直编域校验失败
  * （payload 形状/角色集合一致性/store schema）一律 400 VALIDATION_ERROR。
- * D5：body 可带可选 baseRevision（状态编辑器乐观并发闸）——非整数 → 400；
+ * body 可带可选 baseRevision（状态编辑器乐观并发闸）——非整数 → 400；
  * 与当前 revision 不符 → 409 REVISION_CONFLICT（Coordinator checkRevision）。
  */
 import type { DirectEditPayload } from "../../../application/sessionCoordinator.js";

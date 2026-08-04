@@ -1,5 +1,5 @@
 /** 角色页：世界包选择器 + 统一 manifest 字段与结构化 location 编辑。
- *  D5 ResourceContext（docs/optimization-review.md §10）：打开即捕获不可变 ctx
+ *  ResourceContext：打开即捕获不可变 ctx
  *  （GET/PUT 全程携带 ?set=——修复「无法编辑非默认包」）；切换包 = 重新捕获 ctx + 重载列表；
  *  保存写打开时捕获的同一 ctx，不重读 picker；界面上持续显示「正在编辑」的包名。 */
 import { api, el } from "../app.js";

@@ -1,10 +1,10 @@
 /**
- * 统一效果规划器——GM 裁决（docs/optimization-review.md §3「统一效果规划器」）。
+ * 统一效果规划器——GM 裁决。
  *
  * GM 正常裁决与 GM 编辑统一进入 planGmAdjudication；agent 通知段（GM 全文观察 +
  * 各角色按 known_by 感知过滤）不在此——留在 session 内核，commit 成功后执行（两段式）。
  *
- * 真相段：deltas 落库 + timer（相对偏移 → 绝对到期时刻）/location 应用 + 周期计数/
+ * 真相段：deltas 落库 + durations（时长 → 到期时刻 timer 变量）/location 应用 + 周期计数/
  * 触发复位 + 结算成员 acted 清零 + reconcileGroups 回写 group 与先攻补投 + 频道清理
  * pass + 事件逐条 commit（ID 经注入分配器，调用方只在 commit 成功后推进水位）+
  * 无 timer 校验 + **工作集清算**（GM 转写后言行已入事件库；narrativity=skip 无正文步，
@@ -41,10 +41,10 @@ export function planGmAdjudication(draft: TruthStores, ctx: GmAdjudicationContex
   const { seq, pkg, roundCids } = ctx;
   const changes = draft.world.apply(pkg.deltas);
   const known = draft.characters.all();
-  // timer：相对偏移 → 绝对到期时刻（due = clock + spanToMinutes(span)，契约保证非 0）
-  for (const t of pkg.timer) {
+  // durations：时长 → 到期时刻（timer = 世界时钟 + spanToMinutes(span)，契约保证非 0）
+  for (const t of pkg.durations) {
     if (!(t.cid in known)) {
-      console.warn(`GM 裁决包 timer 指向未知角色 ${t.cid}，已跳过`);
+      console.warn(`GM 裁决包 durations 指向未知角色 ${t.cid}，已跳过`);
       continue;
     }
     changes.push(...draft.characters.setVars(t.cid, { timer: draft.world.clock + spanToMinutes(t.span) }));
@@ -65,7 +65,7 @@ export function planGmAdjudication(draft: TruthStores, ctx: GmAdjudicationContex
     ]),
   );
   // 本轮被结算的成员转入后台：acted 清零（先攻值不重投，回前台时行动状态已重置）
-  for (const t of pkg.timer) {
+  for (const t of pkg.durations) {
     if (t.cid in known) changes.push(...draft.characters.setVars(t.cid, { acted: false }));
   }
   // 组派生 + 先攻补投（location/timer 是分组判据；组 id 保稳，缺投者单独补投）
@@ -87,10 +87,11 @@ export function planGmAdjudication(draft: TruthStores, ctx: GmAdjudicationContex
     draft.events.append(event);
     committed.push(event);
   }
-  // 校验：存在无 timer 的角色 → 警告（防 GM 漏设沉底）
+  // 校验：组内角色无 timer → 警告（防 GM 漏设沉底）；group=0 + timer=null 是合法离场态
+  //（leave 标记 / 频道清理 pass 的产出，等待下一次 GM 结算），不报
   for (const [cid, s] of Object.entries(playableCharacters(draft))) {
-    if (s.timer === null) {
-      console.warn(`GM 裁决后 ${cid} 无计时器（timer 须覆盖本轮全部行动者）`);
+    if (s.timer === null && s.group !== 0) {
+      console.warn(`GM 裁决后 ${cid} 无计时器（durations 须覆盖本轮全部行动者）`);
     }
   }
   // 工作集清算（改到 GM 步，不再等正文步）

@@ -1,5 +1,5 @@
 /** 世界页：世界包选择器 + setting / tone-card 编辑器 + lorebook 条目表格（增删改、enabled 开关）。
- *  D5 ResourceContext（docs/optimization-review.md §10）：打开即捕获不可变 ctx
+ *  ResourceContext：打开即捕获不可变 ctx
  *  （GET/PUT 全程携带 ?set=——修复「无法编辑非默认包」）；切换包 = 重新捕获 ctx + 重载表单
  *  （旧表单不存活）；保存写打开时捕获的同一 ctx，不重读 picker；界面上持续显示「正在编辑」的包名。 */
 import { api, el } from "../app.js";

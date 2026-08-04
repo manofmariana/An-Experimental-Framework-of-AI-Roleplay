@@ -23,7 +23,13 @@
     "test/webProtocol.test.ts",
     "test/webResourceContext.test.ts",
     "test/webAsyncGuards.test.ts",
-    "test/webStateEditor.test.ts"
+    "test/webStateEditor.test.ts",
+    "test/webPlayInput.test.ts",
+    "test/webPlayStream.test.ts",
+    "test/configResolver.test.ts",
+    "test/secretMutation.test.ts",
+    "test/webConfigForm.test.ts",
+    "test/accessControl.test.ts"
   ],
   "contract": [
     "test/template.test.ts",
@@ -44,7 +50,10 @@
     "test/worldStore.test.ts",
     "test/archive.test.ts",
     "test/rollback.test.ts",
-    "test/generationRepository.test.ts"
+    "test/generationRepository.test.ts",
+    "test/userResourceRepos.test.ts",
+    "test/configMigration.test.ts",
+    "test/serverConfig.test.ts"
   ],
   "application": [
     "test/loopSchedule.test.ts",
@@ -52,19 +61,21 @@
     "test/directEdit.test.ts",
     "test/commitExecutor.test.ts",
     "test/editMarkers.test.ts",
-    "test/gmTimerCoverage.test.ts",
+    "test/gmDurationCoverage.test.ts",
     "test/pauseOptions.test.ts",
     "test/reloadConfig.test.ts",
     "test/reproActedRollback.test.ts",
     "test/resume.test.ts",
     "test/abort.test.ts",
     "test/activationContexts.test.ts",
-    "test/sessionCoordinator.test.ts"
+    "test/sessionCoordinator.test.ts",
+    "test/configService.test.ts"
   ],
   "integration": [
     "test/serverApi.test.ts",
     "test/httpEnvelope.test.ts",
     "test/wsReroll.test.ts",
-    "test/wsProtocol.test.ts"
+    "test/wsProtocol.test.ts",
+    "test/accessControlApi.test.ts"
   ]
 }

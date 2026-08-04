@@ -1,6 +1,5 @@
 /**
- * WebSocket 协议——下行（server → client）类型唯一出口（优化阶段 D2 重写，
- * docs/optimization-review.md §5「消息身份」「Snapshot 与增量 Transition」「一致快照 query」）。
+ * WebSocket 协议——下行（server → client）类型唯一出口。
  * 上行（client → server）唯一权威 = src/contracts/protocol.ts（ClientCommandSchema）。
  *
  * 三类下行：
@@ -9,9 +8,6 @@
  *    跳号恢复应答）——载荷类型由 application/transitionProjection.ts 持有（application 层
  *    不得依赖 server，故 Snapshot/Transition 数据形状定义在 application，本文件只加信封）；
  * 3. 流式（广播）：全部携带 runId + activationId 消息身份（前端只接受当前 run/activation）。
- *
- * 已删除的旧下行类型（D2 起不再发送）：turn_done / state / events / stats / pipeline /
- * edit_done / session_started / history / error / summary。
  */
 import type {
   SessionSnapshotData,

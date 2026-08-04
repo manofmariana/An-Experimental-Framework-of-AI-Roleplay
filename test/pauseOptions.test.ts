@@ -15,11 +15,11 @@ const llm = h.llm;
 const calls = llm.port.calls;
 const setupWorld = h.setupWorld.bind(h);
 
-/** narrativity=full 的 GM 包（触发正文步；timer 覆盖本轮行动者）。 */
+/** narrativity=full 的 GM 包（触发正文步；durations 覆盖本轮行动者）。 */
 function gmFull(): Record<string, unknown> {
   return gmPkg({
     narrativity: "full",
-    timer: [
+    durations: [
       { cid: "C0", span: { min: 5 } },
       { cid: "C1001", span: { min: 5 } },
     ],

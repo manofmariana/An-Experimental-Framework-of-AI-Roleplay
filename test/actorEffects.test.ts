@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { planActorDecision, type ActorInvitationContext } from "../src/application/actorEffects.js";
-import { LEAVE_TIMER } from "../src/scheduler/simulator.js";
 import { ArchiveStore } from "../src/truth/archive.js";
 import { CharactersStore, type CharacterState } from "../src/truth/charactersStore.js";
 import { EventsStore } from "../src/truth/events.js";
@@ -19,7 +18,7 @@ import { DecisionPackageSchema, type DecisionPackage } from "../src/types.js";
 // 表驱动：同一 DecisionPackage 正常/编辑重放产出相同 effects；五标记谱系；邀请应答两分支。
 // ---------------------------------------------------------------------------
 
-const START = { y: 1, m: 1, d: 1, h: 0, min: 0 };
+const START = { y: 0, m: 1, d: 1, h: 0, min: 0 };
 
 function makeTruth(specs: (Parameters<typeof buildManifest>[0])[]): TruthStores {
   return {
@@ -126,7 +125,7 @@ describe("planActorDecision（标记谱系：程序即时执行，全走 VarChan
     assert.equal(noInit.world.world["gm_trigger_batch"], -Number.MAX_SAFE_INTEGER);
   });
 
-  it("leave：组归 0 + LEAVE_TIMER 冻结 + 清频道，不触发 GM", () => {
+  it("leave：组归 0 + timer 置 null + 清频道，不触发 GM", () => {
     const truth = makeTruth([{ id: "C1001", group: 2, channel: 3 }]);
     planActorDecision(truth, {
       cid: "C1001",
@@ -135,7 +134,7 @@ describe("planActorDecision（标记谱系：程序即时执行，全走 VarChan
     });
     const s = truth.characters.get("C1001");
     assert.equal(s.group, 0);
-    assert.equal(s.timer, LEAVE_TIMER);
+    assert.equal(s.timer, null);
     assert.equal(s.channel, null);
     assert.notEqual(truth.world.world["gm_trigger"], true);
   });
@@ -158,7 +157,7 @@ describe("planActorDecision（标记谱系：程序即时执行，全走 VarChan
   it("recall：拉回未结算离开者（timer 归 clock、按进组规则归组、先攻复用不重投）", () => {
     const truth = makeTruth([
       { id: "C1001", timer: 0, group: 1, initiative: { value: 25, group: 1 } },
-      { id: "C1002", timer: LEAVE_TIMER, group: 0, initiative: { value: 20, group: 1 } },
+      { id: "C1002", timer: null, group: 0, initiative: { value: 20, group: 1 } },
     ]);
     planActorDecision(truth, {
       cid: "C1001",
@@ -211,7 +210,7 @@ describe("planActorDecision（邀请应答：confirm 接受 / 拒绝两分支）
   }
   const invitation: ActorInvitationContext = { contactSeq: 1, inviter: "C1001", channel: "电话", preInviteTimer: 60 };
 
-  it("confirm 接受：单人邀请者配对成新组并补投、受邀者远程 -1、timer 归 0、计入已行动", () => {
+  it("confirm 接受：单人邀请者配对成新组并补投、受邀者远程 -1、timer 归当前时钟（立即到期）、计入已行动", () => {
     const truth = inviteTruth();
     planActorDecision(truth, {
       cid: "C1002",

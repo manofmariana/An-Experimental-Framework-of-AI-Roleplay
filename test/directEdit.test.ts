@@ -22,12 +22,12 @@ h.setupWorld(WORLD_ID, [
   { id: "C1001", name: "甲", location: "loc_A", timer: 0 },
 ]);
 
-/** narrativity=full 的 GM 包（触发正文步；timer 覆盖本轮行动者；可带 world deltas）。 */
+/** narrativity=full 的 GM 包（触发正文步；durations 覆盖本轮行动者；可带 world deltas）。 */
 function gmFull(deltas: Record<string, unknown>[] = []): Record<string, unknown> {
   return gmPkg({
     narrativity: "full",
     deltas,
-    timer: [
+    durations: [
       { cid: "C0", span: { min: 5 } },
       { cid: "C1001", span: { min: 5 } },
     ],
@@ -47,7 +47,7 @@ function makeSession(
     gm: [options?.gm ?? gmFull()],
   });
   session.setPauseOptions(options?.pause ?? NO_PAUSE);
-  return { session, dir: path.join(h.runsDir, runId) };
+  return { session, dir: path.join(h.saveDir, runId) };
 }
 
 /** 深拷贝当前 {world, characters} 作为编辑底本（保持角色集合一致）。 */
@@ -89,7 +89,7 @@ describe("applyDirectEdit（状态栏直接编辑）", () => {
     session.applyDirectEdit({ events });
 
     assert.deepEqual(session.getEvents().map((e) => e.id), ["evt_e1"]);
-    // §4：agent 侧无事件缓存——直编后下一次角色激活的 prompt 直接读到新事件
+    // agent 侧无事件缓存——直编后下一次角色激活的 prompt 直接读到新事件
     await session.continuePipeline(); // seq1 C1001 行动 → 停等玩家
     assert.ok(h.callsText("character:C1001", 1).includes("替换后的事件"));
     // 持久化：从磁盘 loadCurrent 读回
@@ -226,7 +226,7 @@ describe("直编调度变量：下一段派生立即使用新值（acted / initi
     assert.equal(session.pipelineInfo.phase, "await_player"); // 换序后 C0=25 先行动
   });
 
-  it("docs §3 验收：await_player 中直编把 NPC 先攻改到玩家之前 → 下一次玩家输入被拒 + 派生给出该 NPC", async () => {
+  it("await_player 中直编把 NPC 先攻改到玩家之前 → 下一次玩家输入被拒 + 派生给出该 NPC", async () => {
     // dice [20, 5] → C0=25 / C1001=10：开局玩家先行，旧 await_player 成立
     const runId = `run-edit-init-perm-${process.pid}`;
     const session = h.makeSession(runId, WORLD_ID, { dice: [20, 5], gmIntervalCycles: 5, gm: [gmFull()] });
@@ -249,6 +249,42 @@ describe("直编调度变量：下一段派生立即使用新值（acted / initi
     await session.continuePipeline();
     assert.equal(session.pipelineInfo.kind, "character:C1001");
     assert.equal(session.pipelineInfo.phase, "await_player");
+  });
+
+  it("直编对齐 timer 到同地角色 → 提交前重派生编组：立即同组（补投先攻）且组 id 保稳", () => {
+    const worldId = `w-edit-regroup-${process.pid}`;
+    h.setupWorld(worldId, [
+      { id: "C0", name: "玩家", location: "loc_A", timer: 0, isPlayer: true },
+      { id: "C1001", name: "甲", location: "loc_A", timer: 30 },
+    ]);
+    // 开局不同刻 → 各自单人（无组，开局零投掷）；并组补投两枚先攻骰（cid 升序：C0=10+5=15，C1001=20+5=25）
+    const session = h.makeSession(`run-edit-regroup-${process.pid}`, worldId, { dice: [10, 20], gmIntervalCycles: 5 });
+    const groupOf = (cid: string) =>
+      (session.getState().characters as Record<string, { group: number }>)[cid]!.group;
+    assert.equal(groupOf("C0"), 0);
+    assert.equal(groupOf("C1001"), 0);
+
+    const edit = stateClone(session);
+    (edit.characters["C1001"] as { timer: number }).timer = 0;
+    session.applyDirectEdit({ characters: edit.characters });
+
+    const chars = session.getState().characters as Record<
+      string,
+      { group: number; initiative: { value: number; group: number } | null }
+    >;
+    const gid = chars["C0"]!.group;
+    assert.notEqual(gid, 0);
+    assert.equal(chars["C1001"]!.group, gid, "直编对齐 timer 后立即同组");
+    assert.deepEqual(chars["C0"]!.initiative, { value: 15, group: gid }, "入组补投先攻");
+    assert.deepEqual(chars["C1001"]!.initiative, { value: 25, group: gid });
+    assert.equal(session.pipelineInfo.phase, "await_character", "并组后先攻高者先行动");
+
+    // 组 id 保稳：无关直编（world 域）重派生后精确匹配继承，组编号不变
+    const base = stateClone(session);
+    base.world["hp"] = 1;
+    session.applyDirectEdit({ world: base.world });
+    assert.equal(groupOf("C0"), gid);
+    assert.equal(groupOf("C1001"), gid);
   });
 });
 

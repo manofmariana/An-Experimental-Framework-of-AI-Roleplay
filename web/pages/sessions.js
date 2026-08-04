@@ -1,5 +1,5 @@
 /** 会话页：runs 列表（别名/进行中标记）→ 回放 + 读取续玩 + 重命名 + 删除。
- *  D5 竞态收口（docs/optimization-review.md §10「异步请求生命周期」）：
+ *  竞态收口：
  *  - 竞态 1（详情 A/B 晚到互写）：loadRun 模块级 epoch 守卫 + AbortSignal——
  *    每次进入 begin() 作废旧请求，每个 await 后 isCurrent 核验，不符即弃写；
  *    取数与渲染分离（可测纯逻辑在 web/async-guards.js 的 fetchRunDetail）；
@@ -120,7 +120,7 @@ async function loadRun(id, detail) {
     data = await fetchRunDetail(apiWithSignal, id);
   } catch (err) {
     if (!detailGuard.isCurrent(token)) return; // 已被更新的点击接管（含 abort），弃写
-    // D3：旧平铺档服务端不再宽松回落，404 LEGACY_RUN_UNSUPPORTED → 明确提示
+    // 服务端对旧平铺档返回 404 LEGACY_RUN_UNSUPPORTED → 明确提示
     const msg =
       err.code === "LEGACY_RUN_UNSUPPORTED"
         ? "旧版存档不可回放（存档格式过旧，不迁移；请新建会话）"

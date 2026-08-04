@@ -1,20 +1,16 @@
 /**
- * 调度派生纯函数集（M2-b，DESIGN-P1 §5/§10.4）：simulator 重写。
+ * 调度派生纯函数集。
  *
  * 时间轴与轮状态全派生、无独立存储：调度 = 扫描角色 timer 取最小；
- * 组 ← timer+location 自动并组 + 既有身份保稳（单 group 变量，M2-b 起）；
+ * 组 ← timer+location 自动并组 + 既有身份保稳（单 group 变量）；
  * 行动顺序 ← initiative 变量（{value, group}）。
- * M1 的事件堆调度与 location 感知过滤废除（ADR 0001/0002）。
  *
  * 铁律不变：纯逻辑，无 IO、无 LLM、无网络——不 import 任何 fs/net 模块；
  * test/simulator.test.ts 的元测试守护保留。
  */
 import { knownByTag, type Event } from "../types.js";
 
-/** 离开标记的"冻结"timer 哨兵（全项目单源）：未结算离开集合的判据 = group=0 且 timer 为该值；调度视图视同无计时器。 */
-export const LEAVE_TIMER = Number.MAX_SAFE_INTEGER;
-
-/** 调度视图中的角色（M2-b 契约：group 合并双变量；initiative 结构化 {value, group}）。 */
+/** 调度视图中的角色（单 group 分组变量；initiative 结构化 {value, group}）。 */
 export interface SimChar {
   /** 到期时刻（分钟标量，绝对时刻）；null = 无计时器 */
   timer: number | null;
@@ -71,7 +67,7 @@ function anchorTimer(members: string[], chars: Record<string, GroupableChar>): n
 }
 
 /**
- * 组调和（保稳指派，M2-b §5/§10.4）：
+ * 组调和（保稳指派）：
  * - **自动并组**：timer 一致 + location 一致 → 同组（≥2 人）；
  * - **身份保留**：既有组成员 timer 仍匹配组锚定 timer → 保留成员身份
  *   （远程成员 location 不同不拆组）；timer 被独立修改即离组；
@@ -247,7 +243,7 @@ function groupLeader(chars: Record<string, SimChar>, groupId: number): string | 
 }
 
 /**
- * 同刻多组串行排序（§5：单活跃组不变量）：输入同刻到期的 cids，输出按行动先后
+ * 同刻多组串行排序（单活跃组不变量）：输入同刻到期的 cids，输出按行动先后
  * 排序的调度单元列表（组 ≠ 0 → 整组一个单元；单人组 → 各自独立单元）。
  * 单元排序键 = 组内最高先攻（同值取该成员 CID）：先攻降序，同值比 CID 升序；
  * 无先攻值（null）排最后。单元内 cids 升序。
@@ -282,7 +278,7 @@ export function orderGroups(chars: Record<string, SimChar>, cids: readonly strin
 }
 
 /**
- * 角色可见事件（known_by 唯一通道，ADR 0002）：
+ * 角色可见事件（known_by 唯一通道）：
  * tags 含 `known_by:{cid}` 即可见——GM 标记时已推理过可视性，无地点成分、无其他限制。
  * 保持输入顺序（调用方先按 (t, id) 排序）。
  */
@@ -324,7 +320,7 @@ export interface RerollMember extends InitiativeMember {
 }
 
 /**
- * 补投（§5：新成员单独补投插入既有顺序，不波及全组）：
+ * 补投（新成员单独补投插入既有顺序，不波及全组）：
  * 只为 initiative 为 null 或组编号与当前组不符的成员投掷，结果盖当前组编号；
  * 已存值且组编号对上的成员原样保留（不出现在返回中）。顺序 = 输入顺序（确定性）。
  */
@@ -345,7 +341,7 @@ export interface OrderedMember {
 }
 
 /**
- * 行动顺序派生还原（§5 行动顺序表：顺序 ← initiative 变量现排）：按已存先攻值
+ * 行动顺序派生还原（顺序 ← initiative 变量现排）：按已存先攻值
  * 降序分批，同值 = 同时批（批内 cid 升序）；null（未投掷）排最后。不掷骰，纯派生。
  * 调用方负责只传入当前前台组成员（组编号匹配由调用方过滤）。
  */

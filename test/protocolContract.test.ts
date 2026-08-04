@@ -1,5 +1,5 @@
 /**
- * WS 入站协议契约测试（contract 层，优化阶段 D1「协议单一来源」）：
+ * WS 入站协议契约测试（contract 层）：
  * ① fixture 驱动：test/fixtures/protocol/inbound/ 下每命令 ≥1 合法 + ≥1 非法 JSON，
  *    逐个经 parseClientCommand 断言通过 / ProtocolError；
  * ② 双向对拍：web/protocol.js 的 buildCommand 产物 × 命令清单，全部被服务端

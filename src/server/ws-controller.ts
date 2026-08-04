@@ -1,8 +1,7 @@
 /**
- * WS controller（优化阶段 D3 从 index.ts 搬出，docs/optimization-review.md §9
- * 「服务端职责边界」迁移顺序步 4）：parseClientCommand → Coordinator → 回复成形。
+ * WS controller：parseClientCommand → Coordinator → 回复成形。
  *
- * 每命令 handle(cmd, socket) 统一形状（D2 定稿，本片不改线协议）：
+ * 每命令 handle(cmd, socket) 统一形状：
  * 定向 command_result/command_error（requestId 关联）+ transition 广播（Coordinator
  * onTransition 钩子由组成根挂到 transport.broadcast）+ 会话切换/重连的 snapshot。
  */

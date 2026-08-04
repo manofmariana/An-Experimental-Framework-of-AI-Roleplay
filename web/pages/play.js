@@ -1,9 +1,9 @@
 /**
- * 游玩页编排层（优化阶段 D5 收敛）：store ← transport → protocol 装配 + store 订阅重渲 +
+ * 游玩页编排层：store ← transport → protocol 装配 + store 订阅重渲 +
  * 权限/按钮闸 + 会话 modal 统一生命周期；三块输入/标记/暂停选项归 views/play-input.js，
  * 流式卡片/panels/历史回显归 views/play-stream.js，直编 modal 归 views/state-editor.js。
  *
- * 状态所有权（优化阶段 D4，docs/optimization-review.md §10「三类状态所有权」）：
+ * 状态所有权：
  * ① 服务端权威状态 = web/session-store.js（runId/revision/连接态/world/characters/events/
  *    history/pipeline/streaming 槽/needsResync）——本页只读（S()），经 subscribe 重渲；
  * ② transient UI 态 = views/play-input.js（markers 草稿 / knownChars / 三块输入 / pauseState），
@@ -15,7 +15,7 @@
  * ③ view 局部态 = views/play-stream.js（streamEl/panels/scrollPinned）+ 本模块 DOM 引用
  *    （runIdEl/sideOut/按钮等）——renderPlay 建立，不随会话 reset。
  *
- * busy 语义终稿（D4 收敛 D2 known-issue「transition 到达即清 busy 的中段瞬闪」）：
+ * busy 语义：
  * - 输入权限 = !selectBusy(store)（streaming 在途 || phase !== await_player 即禁用）；
  *   步间（agent_end → 下一 agent_start → transition）phase 仍非 await_player → 不再瞬闪；
  * - 按钮类闸按 streaming 槽单独判定（暂停点 busy=true 但必须可操作）：
@@ -28,7 +28,7 @@
  * 从 store 读取；Promise 按 requestId 关联应答；未连接立即 reject 并显示错误行）。
  * 跳号恢复：store 置 needsResync → protocol 自动 query snapshot 整体替换。
  *
- * 竞态收口（D5，守卫纯逻辑在 web/async-guards.js）：
+ * 竞态收口（守卫纯逻辑在 web/async-guards.js）：
  * - CID 请求（竞态 2）：play-input 的 refreshCids 捕获 {runId, worldSetId}，晚到核验后弃写；
  * - 读档导航（竞态 3）：导出走 async-guards.loadSessionThenNavigate（sendSessionCommand 注入），
  *   command_result 成功才 navigate；new_session 在页内不导航，失败经 sendCmd 错误行可见；
@@ -44,7 +44,7 @@ import { createPlayStream } from "../views/play-stream.js";
 import { openStateEditor } from "../views/state-editor.js";
 
 // ---------------------------------------------------------------------------
-// 装配（D4）：store ← transport → protocol；transport 独占 socket，protocol 路由下行。
+// 装配：store ← transport → protocol；transport 独占 socket，protocol 路由下行。
 // ---------------------------------------------------------------------------
 
 const sessionStore = createSessionStore();
@@ -82,7 +82,7 @@ const protocol = createProtocol({
 });
 
 // ---------------------------------------------------------------------------
-// 会话绑定 modal 统一生命周期（D5 竞态 4）：trackModal 注册 → runId 变化统一关闭。
+// 会话绑定 modal 统一生命周期：trackModal 注册 → runId 变化统一关闭。
 // ---------------------------------------------------------------------------
 
 /** 存活 modal 的 close 函数集（close = remove + 注销，幂等）。 */
@@ -107,7 +107,7 @@ function closeSessionModals() {
 }
 
 // ---------------------------------------------------------------------------
-// view 装配（D5）：play-stream（流区）/ play-input（输入区）；state-editor 按需 open。
+// view 装配：play-stream（流区）/ play-input（输入区）；state-editor 按需 open。
 // ---------------------------------------------------------------------------
 
 /** WS 发送收口：默认失败处理 = 错误行 + 权限重算（未连接由 protocol 立即 reject "WS 未连接"——
@@ -161,14 +161,14 @@ let sideView = "events";
 
 // ---------------------------------------------------------------------------
 // 状态面板 timer 结构化显示（移植自 src/truth/timeStore.ts 的 minutesToWorldTime：
-// 30 日/月、12 月/年历法，每年 12 月承接 30 日月制余下的 5 天）——只改显示层，数据源不变
+// y 0 基、m/d 1 基，30 日/月、12 月/年历法，每年 12 月承接 30 日月制余下的 5 天）——只改显示层，数据源不变
 // ---------------------------------------------------------------------------
 
 function minutesToWorldTime(totalMinutes) {
   let value = Math.max(0, Math.floor(totalMinutes));
   const min = value % 60; value = Math.floor(value / 60);
   const h = value % 24; value = Math.floor(value / 24);
-  const y = Math.floor(value / 365) + 1;
+  const y = Math.floor(value / 365);
   const dayOfYear = value % 365;
   const m = Math.min(12, Math.floor(dayOfYear / 30) + 1);
   const d = dayOfYear - (m - 1) * 30 + 1;
@@ -177,11 +177,10 @@ function minutesToWorldTime(totalMinutes) {
 
 const pad2 = (n) => String(n).padStart(2, "0");
 
-/** 角色 timer 显示：null → 无计时器；≥ MAX_SAFE_INTEGER → 已离开待结算；其余 → 结构化世界时间。 */
-function formatTimerForPanel(timer) {
-  if (timer === null || timer === undefined) return "无计时器";
+/** 角色 timer 显示：null 且单人组（group=0）→ 已离开待结算；其余 null → 无计时器；数值 → 结构化世界时间。 */
+function formatTimerForPanel(timer, group) {
+  if (timer === null || timer === undefined) return group === 0 ? "已离开待结算" : "无计时器";
   if (typeof timer !== "number") return timer;
-  if (timer >= Number.MAX_SAFE_INTEGER) return "已离开待结算";
   const t = minutesToWorldTime(timer);
   return `${t.y}年${t.m}月${t.d}日 ${pad2(t.h)}:${pad2(t.min)}`;
 }
@@ -190,7 +189,7 @@ function formatTimerForPanel(timer) {
 function formatStateForPanel(data) {
   const clone = JSON.parse(JSON.stringify(data ?? {}));
   for (const c of Object.values(clone.characters ?? {})) {
-    if (c && typeof c === "object" && "timer" in c) c.timer = formatTimerForPanel(c.timer);
+    if (c && typeof c === "object" && "timer" in c) c.timer = formatTimerForPanel(c.timer, c.group);
   }
   return JSON.stringify(clone, null, 2);
 }
@@ -210,8 +209,8 @@ function renderSidePanel() {
 }
 
 // ---------------------------------------------------------------------------
-// store 订阅 → 重渲（D4：旧 onMessage 大 switch 已删除——snapshot/transition 进 store，
-// command_result/error 由 protocol pending 消化，流式经 protocol.onStreaming 直通）。
+// store 订阅 → 重渲：snapshot/transition 进 store，
+// command_result/error 由 protocol pending 消化，流式经 protocol.onStreaming 直通。
 // ---------------------------------------------------------------------------
 
 /** store 变化 → 侧栏/权限/runId 行重渲；snapshot 整段重渲历史 + transient reset（规则表见头注）。 */
@@ -311,8 +310,8 @@ const doSend = () => {
   refreshSend();
 };
 
-/** 供会话页调用的原始命令通道（D5 竞态 3：load_session 应答 promise 按 requestId 精确关联，
- *  成功才导航；未连接立即 reject）。 */
+/** 供会话页调用的原始命令通道：load_session 应答 promise 按 requestId 精确关联，
+ *  成功才导航；未连接立即 reject。 */
 export function sendSessionCommand(type, fields) {
   return protocol.sendCommand(type, fields);
 }
@@ -328,7 +327,7 @@ export function renderPlay() {
   // 顶栏
   const topbar = el("div", "topbar");
   const newBtn = el("button", "act", "新会话");
-  // 世界设定集选择（data/worlds/*；只有一套时默认选中）
+  // 世界设定集选择（data/assets/*；只有一套时默认选中）
   worldSel = el("select");
   worldSel.title = "世界设定集（新会话生效）";
   worldSel.onchange = () => inputView.refreshCids();

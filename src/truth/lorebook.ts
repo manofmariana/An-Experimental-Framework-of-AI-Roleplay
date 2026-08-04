@@ -5,7 +5,7 @@ import { LoreEntrySchema, type LoreEntry } from "../types.js";
 const LorebookFileSchema = z.array(LoreEntrySchema);
 
 /**
- * Lorebook（§7，P0 静态条目库）。
+ * Lorebook（静态条目库）。
  * 激活制：GM 裁决包以 ID 引用，正文按 ID 取内容注入。
  */
 export class Lorebook {
@@ -42,7 +42,7 @@ export class Lorebook {
   }
 
   /**
-   * 按标签取条目（§2：角色固定标签自动激活用）。
+   * 按标签取条目（角色固定标签自动激活用）。
    * 命中任一标签即收录；返回按 ID 排序（铁律：列表按稳定 ID 排序）。
    */
   getByTags(tags: string[]): LoreEntry[] {

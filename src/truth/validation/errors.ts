@@ -1,9 +1,9 @@
 /**
- * 类型化存档加载错误（docs/optimization-review.md §7「类型化加载错误」）。
+ * 类型化存档加载错误。
  *
- * 不再把一切读取/解析/校验/IO 异常统一包装为"版本不兼容"：调用方按 kind 判别恢复路径——
+ * 调用方按 kind 判别恢复路径——
  * version 提示新建会话；corrupt/incomplete/invariant 可尝试上一 Generation（loadCurrent 灾备回退）；
- * io 展示路径与系统错误，不误导用户放弃存档；invariant 由 B4 的 validateSaveSet（validation/saveSet.ts）产出。
+ * io 展示路径与系统错误，不误导用户放弃存档；invariant 由 validateSaveSet（validation/saveSet.ts）产出。
  *
  * 分类口径：
  * - not_found：runId 或目标 Generation 不存在；
@@ -38,7 +38,7 @@ export class RevisionConflictError extends Error {
 }
 
 /**
- * 会话已销毁（优化阶段 D2「会话切换与强制结束」）：new/load 强制切换时 dispose 旧会话，
+ * 会话已销毁：new/load 强制切换时 dispose 旧会话，
  * 其后旧任务的任何提交/新步启动一律抛它——旧 run 晚到结果不得提交真相或触发广播。
  */
 export class DisposedSessionError extends Error {
@@ -48,7 +48,7 @@ export class DisposedSessionError extends Error {
   }
 }
 
-/** 消息身份不符（docs/optimization-review.md §5「消息身份」）：命令携带的 runId ≠ 当前活跃会话。 */
+/** 消息身份不符：命令携带的 runId ≠ 当前活跃会话。 */
 export class SessionSwitchedError extends Error {
   constructor(
     readonly expected: string,

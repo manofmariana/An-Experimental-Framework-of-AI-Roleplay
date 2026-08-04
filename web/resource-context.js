@@ -1,5 +1,5 @@
 /**
- * 资源上下文（优化阶段 D5，docs/optimization-review.md §10「ResourceContext」）：
+ * 资源上下文：
  * 世界/角色等用户资源 URL 的唯一构造口。createResourceContext 捕获
  * {username, worldSetId} 即不可变——编辑表单打开时捕获，保存写同一捕获目标，
  * 不随 picker 当前值漂移（「打开 A 后切到 B 却把旧表单写入 B」的结构性消除）。

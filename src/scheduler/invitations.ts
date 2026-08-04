@@ -1,10 +1,10 @@
 /**
- * 邀请历史解释（纯逻辑，docs/optimization-review.md §2）：InvitationProjection。
+ * 邀请历史解释（纯逻辑）：InvitationProjection。
  *
- * 语义对应原 loop.ts derivePendingInvitee，差异仅在应答判据显式化：
+ * 应答判据显式化：
  * contact 步登记邀请及全部目标（armed=false）→ GM 步把未生效邀请标 armed →
  * 应答步按稳定 contactSeq 把对应目标标为已应答（accepted 由 application 适配层
- * 从 decision.markers 有无 confirm 显式给出，删除 timer after===0 猜测）。
+ * 从 decision.markers 有无 confirm 显式给出）。
  *
  * 投影是派生缓存：不进 Generation、不进 CommitPlan。正常推进每个提交步增量
  * applyStep 一次；读档/回滚/编辑/直编/灾备恢复后从 archive + current 全量 rebuild。

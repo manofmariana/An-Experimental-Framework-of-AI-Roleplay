@@ -6,7 +6,7 @@ import { validateSaveSet } from "../src/truth/validation/saveSet.js";
 import { buildCharacterState, buildEvent, buildSaveSet } from "./builders/index.js";
 
 // ---------------------------------------------------------------------------
-// validateSaveSet（两级校验第二级：整档跨文件不变量，docs/optimization-review.md §7）。
+// validateSaveSet（两级校验第二级：整档跨文件不变量）。
 // unit 层：纯函数零 IO。基线 = buildSaveSet（空档可提交态）/ runningSave（进行中档），
 // 每个用例用 overrides 精准打破一条不变量。
 // ---------------------------------------------------------------------------
@@ -48,7 +48,7 @@ describe("validateSaveSet（可提交态基线）", () => {
     assert.doesNotThrow(() => validateSaveSet(runningSave()));
   });
 
-  it("多个 isPlayer:true 合法（玩家集合不写死 C0，docs §7）", () => {
+  it("多个 isPlayer:true 合法（玩家集合不写死 C0）", () => {
     const save = buildSaveSet({
       characters: {
         C0: buildCharacterState({ isPlayer: true }),

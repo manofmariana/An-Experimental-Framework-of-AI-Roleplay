@@ -18,7 +18,7 @@ import { tempDir } from "./harness/tempDir.js";
 // contract 层：真实临时文件系统 + RepoIo 故障注入。
 // ---------------------------------------------------------------------------
 
-const START = { y: 1, m: 1, d: 1, h: 6, min: 0 };
+const START = { y: 0, m: 1, d: 1, h: 6, min: 0 };
 
 function sampleSave(marker: string): SaveSet {
   return {

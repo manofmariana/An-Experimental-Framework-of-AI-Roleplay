@@ -64,13 +64,13 @@ export function buildDecision(overrides?: Record<string, unknown>): Record<strin
   return { action: "行动", inner: "内心", ...overrides };
 }
 
-/** GM 裁决包 v2（fake LLM gmQueue 的 JSON 形状；events/narrativity/deltas/timer/location 五键齐全）。 */
+/** GM 裁决包 v2（fake LLM gmQueue 的 JSON 形状；events/narrativity/deltas/durations/location 五键齐全）。 */
 export function buildAdjudication(overrides?: Record<string, unknown>): Record<string, unknown> {
   return {
     events: [{ text: "GM事件", tags: [] }],
     narrativity: "skip",
     deltas: [],
-    timer: [],
+    durations: [],
     location: [],
     ...overrides,
   };
@@ -88,7 +88,7 @@ export function buildEvent(overrides: Partial<Event> & { id: string }): Event {
   };
 }
 
-const SAVE_SET_START = { y: 1, m: 1, d: 1, h: 6, min: 0 };
+const SAVE_SET_START = { y: 0, m: 1, d: 1, h: 6, min: 0 };
 
 /**
  * 整代存档（Generation 六文件载荷）：缺省 = 刚建会话的空档（seq=0、无进行中步、仅玩家 C0），

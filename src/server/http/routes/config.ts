@@ -1,12 +1,14 @@
 /**
- * config 域路由（GET/PUT /api/config）。
- * 校验 = contracts/config.ts FileConfigSchema（D3 起唯一出处，手工字段表已删）；
- * 未知顶层字段（"_说明" 注释）经 passthrough 原样保留。
- * config 域专属：保存后热重载到运行中会话（立即生效），不走 markStale/新会话生效。
+ * config 域路由。
+ * - GET /api/config → ConfigStateView（脱敏：secrets 只有掩码态，无 api_key 字段）；
+ *   首次读取触发 config.json → 三资源的幂等迁移闸（configService.loadConfigState）。
+ * - PUT /api/config → settings/agent 绑定 patch（ConfigPutBodySchema：patch 字段 +
+ *   baseConfigRevision 并发闸），走 configService 配置事务（解析失败零落盘 → 400；
+ *   版本冲突 → 409 CONFIG_REVISION_CONFLICT；热应用失败回滚 → 500 CONFIG_APPLY_FAILED）。
+ *   PUT 只支持 patch 语义，不接整文件替换。
  */
-import fs from "node:fs";
-import { validateFileConfig } from "../../../contracts/config.js";
-import { validate } from "../errors.js";
+import { applyConfigMutation, loadConfigState } from "../../../application/configService.js";
+import { ConfigPutBodySchema } from "../../../contracts/config.js";
 import { parseJsonBody, readBody } from "../response.js";
 import type { ApiDeps, Route } from "../router.js";
 
@@ -15,21 +17,15 @@ export function configRoutes(deps: ApiDeps): Route[] {
     {
       method: "GET",
       pattern: "/api/config",
-      handler: () =>
-        fs.existsSync(deps.configFile)
-          ? (JSON.parse(fs.readFileSync(deps.configFile, "utf8")) as unknown)
-          : {},
+      handler: () => loadConfigState(deps.config).view,
     },
     {
       method: "PUT",
       pattern: "/api/config",
       handler: async ({ req }) => {
-        const body = parseJsonBody(await readBody(req));
-        const config = validate(() => validateFileConfig(body));
-        fs.writeFileSync(deps.configFile, JSON.stringify(config, null, 2) + "\n", "utf8");
-        // config 域专属：热重载到运行中会话（立即生效），不走 markStale/新会话生效
-        deps.coordinator.reloadConfig();
-        return { note: "已保存，立即生效" };
+        const body = ConfigPutBodySchema.parse(parseJsonBody(await readBody(req)));
+        const { baseConfigRevision, ...patch } = body;
+        return applyConfigMutation(deps.config, { domain: "settings", patch }, baseConfigRevision);
       },
     },
   ];

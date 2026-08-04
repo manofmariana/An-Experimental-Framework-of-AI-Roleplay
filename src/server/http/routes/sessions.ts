@@ -20,12 +20,12 @@ import type { ApiDeps, Route } from "../router.js";
 const ARTIFACT_KINDS: readonly RunArtifactKind[] = ["events", "world", "characters", "archive", "lore", "stats"];
 
 export function sessionRoutes(deps: ApiDeps): Route[] {
-  const runsDir = deps.dirs.runsDir;
+  const saveDir = deps.dirs.saveDir;
   return [
     {
       method: "GET",
       pattern: "/api/sessions",
-      handler: () => ({ active: deps.coordinator.currentRunId, runs: listRuns(runsDir) }),
+      handler: () => ({ active: deps.coordinator.currentRunId, runs: listRuns(saveDir) }),
     },
     {
       // GET /api/sessions/{id}/llm-recent/{agentSlug}（最近 5 轮滚动窗；超出 = 已轮换出窗）
@@ -34,7 +34,7 @@ export function sessionRoutes(deps: ApiDeps): Route[] {
       handler: ({ params }) => {
         const id = safeSegment(params.id!);
         const slug = safeSegment(params.slug!);
-        return readRecent(id, slug, path.join(runsDir, id));
+        return readRecent(id, slug, path.join(saveDir, id));
       },
     },
     {
@@ -43,7 +43,7 @@ export function sessionRoutes(deps: ApiDeps): Route[] {
       pattern: "/api/sessions/:id/rename",
       handler: async ({ req, params }) => {
         const alias = requireStringField(parseJsonBody(await readBody(req)), "alias");
-        writeAlias(runsDir, params.id!, alias);
+        writeAlias(saveDir, params.id!, alias);
         return {};
       },
     },
@@ -55,7 +55,7 @@ export function sessionRoutes(deps: ApiDeps): Route[] {
         if (!(ARTIFACT_KINDS as readonly string[]).includes(kind)) {
           throw new ApiError(400, "VALIDATION_ERROR", `未知会话产物: ${kind}`);
         }
-        return readRunArtifact(runsDir, params.id!, kind as RunArtifactKind);
+        return readRunArtifact(saveDir, params.id!, kind as RunArtifactKind);
       },
     },
     {
@@ -63,7 +63,7 @@ export function sessionRoutes(deps: ApiDeps): Route[] {
       method: "DELETE",
       pattern: "/api/sessions/:id",
       handler: ({ params }) => {
-        deleteRun(runsDir, params.id!, deps.coordinator.currentRunId);
+        deleteRun(saveDir, params.id!, deps.coordinator.currentRunId);
         return {};
       },
     },

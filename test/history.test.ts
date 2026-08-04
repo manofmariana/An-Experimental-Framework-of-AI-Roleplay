@@ -20,7 +20,7 @@ const adjudication = {
   events: [{ text: "@C1001 打量 @C0，神色戒备", tags: ["known_by:C0", "known_by:C1001"], location: "灯塔" }],
   narrativity: "full" as const,
   deltas: [],
-  timer: [
+  durations: [
     { cid: "C0", span: { min: 5 } },
     { cid: "C1001", span: { min: 5 } },
   ],
@@ -50,7 +50,7 @@ function evt(id: string, payload: string): Event {
   return { id, t: 0, seq: 1, kind: "world", tags: ["known_by:C0"], payload };
 }
 
-describe("buildHistory（M2：按轮分组——一轮 = 若干 actor 步 + gm 步（+prose 步））", () => {
+describe("buildHistory（按轮分组——一轮 = 若干 actor 步 + gm 步（+prose 步））", () => {
   it("完整轮：玩家输入/角色卡/裁决/正文按轮归位，turn = 本轮首步 seq", () => {
     const archive = [...round(1, "正文一"), ...round(5, "正文二")];
     const h = buildHistory([], archive, null);

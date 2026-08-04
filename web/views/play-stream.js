@@ -1,5 +1,5 @@
 /**
- * 游玩页流式区 view（优化阶段 D5 抽取，docs/optimization-review.md §10「最小模块」）：
+ * 游玩页流式区 view：
  * 流式卡片（三 agent 同构 panel + 思维链/原始返回/提示词模态 + 回滚/重 roll/编辑菜单）、
  * panels 卡片 Map、renderHistory 历史回显、钉底滚动。
  *
@@ -91,21 +91,54 @@ export function createPlayStream({ el, api, getState, sendCmd, sendCommand, trac
     }
   }
 
-  /** 玩家输入卡（简单卡片，无 agent 菜单；seq 可选——历史卡显示 #N 徽标）。
-   *  结构化输入（DecisionPackage JSON）按块渲染（无 action 时只显示台词），纯文本原样显示。 */
+  /** 决策包 → 玩家卡内容（分节 + 标记 chips）——即时渲染与 editedResult 原地重渲共用。 */
+  function playerPkgContent(pkg) {
+    const body = el("div", "player-card-blocks");
+    for (const sec of decisionSections(pkg)) body.appendChild(sec);
+    for (const m of pkg.markers ?? []) body.appendChild(el("span", "marker-chip", markerLabel(m)));
+    return body;
+  }
+
+  /** 玩家卡内容：结构化输入（DecisionPackage JSON）分节渲染，纯文本原样显示。 */
+  function playerCardContent(text) {
+    const pkg = tryParsePlayerPkg(text);
+    return pkg ? playerPkgContent(pkg) : el("span", "player-card-text", text);
+  }
+
+  /** 玩家步编辑种子 = 组装的决策包 JSON（与 NPC 卡编辑同一形态）：
+   *  已是决策包 JSON 的输入原样保留；纯文本镜像后端回退映射 { inner, dialogue }。 */
+  function playerPkgJson(text) {
+    return tryParsePlayerPkg(text) ? text : JSON.stringify({ inner: text, dialogue: text }, null, 2);
+  }
+
+  /** 玩家输入卡（标签"你"区分身份；seq > 0 时带 data-kind/seq 寻址与 "..." 菜单——
+   *  原始返回/编辑与 NPC 卡同一入口（edit_result），另有回滚；历史卡显示 #N 徽标）。 */
   function playerCard(text, seq) {
     const card = el("div", "player-card");
-    card.appendChild(el("span", "player-card-label", "你"));
-    const pkg = tryParsePlayerPkg(text);
-    if (pkg) {
-      const body = el("div", "player-card-blocks");
-      if (pkg.dialogue) body.appendChild(el("div", "player-block-line", `「${pkg.dialogue}」`));
-      if (pkg.action) body.appendChild(el("div", "player-block-line", pkg.action));
-      for (const m of pkg.markers ?? []) body.appendChild(el("span", "marker-chip", markerLabel(m)));
-      card.appendChild(body);
-    } else {
-      card.appendChild(el("span", "player-card-text", text));
+    const state = { kind: "player", text, contentEl: null };
+    card._cardState = state;
+    const head = el("div", "player-card-head");
+    head.appendChild(el("span", "player-card-label", "你"));
+    if (seq > 0) {
+      // seq+kind → 卡片寻址（transition.editedResult 原地重渲用）
+      card.dataset.kind = "player";
+      card.dataset.seq = String(seq);
+      const { wrap } = makeMenu([
+        { label: "原始返回", onclick: () => openRawModal("player", seq, "玩家", () => playerPkgJson(state.text)) },
+        {
+          label: "回滚",
+          onclick: () => {
+            if (confirm(`回到第 ${seq} 步之后？其后的内容将全部丢弃。`)) {
+              sendCmd("rollback", { targetSeq: seq });
+            }
+          },
+        },
+      ]);
+      head.appendChild(wrap);
     }
+    card.appendChild(head);
+    state.contentEl = playerCardContent(text);
+    card.appendChild(state.contentEl);
     if (seq > 0) card.appendChild(el("span", "seq-badge", `#${seq}`));
     return card;
   }
@@ -121,12 +154,13 @@ export function createPlayStream({ el, api, getState, sendCmd, sendCommand, trac
     return sec;
   }
 
-  function renderDecisionCard(pkg) {
-    const card = el("div", "agent-card");
-    if (pkg.action) card.appendChild(cardSection("行动", el("div", "card-action", pkg.action)));
-    if (pkg.dialogue) card.appendChild(cardSection("台词", el("div", "card-action", pkg.dialogue)));
+  /** 决策包分节（行动/台词/内心想法/人际关系更新；缺省节不显示）——NPC 决策卡与玩家卡共用。 */
+  function decisionSections(pkg) {
+    const sections = [];
+    if (pkg.action) sections.push(cardSection("行动", el("div", "card-action", pkg.action)));
+    if (pkg.dialogue) sections.push(cardSection("台词", el("div", "card-action", pkg.dialogue)));
     if (pkg.inner) {
-      card.appendChild(cardSection("内心想法", el("div", "card-mono", pkg.inner)));
+      sections.push(cardSection("内心想法", el("div", "card-mono", pkg.inner)));
     }
     if (pkg.relations?.length) {
       const ul = el("ul", "card-list");
@@ -136,8 +170,14 @@ export function createPlayStream({ el, api, getState, sendCmd, sendCommand, trac
         if (r.impression) parts.push(`印象：${r.impression}`);
         ul.appendChild(el("li", null, `${r.target} → ${parts.join(" · ")}`));
       }
-      card.appendChild(cardSection("人际关系更新", ul));
+      sections.push(cardSection("人际关系更新", ul));
     }
+    return sections;
+  }
+
+  function renderDecisionCard(pkg) {
+    const card = el("div", "agent-card");
+    for (const sec of decisionSections(pkg)) card.appendChild(sec);
     return card;
   }
 
@@ -153,10 +193,10 @@ export function createPlayStream({ el, api, getState, sendCmd, sendCommand, trac
       for (const d of pkg.deltas) ul.appendChild(el("li", null, `${d.path} ${d.op} ${JSON.stringify(d.value)}`));
       card.appendChild(cardSection("变量变更", ul));
     }
-    if (pkg.timer?.length) {
+    if (pkg.durations?.length) {
       const ul = el("ul", "card-list mono");
-      for (const t of pkg.timer) ul.appendChild(el("li", null, `${t.cid} → +${JSON.stringify(t.span)}`));
-      card.appendChild(cardSection("计时器", ul));
+      for (const t of pkg.durations) ul.appendChild(el("li", null, `${t.cid} → +${JSON.stringify(t.span)}`));
+      card.appendChild(cardSection("时长", ul));
     }
     if (pkg.location?.length) {
       const ul = el("ul", "card-list");
@@ -301,7 +341,7 @@ export function createPlayStream({ el, api, getState, sendCmd, sendCommand, trac
   /**
    * 原始返回模态（编辑已并入）：默认只读；底部「编辑」仅最新步
    * （pipeline.current，按 seq + kind 匹配）可点——点击进入编辑态（保存/取消）。
-   * 保存走 edit_result：requestId 精确关联应答（D2，取代旧 pendingEdit 猜测），
+   * 保存走 edit_result：requestId 精确关联应答，
    * 失败在模态内报错且不退出编辑态；成功退出编辑态。
    */
   function openRawModal(kind, seq, agentName, getRaw) {
@@ -512,6 +552,21 @@ export function createPlayStream({ el, api, getState, sendCmd, sendCommand, trac
   /** edit_result 提交附带：按 seq+kind 寻址原地重渲该卡（live 与历史卡同构；不整段重渲历史）。 */
   function onEditedResult(edited) {
     if (!streamEl) return;
+    if (edited.kind === "player") {
+      // 玩家卡：保留卡壳（"你"标签/菜单/#N 徽标），只换内容区（分节 + 标记 chips 同渲染）
+      const rootEl = streamEl.querySelector(`[data-kind="player"][data-seq="${edited.seq}"]`);
+      const state = rootEl?._cardState;
+      if (!state) return;
+      const r = edited.result ?? {};
+      if (r.decision) {
+        const body = playerPkgContent(r.decision);
+        state.contentEl.replaceWith(body);
+        state.contentEl = body;
+      }
+      if (r.raw !== undefined) state.text = r.raw;
+      scrollToBottom();
+      return;
+    }
     const kind = agentKind(edited.kind);
     const rootEl = streamEl.querySelector(`[data-kind="${kind}"][data-seq="${edited.seq}"]`);
     const state = rootEl?._cardState ?? panels.get(panelKey(edited.kind));
@@ -613,10 +668,11 @@ export function createPlayStream({ el, api, getState, sendCmd, sendCommand, trac
     scrollPinned = true;
   }
 
-  /** 玩家发言即时上卡（发送方本地回显）并强制滚到底。 */
+  /** 玩家发言即时上卡（发送方本地回显）并强制滚到底。
+   *  寻址 seq = 当前已提交步 + 1（即将提交的玩家步 seq；提交后由 historyPatch 整段归位）。 */
   function appendSelfCard(text) {
     if (!streamEl) return;
-    streamEl.appendChild(playerCard(text));
+    streamEl.appendChild(playerCard(text, getState().pipeline.seq + 1));
     scrollToBottom(true); // 自己发言：强制滚到底看最新进展
   }
 

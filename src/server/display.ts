@@ -3,7 +3,7 @@ import type { AdjudicationPackage, DecisionPackage } from "../types.js";
 import type { ServerMessage } from "./ws-protocol.js";
 
 /**
- * WebDisplay：Display 接口的 WebSocket 实现（D2 消息身份）。
+ * WebDisplay：Display 接口的 WebSocket 实现。
  * 构造绑定 runId；agentStart 记录当前 activationId（GameSession 经可选第 4 参传入），
  * 每条流式消息盖 {runId, activationId}——前端只接受当前 run/activation 的增量，
  * 旧 run/旧 activation 的晚到消息直接被丢弃。agentEnd 清空当前 activationId。
@@ -41,7 +41,7 @@ export class WebDisplay implements Display {
     this.activationId = null;
   }
 
-  /** 摘要不再下行（D2 删除 summary 消息类型；前端不渲染）。 */
+  /** 摘要无下行消息（协议无 summary 类型，前端不渲染）。 */
   summary(_agent: string, _text: string): void {}
 
   retry(agent: string, attempt: number, reason: string): void {

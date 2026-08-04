@@ -1,5 +1,5 @@
 /**
- * 六真相 Store 成组视图（优化阶段 C2，docs/optimization-review.md §3）：
+ * 六真相 Store 成组视图：
  * session 内核（loop.ts）与效果规划器（src/application/）共用同一组纯类型 + 纯函数。
  *
  * live 与 draft 同形。draft = cloneTruth 产出的工作副本：编辑/回溯/直编/规划器的

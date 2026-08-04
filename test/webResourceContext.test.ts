@@ -1,5 +1,5 @@
 /**
- * web/resource-context.js 单元测试（unit 层，优化阶段 D5）：
+ * web/resource-context.js 单元测试（unit 层）：
  * URL 构造器携带 ?set=（编码）、身份捕获即不可变（冻结）、worldSetId 必填校验。
  * 零 IO：纯 URL 构造器直测。
  */

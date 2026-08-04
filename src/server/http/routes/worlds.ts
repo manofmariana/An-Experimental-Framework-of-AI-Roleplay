@@ -18,12 +18,12 @@ import type { ApiDeps, Route } from "../router.js";
 
 export function worldRoutes(deps: ApiDeps): Route[] {
   const worldDirOf = (url: URL): string =>
-    resolveWorldDir(deps.dirs.worldsDir, url.searchParams.get("set") ?? undefined, DEFAULT_WORLD_SET);
+    resolveWorldDir(deps.dirs.assetsDir, url.searchParams.get("set") ?? undefined, DEFAULT_WORLD_SET);
   return [
     {
       method: "GET",
       pattern: "/api/worlds",
-      handler: () => ({ sets: listWorldSets(deps.dirs.worldsDir) }),
+      handler: () => ({ sets: listWorldSets(deps.dirs.assetsDir) }),
     },
     {
       method: "GET",

@@ -1,9 +1,9 @@
 /**
- * 会话装配工厂（C4 从 loop.ts 的 GameSession.create/resume 迁入）：
+ * 会话装配工厂：
  * 给定 configs/runId/options/worldSetId → 装配好的 GameSession 内核实例。
  * 职责 = ChatPort/adapter 装配、提示词模板启动校验、世界设定集读取、存档
  * meta.json（world_set）读写、六真相 Store 初始/续档装载、无状态 activation 装配
- * （§4：三个 activation 各持对应 kind 的 ChatPort；上下文由 builder 逐调用现算）。
+ * （三个 activation 各持对应 kind 的 ChatPort；上下文由 builder 逐调用现算）。
  * 命令串行/会话切换在 sessionCoordinator.ts；内核步编排在 gameSession.ts。
  */
 import fs from "node:fs";
@@ -20,21 +20,24 @@ import { PROSE_PLACEHOLDERS, ProseActivation } from "../agents/prose.js";
 import { loadTemplate } from "../compile/template.js";
 import {
   AGENT_KINDS,
+  CONFIG_FILE,
+  DEFAULT_GM_INTERVAL_CYCLES,
+  DEFAULT_PROSE_WINDOW_TURNS,
   DEFAULT_WORLD_SET,
-  RUNS_DIR,
-  loadAgentConfigs,
-  loadGmIntervalCycles,
-  loadMemoryConfig,
+  SAVE_DIR,
   resolveWorldDir,
   runDir,
   type AgentKind,
   type LLMConfig,
 } from "../config.js";
+import type { UserSettings } from "../contracts/config.js";
 import type { Display } from "../display.js";
 import { CallLogChatPort } from "../llm/callLog.js";
 import type { ChatPort } from "../llm/chatPort.js";
 import { OpenAIChatAdapter } from "../llm/openaiChatAdapter.js";
 import { defaultDice, type DicePort } from "../ports.js";
+import { resolveUserDirectories } from "../resources/userDirectories.js";
+import { packPromptsDir } from "../resources/worldRepository.js";
 import { safeSegment } from "../shared/safeSegment.js";
 import { ArchiveStore } from "../truth/archive.js";
 import { CharactersStore } from "../truth/charactersStore.js";
@@ -46,13 +49,14 @@ import { SAVE_SCHEMA_VERSION } from "../truth/saveSchema.js";
 import { loadWorldTime, TimeStore, worldTimeToMinutes } from "../truth/timeStore.js";
 import { WorldStore } from "../truth/worldStore.js";
 import { GameSession } from "./gameSession.js";
+import { loadConfigState, type ConfigServiceDeps } from "./configService.js";
 
 function readText(file: string): string {
   return fs.readFileSync(file, "utf8").trim();
 }
 
 // ---------------------------------------------------------------------------
-// 存档元数据（runs/{id}/meta.json：世界设定集选择，resume 按此加载）
+// 存档元数据（save/{runId}/meta.json：世界设定集选择，resume 按此加载）
 // ---------------------------------------------------------------------------
 
 const SaveMetaSchema = z.object({ world_set: z.string() });
@@ -80,11 +84,11 @@ function writeWorldSet(runId: string, worldSet: string, baseDir?: string): void 
   );
 }
 
-function resolveSessionWorldDir(setId: string | undefined, worldsDir?: string): string {
-  if (worldsDir === undefined) return resolveWorldDir(setId);
+function resolveSessionWorldDir(setId: string | undefined, assetsDir?: string): string {
+  if (assetsDir === undefined) return resolveWorldDir(setId);
   const id = setId === undefined || setId === "" ? DEFAULT_WORLD_SET : setId;
   if (!/^[\w-]+$/.test(id)) throw new Error(`非法世界设定集名: ${JSON.stringify(id)}`);
-  const dir = path.join(worldsDir, id);
+  const dir = path.join(assetsDir, id);
   if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) throw new Error(`世界设定集不存在: ${id}`);
   return dir;
 }
@@ -101,13 +105,13 @@ export interface SessionOptions {  /** d20 骰子（默认 Math.random 实现；
    * （无 API key 也能建会话）；未注入的 kind 走生产路径 CallLogChatPort(OpenAIChatAdapter)。
    */
   chatPorts?: Partial<Record<AgentKind, ChatPort>>;
-  /** 存档文件目录；省略时使用 runs/{runId}。 */
+  /** 存档文件目录；省略时使用 save/{runId}。 */
   baseDir?: string;
-  /** 世界设定集根目录；省略时使用 data/worlds。 */
-  worldsDir?: string;
-  /** 正文滑窗轮数；测试可注入以避免读取 config.json。 */
+  /** 世界资产根目录；省略时使用 data/assets。 */
+  assetsDir?: string;
+  /** 正文滑窗轮数；缺省 = DEFAULT_PROSE_WINDOW_TURNS（生产路径由 settings 传入）。 */
   proseWindowTurns?: number;
-  /** GM 硬保险间隔（行动周期数）；测试可注入以避免读取 config.json。 */
+  /** GM 硬保险间隔（行动周期数）；缺省 = DEFAULT_GM_INTERVAL_CYCLES（生产路径由 settings 传入）。 */
   gmIntervalCycles?: number;
 }
 
@@ -138,16 +142,18 @@ export function createGameSession(
     ports[kind] = new CallLogChatPort(adapter, runId);
   }
 
-  // 提示词模板：装配时加载一次做启动校验（运行期每轮激活前热加载，见各 agent）
-  loadTemplate("character", Object.keys(CHARACTER_PLACEHOLDERS));
-  loadTemplate("gm", Object.keys(GM_PLACEHOLDERS));
-  loadTemplate("prose", Object.keys(PROSE_PLACEHOLDERS));
-
-  // 数据层：世界设定集（data/worlds/{setId}/），选择记入存档 meta.json
-  const worldDir = resolveSessionWorldDir(worldSetId, options?.worldsDir);
+  // 数据层：世界设定集（data/assets/{setId}/ 世界包），选择记入存档 meta.json
+  const worldDir = resolveSessionWorldDir(worldSetId, options?.assetsDir);
   const worldSet = worldSetId === undefined || worldSetId === "" ? DEFAULT_WORLD_SET : worldSetId;
   const dir = options?.baseDir ?? runDir(runId);
   writeWorldSet(runId, worldSet, dir);
+
+  // 提示词模板：包内 prompts/（每世界包一份完整副本，续档与新会话同一口径——
+  // 都按本会话世界包解析）；装配时加载一次做启动校验，运行期每轮激活前热加载（见各 agent）
+  const promptsDir = packPromptsDir(worldDir);
+  loadTemplate("character", Object.keys(CHARACTER_PLACEHOLDERS), promptsDir);
+  loadTemplate("gm", Object.keys(GM_PLACEHOLDERS), promptsDir);
+  loadTemplate("prose", Object.keys(PROSE_PLACEHOLDERS), promptsDir);
 
   const setting = readText(path.join(worldDir, "setting.md"));
   const toneCard = readText(path.join(worldDir, "tone-card.md"));
@@ -195,12 +201,12 @@ export function createGameSession(
   }
   characters.ensurePlayer(playerInitial, startMinutes);
 
-  // 无状态 activation（§4）：三个调用规则各持对应 kind 的 ChatPort，单一 CharacterActivation
+  // 无状态 activation：三个调用规则各持对应 kind 的 ChatPort，单一 CharacterActivation
   // 服务全部 NPC；cast/lore/事件等上下文由 ActivationContextBuilder 逐调用从真相现算，
   // 不在装配期固化（动态改名/lore 编辑下一次调用即生效）。
-  const character = new CharacterActivation(ports.character);
-  const gm = new GmActivation(ports.gm);
-  const prose = new ProseActivation(ports.prose);
+  const character = new CharacterActivation(ports.character, promptsDir);
+  const gm = new GmActivation(ports.gm, promptsDir);
+  const prose = new ProseActivation(ports.prose, promptsDir);
 
   return new GameSession({
     runId,
@@ -214,8 +220,8 @@ export function createGameSession(
     timeStore,
     archive,
     statics: { setting, toneCard },
-    proseWindowTurns: options?.proseWindowTurns ?? loadMemoryConfig().proseWindowTurns,
-    gmIntervalCycles: options?.gmIntervalCycles ?? loadGmIntervalCycles(),
+    proseWindowTurns: options?.proseWindowTurns ?? DEFAULT_PROSE_WINDOW_TURNS,
+    gmIntervalCycles: options?.gmIntervalCycles ?? DEFAULT_GM_INTERVAL_CYCLES,
     rollDice: options?.rollDice ?? defaultDice,
     repo,
     revision,
@@ -225,7 +231,7 @@ export function createGameSession(
 }
 
 /**
- * 续档：从 runs/{runId}/ 的落盘数据重建会话运行态（世界设定集按 meta.json）。
+ * 续档：从 save/{runId}/ 的落盘数据重建会话运行态（世界设定集按 meta.json）。
  * 数据经 GenerationRepository.loadCurrent 一次读入六 Store；本方法只转发 createGameSession。
  * 不触发任何 LLM 调用（纯数据操作）。
  */
@@ -250,24 +256,43 @@ export interface SessionFactory {
   resume(runId: string, display?: Display): GameSession;
 }
 
-function requireAgentConfigs(): Record<AgentKind, LLMConfig> {
-  const configs = loadAgentConfigs();
-  if (!configs) {
-    throw new Error("未找到 LLM API Key：请在「配置」页填入 api_key，或设置 DEEPSEEK_API_KEY 环境变量。");
-  }
-  return configs;
+/**
+ * 生产配置源：经 configService.loadConfigState 读三资源（含 config.json 一次性
+ * 迁移闸——旧档首次进入自动迁移为 secrets/presets/settings）。resolved = null 即
+ * 三个 activation 任一解析不出有效配置（未绑定 preset / 缺 key 且无 env 兜底）。
+ */
+function productionConfigDeps(): ConfigServiceDeps {
+  return { dirs: resolveUserDirectories(), env: process.env, legacyConfigFile: CONFIG_FILE };
 }
 
-/** 生产装配：config.json 读取 + runs/ 存档存在性校验 + createGameSession/resumeGameSession。 */
+function requireConfigState(): { configs: Record<AgentKind, LLMConfig>; settings: UserSettings } {
+  const state = loadConfigState(productionConfigDeps());
+  if (!state.resolved) {
+    throw new Error("未找到 LLM API Key：请在「配置」页写入密钥并绑定 API 预设，或设置 DEEPSEEK_API_KEY 环境变量。");
+  }
+  return { configs: state.resolved, settings: state.view.settings };
+}
+
+/** settings → SessionOptions（滑窗/GM 间隔随会话装配固化；运行中修改走配置事务热应用）。 */
+function sessionOptionsFromSettings(settings: UserSettings): SessionOptions {
+  return {
+    proseWindowTurns: settings.proseWindowTurns ?? DEFAULT_PROSE_WINDOW_TURNS,
+    gmIntervalCycles: settings.gmIntervalCycles ?? DEFAULT_GM_INTERVAL_CYCLES,
+  };
+}
+
+/** 生产装配：configService 配置状态读取 + save/ 存档存在性校验 + createGameSession/resumeGameSession。 */
 export const productionSessionFactory: SessionFactory = {
   create(runId, worldSetId, display) {
-    return createGameSession(requireAgentConfigs(), runId, display, worldSetId);
+    const { configs, settings } = requireConfigState();
+    return createGameSession(configs, runId, display, worldSetId, sessionOptionsFromSettings(settings));
   },
   resume(runId, display) {
     const id = safeSegment(runId); // 路径安全：防目录穿越
-    if (!fs.existsSync(path.join(RUNS_DIR, id))) {
+    if (!fs.existsSync(path.join(SAVE_DIR, id))) {
       throw new Error(`存档不存在: ${id}`);
     }
-    return resumeGameSession(requireAgentConfigs(), id, display);
+    const { configs, settings } = requireConfigState();
+    return resumeGameSession(configs, id, display, sessionOptionsFromSettings(settings));
   },
 };

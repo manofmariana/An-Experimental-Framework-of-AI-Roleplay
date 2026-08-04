@@ -20,14 +20,15 @@ export const PROSE_PLACEHOLDERS: PlaceholderRegistry<ProseContext> = {
 };
 
 /**
- * 无状态正文 activation（docs/optimization-review.md §4）：构造只持 ChatPort，
- * toneCard/worldLore/cast 与逐轮素材全部由 builder 现算进 ProseContext 逐调用传入。
+ * 无状态正文 activation：构造只持 ChatPort +
+ * 包内 promptsDir（会话级静态配置，非跨调用缓存），toneCard/worldLore/cast 与
+ * 逐轮素材全部由 builder 现算进 ProseContext 逐调用传入。
  */
 export class ProseActivation {
   readonly agentName = "prose";
-  constructor(private llm: ChatPort) {}
+  constructor(private llm: ChatPort, private promptsDir: string) {}
   async render(context: ProseContext, turn: number, signal: AbortSignal, display?: Display): Promise<string> {
-    const template = loadTemplate("prose", Object.keys(PROSE_PLACEHOLDERS));
+    const template = loadTemplate("prose", Object.keys(PROSE_PLACEHOLDERS), this.promptsDir);
     const messages = compilePrompt(template, PROSE_PLACEHOLDERS, context);
     const onDelta = display ? (delta: string) => display.delta(this.agentName, delta) : undefined;
     const onReasoningDelta = display ? (delta: string) => display.reasoningDelta(this.agentName, delta) : undefined;

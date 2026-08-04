@@ -1,5 +1,5 @@
 /**
- * 阶段 A4 契约与路径工具单测（unit：零 IO 纯逻辑）。
+ * 契约与路径工具单测（unit：零 IO 纯逻辑）。
  * 覆盖：safeSegment（shared）、resolveUserDirectories（resources）、
  * 配置/Secrets/Preset/脱敏视图 zod 契约（contracts）。
  */
@@ -7,18 +7,20 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { describe, it } from "node:test";
 import {
+  ASSETS_DIR,
   PROJECT_ROOT,
-  PROMPTS_DIR,
-  RUNS_DIR,
-  WORLDS_DIR,
+  SAVE_DIR,
   runDir,
 } from "../src/config.js";
 import {
   ApiPresetSchema,
-  PublicConfigViewSchema,
+  ConfigMutationSchema,
+  ConfigPutBodySchema,
+  ConfigStateViewSchema,
+  PresetMutationSchema,
   ResolvedAgentConfigSchema,
   ServerConfigSchema,
-  toPublicConfigView,
+  SettingsPatchSchema,
   UserSettingsSchema,
 } from "../src/contracts/config.js";
 import {
@@ -45,24 +47,25 @@ describe("safeSegment（shared 唯一出处）", () => {
   });
 });
 
-describe("resolveUserDirectories（default_user，legacy 映射）", () => {
+describe("resolveUserDirectories（default_user，assets/users/save 布局）", () => {
   it("缺省用户名 = default_user（常量唯一出处）", () => {
     assert.equal(DEFAULT_USERNAME, "default_user");
     assert.equal(resolveUserDirectories().username, "default_user");
   });
 
-  it("legacy 路径与 config.ts 常量值等价（单一真相）", () => {
+  it("路径与 config.ts 常量值等价（单一真相）", () => {
     const dirs = resolveUserDirectories();
-    assert.equal(dirs.worldsDir, WORLDS_DIR);
-    assert.equal(dirs.runsDir, RUNS_DIR);
-    assert.equal(dirs.promptsDir, PROMPTS_DIR);
-    assert.equal(runDir("some-run"), path.join(dirs.runsDir, "some-run"));
-    assert.equal(path.join(dirs.worldsDir, "baitan"), path.join(WORLDS_DIR, "baitan"));
+    assert.equal(dirs.assetsDir, ASSETS_DIR);
+    assert.equal(dirs.saveDir, SAVE_DIR);
+    assert.equal(runDir("some-run"), path.join(dirs.saveDir, "some-run"));
+    assert.equal(path.join(dirs.assetsDir, "baitan"), path.join(ASSETS_DIR, "baitan"));
   });
 
-  it("PROJECT_ROOT 与 config.ts 一致；未来位置在 data/default_user/ 下（仅定义不创建）", () => {
+  it("PROJECT_ROOT 与 config.ts 一致；用户根在 data/users/{username}/ 下，世界资产共享 data/assets/", () => {
     const dirs = resolveUserDirectories();
-    assert.equal(dirs.root, path.join(PROJECT_ROOT, "data", "default_user"));
+    assert.equal(dirs.root, path.join(PROJECT_ROOT, "data", "users", "default_user"));
+    assert.equal(dirs.assetsDir, path.join(PROJECT_ROOT, "data", "assets"));
+    assert.equal(dirs.saveDir, path.join(dirs.root, "save"));
     assert.equal(dirs.presetsDir, path.join(dirs.root, "api-presets"));
     assert.equal(dirs.secretsFile, path.join(dirs.root, "secrets.json"));
     assert.equal(dirs.settingsFile, path.join(dirs.root, "settings.json"));
@@ -70,7 +73,7 @@ describe("resolveUserDirectories（default_user，legacy 映射）", () => {
 
   it("自定义 handle 可用；非法 handle 拒绝", () => {
     assert.equal(resolveUserDirectories("alice-2").username, "alice-2");
-    assert.equal(resolveUserDirectories("alice-2").root, path.join(PROJECT_ROOT, "data", "alice-2"));
+    assert.equal(resolveUserDirectories("alice-2").root, path.join(PROJECT_ROOT, "data", "users", "alice-2"));
     for (const bad of ["", "..", "../x", "a/b", "a.b", ".x", "a b"]) {
       assert.throws(() => resolveUserDirectories(bad), /非法/, `应拒绝: ${JSON.stringify(bad)}`);
     }
@@ -106,33 +109,49 @@ describe("ResolvedAgentConfigSchema（对齐 LLMConfig）", () => {
   });
 });
 
-describe("PublicConfigViewSchema / toPublicConfigView（脱敏视图）", () => {
-  it("拒绝含明文 key 的对象", () => {
-    assert.throws(() => PublicConfigViewSchema.parse({ api_key: "sk-abcdef123456" }));
-    assert.throws(() =>
-      PublicConfigViewSchema.parse({ agents: { gm: { api_key: "sk-plaintext-key" } } }),
-    );
+describe("ConfigStateViewSchema / 配置事务 mutation 契约", () => {
+  it("ConfigStateView：掩码态通过；明文/非法掩码拒绝", () => {
+    ConfigStateViewSchema.parse({
+      secrets: { deepseek: [{ id: "s1", label: "主", active: true, maskedValue: "****3456" }] },
+      presets: [],
+      settings: { configRevision: 0 },
+    });
     assert.throws(() => MaskedSecretSchema.parse("sk-abcdef123456"));
+    assert.throws(() =>
+      ConfigStateViewSchema.parse({
+        secrets: { deepseek: [{ id: "s1", label: "主", active: true, maskedValue: "sk-plaintext" }] },
+        presets: [],
+        settings: { configRevision: 0 },
+      }),
+    );
   });
 
-  it("掩码视图通过；toPublicConfigView 把明文掩码、其余字段原样", () => {
-    const view = toPublicConfigView({
-      api_key: "sk-abcdef123456",
-      base_url: "https://api.deepseek.com",
-      model: "deepseek-chat",
-      json_mode: false,
-      reasoning_effort: "medium",
-      agents: { gm: { api_key: "sk-gm-own-9999", reasoning_effort: "high" } },
-      memory: { prose_window_turns: 5 },
-      gm_interval_cycles: 3,
+  it("SettingsPatchSchema / ConfigPutBodySchema：patch 不含 configRevision，body 必带 baseConfigRevision", () => {
+    SettingsPatchSchema.parse({});
+    SettingsPatchSchema.parse({ proseWindowTurns: 0, agentPresets: { gm: "p1" } });
+    assert.throws(() => SettingsPatchSchema.parse({ configRevision: 2 })); // strict：版本号不接受 patch
+    assert.throws(() => SettingsPatchSchema.parse({ gmIntervalCycles: 0 }));
+    ConfigPutBodySchema.parse({ baseConfigRevision: 0, proseWindowTurns: 9 });
+    assert.throws(() => ConfigPutBodySchema.parse({ proseWindowTurns: 9 })); // 缺并发闸
+  });
+
+  it("PresetMutationSchema：save 的 id 可省；delete/duplicate 必带 id", () => {
+    PresetMutationSchema.parse({
+      type: "save",
+      preset: { name: "n", provider: "p", baseUrl: "https://a", model: "m", secretKind: "deepseek" },
     });
-    assert.equal(view.api_key, "****3456");
-    assert.equal(view.agents?.gm?.api_key, "****9999");
-    assert.equal(view.base_url, "https://api.deepseek.com");
-    assert.equal(view.agents?.gm?.reasoning_effort, "high");
-    assert.equal(view.gm_interval_cycles, 3);
-    // 视图内不存在任何明文
-    assert.ok(!JSON.stringify(view).includes("sk-"));
+    PresetMutationSchema.parse({ type: "delete", id: "p1" });
+    PresetMutationSchema.parse({ type: "duplicate", id: "p1" });
+    assert.throws(() => PresetMutationSchema.parse({ type: "delete" }));
+    assert.throws(() => PresetMutationSchema.parse({ type: "wipe", id: "p1" }));
+  });
+
+  it("ConfigMutationSchema：三域判别联合", () => {
+    ConfigMutationSchema.parse({ domain: "secret", mutation: { type: "delete", kind: "deepseek", id: "s1" } });
+    ConfigMutationSchema.parse({ domain: "preset", mutation: { type: "duplicate", id: "p1" } });
+    ConfigMutationSchema.parse({ domain: "settings", patch: { gmIntervalCycles: 3 } });
+    assert.throws(() => ConfigMutationSchema.parse({ domain: "secret", mutation: { type: "delete" } }));
+    assert.throws(() => ConfigMutationSchema.parse({ domain: "unknown", patch: {} }));
   });
 
   it("maskSecret：短值整体掩码，长值仅留末 4 位", () => {

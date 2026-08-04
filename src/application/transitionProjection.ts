@@ -1,6 +1,5 @@
 /**
- * 提交 → 增量同步投影（优化阶段 D2，docs/optimization-review.md §5
- * 「Snapshot 与增量 Transition」「一致快照 query」「消息身份」）：纯函数，零 IO。
+ * 提交 → 增量同步投影：纯函数，零 IO。
  *
  * GameSession 每次提交（commitGeneration/commitTruth）产出一个 CommitNotice
  * （prev/next 根引用——恒冻结策略下存引用即零拷贝快照）；buildTransition 用

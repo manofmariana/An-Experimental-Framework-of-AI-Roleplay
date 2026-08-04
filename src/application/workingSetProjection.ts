@@ -1,5 +1,5 @@
 /**
- * 工作集投影（docs/optimization-review.md §3「working set 投影合并」）：
+ * 工作集投影：
  * rebuildWorkingSet 与 preGmWorkingSet 的合并纯函数——从给定步骤序列中找到最后一个
  * gm/prose 边界，收集其后的 player/character 步（player 步转写为 {cid: playerCid}，
  * 与落账同形）。投影函数不知道调用场景：调用方负责传入正确的步骤切片——

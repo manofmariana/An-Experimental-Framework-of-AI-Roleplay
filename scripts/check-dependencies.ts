@@ -1,5 +1,5 @@
 /**
- * 架构依赖审计（优化阶段 A3，docs/optimization-review.md §11「架构依赖审计」）。
+ * 架构依赖审计。
  *
  * 用项目已有 typescript Compiler API 建 src/** 模块依赖图（静态 import、动态 import、
  * export ... from），检查：① 禁止边；② 传递依赖违规（按可达性，不只是直接 import）；

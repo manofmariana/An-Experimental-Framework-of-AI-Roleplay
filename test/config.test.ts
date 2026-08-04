@@ -1,24 +1,16 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
 import { describe, it } from "node:test";
 import {
   AGENT_KINDS,
-  DEFAULT_GM_INTERVAL_CYCLES,
   DEFAULT_WORLD_SET,
   listWorldSets,
-  PROJECT_ROOT,
-  resolveAgentConfigs,
-  resolveGmIntervalCycles,
-  resolveMemoryConfig,
   resolveWorldDir,
-  type FileConfig,
 } from "../src/config.js";
-import { ResolvedAgentConfigSchema } from "../src/contracts/config.js";
+import { resolveAgentConfigs } from "./harness/legacyConfigResolver.js";
 
 const NO_ENV: NodeJS.ProcessEnv = {};
 
-describe("resolveAgentConfigs（每 agent 独立配置，分层回落）", () => {
+describe("resolveAgentConfigs（旧 config.json 分层解析语义，迁移对拍基准）", () => {
   it("无 agents 块时三个 agent 全部回落到顶层", () => {
     const configs = resolveAgentConfigs(
       { api_key: "sk-top", base_url: "https://a.example", model: "m-top" },
@@ -147,43 +139,7 @@ describe("json_mode / reasoning_effort 分层解析（DeepSeek 场景）", () =>
   });
 });
 
-describe("resolveMemoryConfig（正文滑窗配置）", () => {
-  it("缺省 / 缺字段 → 默认 5", () => {
-    assert.deepEqual(resolveMemoryConfig({}), { proseWindowTurns: 5 });
-    assert.deepEqual(resolveMemoryConfig({ memory: {} }), { proseWindowTurns: 5 });
-  });
-
-  it("合法值生效；非法值回落默认", () => {
-    assert.deepEqual(resolveMemoryConfig({ memory: { prose_window_turns: 0 } }), {
-      proseWindowTurns: 0,
-    });
-    assert.deepEqual(resolveMemoryConfig({ memory: { prose_window_turns: 12 } }), {
-      proseWindowTurns: 12,
-    });
-    assert.deepEqual(
-      resolveMemoryConfig({ memory: { prose_window_turns: -1 } }),
-      { proseWindowTurns: 5 },
-    );
-    assert.deepEqual(
-      resolveMemoryConfig({ memory: { prose_window_turns: 1.5 } }),
-      { proseWindowTurns: 5 },
-    );
-  });
-});
-
-describe("resolveGmIntervalCycles（GM 硬保险间隔）", () => {
-  it("缺省 / 非法值 → 默认 3；合法值生效", () => {
-    assert.equal(resolveGmIntervalCycles({}), DEFAULT_GM_INTERVAL_CYCLES);
-    assert.equal(DEFAULT_GM_INTERVAL_CYCLES, 3);
-    assert.equal(resolveGmIntervalCycles({ gm_interval_cycles: 1 }), 1);
-    assert.equal(resolveGmIntervalCycles({ gm_interval_cycles: 10 }), 10);
-    assert.equal(resolveGmIntervalCycles({ gm_interval_cycles: 0 }), 3);
-    assert.equal(resolveGmIntervalCycles({ gm_interval_cycles: -1 }), 3);
-    assert.equal(resolveGmIntervalCycles({ gm_interval_cycles: 2.5 }), 3);
-  });
-});
-
-describe("世界设定集（data/worlds）", () => {
+describe("世界设定集（data/assets）", () => {
   it("listWorldSets 含示例集 baitan", () => {
     assert.ok(listWorldSets().includes("baitan"));
   });
@@ -193,22 +149,5 @@ describe("世界设定集（data/worlds）", () => {
     assert.ok(resolveWorldDir("baitan").endsWith("baitan"));
     assert.throws(() => resolveWorldDir("../etc"), /非法/);
     assert.throws(() => resolveWorldDir("no-such-set"), /不存在/);
-  });
-});
-
-describe("config.example.json（对外模板与契约对齐）", () => {
-  it("模板可被 FileConfig 现状解析，且三 agent 解析结果过 ResolvedAgentConfigSchema", () => {
-    const file = JSON.parse(
-      fs.readFileSync(path.join(PROJECT_ROOT, "config.example.json"), "utf8"),
-    ) as FileConfig;
-    const configs = resolveAgentConfigs(file, {})!;
-    assert.ok(configs, "模板自带示例 api_key，解析不应为 null");
-    for (const kind of AGENT_KINDS) {
-      ResolvedAgentConfigSchema.parse(configs[kind]);
-    }
-    // 模板分层语义：gm.reasoning_effort=high 覆盖顶层 medium
-    assert.equal(configs.character.reasoningEffort, "medium");
-    assert.equal(configs.gm.reasoningEffort, "high");
-    assert.equal(configs.prose.jsonMode, false);
   });
 });

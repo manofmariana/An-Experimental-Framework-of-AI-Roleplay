@@ -22,7 +22,7 @@ import { buildManifest } from "./builders/index.js";
 // 空 rules 短路；固定点收敛 + commit 恰好一次；签名重复/超迭代上限 → 弃稿报错。
 // ---------------------------------------------------------------------------
 
-const START = { y: 1, m: 1, d: 1, h: 0, min: 0 };
+const START = { y: 0, m: 1, d: 1, h: 0, min: 0 };
 
 function makeTruth(): TruthStores {
   return {

@@ -6,8 +6,6 @@ import { CharacterManifestSchema, type CharacterManifest } from "../src/agents/c
 import { PROSE_PLACEHOLDERS, type ProseContext } from "../src/agents/prose.js";
 import { compilePrompt, type PlaceholderRegistry } from "../src/compile/compiler.js";
 import type { PromptTemplate } from "../src/compile/template.js";
-// M2-b 批次 A：loop.ts 待批次 B 重写（simulator 已无 deriveGroups 导出，运行期无法链接），
-// 仅「六核心文件」套件跳过并走运行期占位；批次 B 恢复静态 import。
 import { readRecent, recordRecent } from "../src/llm/recent.js";
 import { resumeGameSession } from "../src/application/sessionFactory.js";
 import { reconcileGroups } from "../src/scheduler/simulator.js";
@@ -20,7 +18,7 @@ import { DecisionPackageSchema, SpanSchema, type LoreEntry } from "../src/types.
 import { tempDir } from "./harness/tempDir.js";
 
 
-const start = { y: 1, m: 1, d: 1, h: 0, min: 0 };
+const start = { y: 0, m: 1, d: 1, h: 0, min: 0 };
 const entry = (id: string, content = id): LoreEntry => ({ id, tags: [], content });
 const manifest = (id: string, isPlayer = false, timer: number | null = 0): CharacterManifest => ({
   id,
@@ -222,7 +220,7 @@ describe("Generation 内六核心文件 schema_version 一致性（存档 v6）"
     assert.ok(!fs.existsSync(path.join(genDir, "meta.json")));
   });
 
-  /** 断言 resume 抛 SaveLoadError 且 kind 命中 + 措辞正则（类型化加载错误，docs/optimization-review.md §7）。 */
+  /** 断言 resume 抛 SaveLoadError 且 kind 命中 + 措辞正则（类型化加载错误）。 */
   function expectResumeError(dir: string, kind: SaveLoadErrorKind, pattern: RegExp): void {
     assert.throws(
       () => resumeGameSession(configs, "audit", undefined, { baseDir: dir, proseWindowTurns: 5 }),

@@ -9,7 +9,7 @@ export function truncateEvents(events: Event[], targetSeq: number): Event[] { re
 /**
  * 事件 ID 水位：扫描 `evt_(\d+)` 最大数字后缀（无匹配归 0；非标准格式 id 忽略）。
  * 新事件 ID 分配必须用水位而非数组长度——删中段事件/直编事件表后长度会失真，
- * 水位保证续档/回溯/直编后新 ID 不与现存冲突（docs/optimization-review.md §7）。
+ * 水位保证续档/回溯/直编后新 ID 不与现存冲突。
  */
 export function scanEventWatermark(events: readonly Event[]): number {
   let max = 0;

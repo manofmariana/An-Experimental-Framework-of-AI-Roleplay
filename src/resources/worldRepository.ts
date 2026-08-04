@@ -1,10 +1,10 @@
 /**
- * 世界设定集仓储（优化阶段 D3，docs/optimization-review.md §9「服务端职责边界」迁移顺序步 5）。
+ * 世界设定集仓储。
  *
- * data/worlds/{setId}/ 三文件（setting.md / tone-card.md / lorebook.json）、角色 manifest
- * （player.json + characters/*.json）、提示词模板文件（promptsDir 下 {agent}.prompt.json）
- * 的读写，以及世界设定集列表/目录解析（canonical 实现——config.ts 的 listWorldSets/
- * resolveWorldDir 委托到此处，消除两份实现的漂移）。
+ * data/assets/{setId}/ 世界包：三文件（setting.md / tone-card.md / lorebook.json）、角色 manifest
+ * （player.json + characters/*.json）、包内提示词模板（prompts/{agent}.prompt.json，每包一份
+ * 完整副本，无全局默认）的读写，以及世界设定集列表/目录解析（canonical 实现——config.ts 的
+ * listWorldSets/resolveWorldDir 委托到此处，消除两份实现的漂移）。
  *
  * 全部函数显式接收目录参数（组成根经 UserDirectories 注入），本模块不 import config。
  * 结构校验（CharacterManifest/PromptTemplate zod schema 在 agents/compile，本层不可依赖）
@@ -134,8 +134,13 @@ export function writeCharacterManifest(worldDir: string, id: string, manifest: u
 }
 
 // ---------------------------------------------------------------------------
-// 提示词模板文件（promptsDir/{agent}.prompt.json；结构校验在 server 路由层）
+// 提示词模板文件（{packDir}/prompts/{agent}.prompt.json；结构校验在 server 路由层）
 // ---------------------------------------------------------------------------
+
+/** 包内提示词目录：{worldDir}/prompts/（每包三份完整副本，无全局默认）。 */
+export function packPromptsDir(worldDir: string): string {
+  return path.join(worldDir, "prompts");
+}
 
 /** 读模板文件全文（缺失 → 原生 fs 错误，HTTP 层 500）。 */
 export function readPromptFile(promptsDir: string, agent: string): string {

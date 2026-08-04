@@ -1,6 +1,5 @@
 /**
- * HTTP envelope 集成测试（优化阶段 D3，docs/optimization-review.md §9「HTTP envelope」
- * 「测试收敛」）：真实 HTTP（serverHarness + fetch）逐端点验证统一 envelope
+ * HTTP envelope 集成测试：真实 HTTP（serverHarness + fetch）逐端点验证统一 envelope
  * {ok:true,data} / {ok:false,error:{code,message,details?}} 与状态码矩阵
  * （400 BAD_JSON/VALIDATION_ERROR、404 UNKNOWN_ENDPOINT/RUN_NOT_FOUND/CHARACTER_NOT_FOUND/
  * WORLD_SET_NOT_FOUND/LEGACY_RUN_UNSUPPORTED、405 METHOD_NOT_ALLOWED+Allow、
@@ -79,28 +78,222 @@ describe("HTTP envelope：未知端点 / 405 / 静态回落", () => {
   });
 });
 
-describe("config 域", () => {
-  it("GET 缺文件 = 空对象；PUT 成功带 note 且落盘；BAD_JSON / VALIDATION_ERROR", async (t) => {
+describe("config 域（ConfigStateView + settings patch 事务）", () => {
+  it("GET 返回脱敏 ConfigStateView；PUT patch 带并发闸；BAD_JSON / VALIDATION_ERROR / CONFIG_REVISION_CONFLICT", async (t) => {
     const h = await serverHarness(t);
-    // GET：文件缺失 → 200 空对象
-    const empty = okData<Record<string, unknown>>(await callApi(h.port, "GET", "/api/config"));
-    assert.deepEqual(empty, {});
+    // GET：无 legacy config.json → 空三资源视图（不触发迁移）
+    const empty = okData<{ secrets: unknown; presets: unknown[]; settings: { configRevision: number } }>(
+      await callApi(h.port, "GET", "/api/config"),
+    );
+    assert.deepEqual(empty.secrets, {});
+    assert.deepEqual(empty.presets, []);
+    assert.equal(empty.settings.configRevision, 0);
+    assert.ok(!fs.existsSync(h.configFile), "无 config.json 时不产生迁移");
+
     // PUT：非法 JSON → 400 BAD_JSON
     failCode(await callApi(h.port, "PUT", "/api/config", undefined, "{bad"), 400, "BAD_JSON");
-    // PUT：字段校验失败 → 400 VALIDATION_ERROR
-    failCode(await callApi(h.port, "PUT", "/api/config", { gm_interval_cycles: 0 }), 400, "VALIDATION_ERROR");
-    failCode(await callApi(h.port, "PUT", "/api/config", { agents: { npc: {} } }), 400, "VALIDATION_ERROR");
-    // PUT：合法（含未知注释字段 passthrough）→ 200 note + 落盘
-    const saved = okData<{ note: string }>(
-      await callApi(h.port, "PUT", "/api/config", { model: "m-test", _说明: "注释" }),
+    // PUT：缺 baseConfigRevision / 旧整文件形状 / 非法值 → 400 VALIDATION_ERROR
+    failCode(await callApi(h.port, "PUT", "/api/config", { proseWindowTurns: 9 }), 400, "VALIDATION_ERROR");
+    failCode(await callApi(h.port, "PUT", "/api/config", { model: "m-test", baseConfigRevision: 0 }), 400, "VALIDATION_ERROR");
+    failCode(await callApi(h.port, "PUT", "/api/config", { gmIntervalCycles: 0, baseConfigRevision: 0 }), 400, "VALIDATION_ERROR");
+    // PUT：解析不出（未绑定 preset）→ 400 VALIDATION_ERROR（CONFIG_INVALID 映射），零落盘
+    failCode(
+      await callApi(h.port, "PUT", "/api/config", { proseWindowTurns: 9, baseConfigRevision: 0 }),
+      400,
+      "VALIDATION_ERROR",
     );
-    assert.equal(saved.note, "已保存，立即生效");
-    const onDisk = JSON.parse(fs.readFileSync(h.configFile, "utf8")) as Record<string, unknown>;
-    assert.equal(onDisk.model, "m-test");
-    assert.equal(onDisk._说明, "注释");
-    // GET 读回
-    const back = okData<Record<string, unknown>>(await callApi(h.port, "GET", "/api/config"));
-    assert.equal(back.model, "m-test");
+    assert.ok(!fs.existsSync(h.dirs.settingsFile), "解析失败不得落盘");
+  });
+
+  it("legacy config.json 经 GET 触发迁移：视图脱敏 + .bak + 后续 patch/冲突矩阵", async (t) => {
+    const h = await serverHarness(t);
+    const legacy = {
+      _说明: "注释",
+      api_key: "sk-integ-abcdef123456",
+      model: "m-top",
+      memory: { prose_window_turns: 7 },
+      gm_interval_cycles: 4,
+    };
+    fs.writeFileSync(h.configFile, JSON.stringify(legacy), "utf8");
+
+    const view = okData<{
+      secrets: { deepseek: { id: string; maskedValue: string; active: boolean }[] };
+      presets: { id: string }[];
+      settings: { configRevision: number; proseWindowTurns?: number; agentPresets?: Record<string, string> };
+    }>(await callApi(h.port, "GET", "/api/config"));
+    // 迁移落盘：原文件消失 + .bak 保留
+    assert.ok(!fs.existsSync(h.configFile));
+    assert.ok(fs.existsSync(`${h.configFile}.migrated.bak`));
+    assert.equal(view.settings.configRevision, 0);
+    assert.equal(view.settings.proseWindowTurns, 7);
+    assert.deepEqual(view.presets.map((p) => p.id), ["migrated-default"]);
+    assert.deepEqual(view.settings.agentPresets, {
+      character: "migrated-default",
+      gm: "migrated-default",
+      prose: "migrated-default",
+    });
+    assert.equal(view.secrets.deepseek[0]!.maskedValue, "****3456");
+
+    // PUT patch 成功 → 200 + 新 revision + 脱敏视图
+    const saved = okData<{ configRevision: number; view: { settings: { gmIntervalCycles?: number } } }>(
+      await callApi(h.port, "PUT", "/api/config", { gmIntervalCycles: 5, baseConfigRevision: 0 }),
+    );
+    assert.equal(saved.configRevision, 1);
+    assert.equal(saved.view.settings.gmIntervalCycles, 5);
+    // 版本冲突 → 409 CONFIG_REVISION_CONFLICT（details 附双值）
+    const conflict = await callApi(h.port, "PUT", "/api/config", { gmIntervalCycles: 6, baseConfigRevision: 0 });
+    failCode(conflict, 409, "CONFIG_REVISION_CONFLICT");
+    assert.deepEqual(conflict.json.error?.details, { baseConfigRevision: 0, currentConfigRevision: 1 });
+
+    // 无明文泄漏：全部公共响应不含原始 key
+    for (const path_ of ["/api/config", "/api/secrets", "/api/presets"]) {
+      const resp = await fetch(`http://127.0.0.1:${h.port}${path_}`);
+      assert.ok(!(await resp.text()).includes("sk-integ-abcdef123456"), `${path_} 不得含明文 key`);
+    }
+
+    // WS snapshot 同样不含明文 key（配置不进入会话下行载荷）
+    const ws = await h.connect();
+    ws.send({ type: "new_session", worldSetId: "w", requestId: "r-cfg" });
+    const snapshot = await ws.waitFor((m) => m.type === "snapshot");
+    assert.ok(!JSON.stringify(snapshot).includes("sk-integ-abcdef123456"), "WS snapshot 不得含明文 key");
+    ws.close();
+  });
+
+  it("secrets.json 损坏（故障注入）→ 500 INTERNAL_ERROR", async (t) => {
+    const h = await serverHarness(t);
+    fs.mkdirSync(path.dirname(h.dirs.secretsFile), { recursive: true });
+    fs.writeFileSync(h.dirs.secretsFile, "{bad json", "utf8");
+    failCode(await callApi(h.port, "GET", "/api/config"), 500, "INTERNAL_ERROR");
+  });
+});
+
+describe("secrets 域（端点矩阵）", () => {
+  /** 迁移出可操作基线（绑定 migrated-default + 一条 active key），返回当前 revision。 */
+  async function seedViaLegacy(h: ServerHarness, key = "sk-seed-aaaa9999"): Promise<number> {
+    fs.writeFileSync(h.configFile, JSON.stringify({ api_key: key, model: "m" }), "utf8");
+    const view = okData<{ settings: { configRevision: number } }>(await callApi(h.port, "GET", "/api/config"));
+    return view.settings.configRevision;
+  }
+
+  it("write/activate/rotate/rename/delete + 状态码矩阵 + view 403", async (t) => {
+    const h = await serverHarness(t);
+    let rev = await seedViaLegacy(h);
+
+    // write：新 key（inactive）
+    const written = okData<{ configRevision: number; view: { secrets: { deepseek: { id: string; active: boolean; maskedValue: string }[] } } }>(
+      await callApi(h.port, "POST", "/api/secrets", { kind: "deepseek", value: "sk-second-bbbb8888", label: "备", baseConfigRevision: rev }),
+    );
+    rev = written.configRevision;
+    const records = written.view.secrets.deepseek;
+    assert.equal(records.length, 2);
+    const second = records.find((r) => r.maskedValue === "****8888")!;
+    assert.equal(second.active, false);
+
+    // activate 第二把 → active 切换
+    const act = okData<{ configRevision: number; view: { secrets: { deepseek: { id: string; active: boolean }[] } } }>(
+      await callApi(h.port, "POST", `/api/secrets/deepseek/${second.id}/activate`, { baseConfigRevision: rev }),
+    );
+    rev = act.configRevision;
+    assert.equal(act.view.secrets.deepseek.find((r) => r.id === second.id)!.active, true);
+
+    // rotate：激活当前 active 的下一条（循环回第一把）
+    const rot = okData<{ configRevision: number; view: { secrets: { deepseek: { id: string; active: boolean }[] } } }>(
+      await callApi(h.port, "POST", `/api/secrets/deepseek/${second.id}/rotate`, { baseConfigRevision: rev }),
+    );
+    rev = rot.configRevision;
+    assert.equal(rot.view.secrets.deepseek.find((r) => r.id === second.id)!.active, false);
+
+    // rename
+    const ren = okData<{ configRevision: number; view: { secrets: { deepseek: { id: string; label: string }[] } } }>(
+      await callApi(h.port, "POST", `/api/secrets/deepseek/${second.id}/rename`, { label: "备用钥匙", baseConfigRevision: rev }),
+    );
+    rev = ren.configRevision;
+    assert.equal(ren.view.secrets.deepseek.find((r) => r.id === second.id)!.label, "备用钥匙");
+
+    // GET state：掩码，无明文
+    const state = await fetch(`http://127.0.0.1:${h.port}/api/secrets`);
+    const stateText = await state.text();
+    assert.ok(!stateText.includes("sk-second-bbbb8888"));
+    assert.ok(stateText.includes("****8888"));
+
+    // view：allowKeysExposure 未开启 → 403 FORBIDDEN
+    failCode(await callApi(h.port, "GET", `/api/secrets/deepseek/${second.id}/view`), 403, "FORBIDDEN");
+
+    // 404：不存在的 id
+    failCode(await callApi(h.port, "POST", `/api/secrets/deepseek/nope/activate`, { baseConfigRevision: rev }), 404, "SECRET_NOT_FOUND");
+    // 409：旧 revision
+    failCode(await callApi(h.port, "POST", `/api/secrets/deepseek/${second.id}/activate`, { baseConfigRevision: 0 }), 409, "CONFIG_REVISION_CONFLICT");
+    // 400：非法 kind / 缺字段
+    failCode(await callApi(h.port, "POST", "/api/secrets", { kind: "bad kind", value: "sk-x", label: "l", baseConfigRevision: rev }), 400, "VALIDATION_ERROR");
+    failCode(await callApi(h.port, "POST", "/api/secrets", { kind: "deepseek", label: "l", baseConfigRevision: rev }), 400, "VALIDATION_ERROR");
+
+    // delete：删 inactive 的第二把
+    const del = okData<{ configRevision: number; view: { secrets: { deepseek: { id: string }[] } } }>(
+      await callApi(h.port, "DELETE", `/api/secrets/deepseek/${second.id}`, { baseConfigRevision: rev }),
+    );
+    assert.equal(del.view.secrets.deepseek.length, 1);
+  });
+
+  it("删除最后一把 key → 400（CONFIG_INVALID 映射），secrets.json 原样", async (t) => {
+    const h = await serverHarness(t);
+    const rev = await seedViaLegacy(h);
+    const before = fs.readFileSync(h.dirs.secretsFile, "utf8");
+    failCode(
+      await callApi(h.port, "DELETE", "/api/secrets/deepseek/migrated-1", { baseConfigRevision: rev }),
+      400,
+      "VALIDATION_ERROR",
+    );
+    assert.equal(fs.readFileSync(h.dirs.secretsFile, "utf8"), before);
+  });
+});
+
+describe("presets 域（端点矩阵）", () => {
+  it("save（id 缺省 = 新建）/duplicate/delete；绑定中拒删 409 PRESET_IN_USE；404/409/400", async (t) => {
+    const h = await serverHarness(t);
+    fs.writeFileSync(h.configFile, JSON.stringify({ api_key: "sk-preset-cccc7777", model: "m" }), "utf8");
+    let rev = okData<{ settings: { configRevision: number } }>(await callApi(h.port, "GET", "/api/config")).settings.configRevision;
+
+    // GET 列表：迁移产物
+    const list = okData<{ id: string }[]>(await callApi(h.port, "GET", "/api/presets"));
+    assert.deepEqual(list.map((p) => p.id), ["migrated-default"]);
+
+    // save：新建（id 缺省由服务端生成）
+    const saved = okData<{ configRevision: number; view: { presets: { id: string; name: string }[] } }>(
+      await callApi(h.port, "POST", "/api/presets", {
+        preset: { name: "第二预设", provider: "deepseek", baseUrl: "https://api2.example.com", model: "m2", secretKind: "deepseek" },
+        baseConfigRevision: rev,
+      }),
+    );
+    rev = saved.configRevision;
+    assert.equal(saved.view.presets.length, 2);
+    const created = saved.view.presets.find((p) => p.name === "第二预设")!;
+    assert.ok(created.id.length > 0);
+
+    // duplicate migrated-default
+    const dup = okData<{ configRevision: number; view: { presets: { id: string; name: string }[] } }>(
+      await callApi(h.port, "POST", "/api/presets/migrated-default/duplicate", { baseConfigRevision: rev }),
+    );
+    rev = dup.configRevision;
+    const copy = dup.view.presets.find((p) => p.name === "migrated-default (副本)")!;
+    assert.ok(copy);
+
+    // delete 绑定中的 migrated-default → 409 PRESET_IN_USE
+    failCode(await callApi(h.port, "DELETE", "/api/presets/migrated-default", { baseConfigRevision: rev }), 409, "PRESET_IN_USE");
+    // delete 未绑定的副本 → 200
+    const del = okData<{ configRevision: number; view: { presets: { id: string }[] } }>(
+      await callApi(h.port, "DELETE", `/api/presets/${copy.id}`, { baseConfigRevision: rev }),
+    );
+    rev = del.configRevision;
+    assert.ok(!del.view.presets.some((p) => p.id === copy.id));
+    assert.ok(!fs.existsSync(path.join(h.dirs.presetsDir, `${copy.id}.json`)));
+
+    // 404：duplicate/delete 不存在的 id
+    failCode(await callApi(h.port, "POST", "/api/presets/nope/duplicate", { baseConfigRevision: rev }), 404, "PRESET_NOT_FOUND");
+    failCode(await callApi(h.port, "DELETE", "/api/presets/nope", { baseConfigRevision: rev }), 404, "PRESET_NOT_FOUND");
+    // 409：旧 revision
+    failCode(await callApi(h.port, "DELETE", `/api/presets/${created.id}`, { baseConfigRevision: 0 }), 409, "CONFIG_REVISION_CONFLICT");
+    // 400：preset 载荷非法
+    failCode(await callApi(h.port, "POST", "/api/presets", { preset: { name: "x" }, baseConfigRevision: rev }), 400, "VALIDATION_ERROR");
   });
 });
 
@@ -119,7 +312,7 @@ describe("world / characters 域", () => {
     );
     assert.equal(saved.note, "已保存，修改在新会话生效");
     assert.equal(
-      fs.readFileSync(path.join(h.dirs.worldsDir, "w", "setting.md"), "utf8"),
+      fs.readFileSync(path.join(h.dirs.assetsDir, "w", "setting.md"), "utf8"),
       "改写后的设定\n",
     );
     failCode(await callApi(h.port, "PUT", "/api/world/bogus?set=w", { content: "x" }), 404, "UNKNOWN_ENDPOINT");
@@ -144,7 +337,7 @@ describe("world / characters 域", () => {
 describe("sessions 域：产物读取错误矩阵", () => {
   it("列表 / 正常产物 / 未知产物 / RUN_NOT_FOUND / LEGACY / CORRUPT / 产物缺失", async (t) => {
     const h = await serverHarness(t);
-    const runsDir = h.dirs.runsDir;
+    const runsDir = h.dirs.saveDir;
     mkRun(runsDir, "run-ok");
     // 旧平铺档（无 CURRENT）
     fs.mkdirSync(path.join(runsDir, "run-legacy"), { recursive: true });
@@ -178,7 +371,7 @@ describe("sessions 域：产物读取错误矩阵", () => {
 
   it("rename / delete：别名写入回环、非法别名 400、不存在 404", async (t) => {
     const h = await serverHarness(t);
-    mkRun(h.dirs.runsDir, "run-a");
+    mkRun(h.dirs.saveDir, "run-a");
     const renamed = await callApi(h.port, "POST", "/api/sessions/run-a/rename", { alias: "灯塔之夜" });
     assert.equal(renamed.status, 200);
     assert.deepEqual(renamed.json, { ok: true, data: {} });
@@ -191,22 +384,28 @@ describe("sessions 域：产物读取错误矩阵", () => {
     failCode(await callApi(h.port, "DELETE", "/api/sessions/nope"), 404, "RUN_NOT_FOUND");
     const del = await callApi(h.port, "DELETE", "/api/sessions/run-a");
     assert.equal(del.status, 200);
-    assert.ok(!fs.existsSync(path.join(h.dirs.runsDir, "run-a")));
+    assert.ok(!fs.existsSync(path.join(h.dirs.saveDir, "run-a")));
   });
 });
 
 describe("prompts 域", () => {
-  it("placeholders 目录 200；模板文件缺失（故障注入）→ 500 INTERNAL_ERROR", async (t) => {
+  it("placeholders 目录 200；?set= 定位包内 prompts/（缺包 404；模板缺失 500）", async (t) => {
     const h = await serverHarness(t);
     const catalog = okData<{ agent: string }[]>(await callApi(h.port, "GET", "/api/prompts/placeholders"));
     assert.deepEqual(catalog.map((c) => c.agent), ["character", "gm", "prose"]);
-    // harness promptsDir 下无模板文件 → 未预期 fs 错误映射 500（不再一律 400）
-    failCode(await callApi(h.port, "GET", "/api/prompts"), 500, "INTERNAL_ERROR");
-    failCode(await callApi(h.port, "PUT", "/api/prompts/npc", { id: "npc", modules: [] }), 400, "VALIDATION_ERROR");
+    // ?set=w 命中 harness 包（setupWorld 已拷入三份模板）→ 200 三模板
+    const templates = okData<{ id: string }[]>(await callApi(h.port, "GET", "/api/prompts?set=w"));
+    assert.deepEqual(templates.map((tpl) => tpl.id), ["character", "gm", "prose"]);
+    // 不存在的包 → 404 WORLD_SET_NOT_FOUND
+    failCode(await callApi(h.port, "GET", "/api/prompts?set=nope"), 404, "WORLD_SET_NOT_FOUND");
+    // 包存在但无 prompts/ 模板文件 → 未预期 fs 错误映射 500（不再一律 400）
+    fs.mkdirSync(path.join(h.dirs.assetsDir, "bare"), { recursive: true });
+    failCode(await callApi(h.port, "GET", "/api/prompts?set=bare"), 500, "INTERNAL_ERROR");
+    failCode(await callApi(h.port, "PUT", "/api/prompts/npc?set=w", { id: "npc", modules: [] }), 400, "VALIDATION_ERROR");
   });
 });
 
-describe("HTTP mutation 与 WS transition 广播（D3 边界联证）", () => {
+describe("HTTP mutation 与 WS transition 广播（边界联证）", () => {
   it("直编成功 → WS 恰收一条 transition（admin_edit）；直编失败 → 无广播；删活跃会话 → 409 SESSION_ACTIVE", async (t) => {
     const h = await serverHarness(t);
     const ws = await h.connect();

@@ -3,7 +3,6 @@ import { describe, it } from "node:test";
 import { CHARACTER_PLACEHOLDERS, type CharacterContext } from "../src/agents/character.js";
 import { GM_PLACEHOLDERS, validateAdjudicationRound, type GmContext } from "../src/agents/gm.js";
 import type { GameSession } from "../src/application/gameSession.js";
-import { LEAVE_TIMER } from "../src/scheduler/simulator.js";
 import type { CharacterState } from "../src/truth/charactersStore.js";
 import { snapshotCharacterState, snapshotCharacterStates } from "../src/truth/snapshot.js";
 import { worldTimeToMinutes } from "../src/truth/timeStore.js";
@@ -33,8 +32,8 @@ function makeSession(
 
 // ---------------------------------------------------------------------------
 
-describe("中途 GM 的 timer 覆盖契约（同步组全体成员必须一并覆盖）", () => {
-  it("expectedGmTimerCids：同组全体成员（无论 timer 到期与否、甚至为 null）并入期望集；后台他组角色不进", async () => {
+describe("中途 GM 的 durations 覆盖契约（同步组全体成员必须一并覆盖）", () => {
+  it("expectedGmDurationCids：同组全体成员（无论 timer 到期与否、甚至为 null）并入期望集；后台他组角色不进", async () => {
     const worldId = `w-gt1-${process.pid}`;
     setupWorld(worldId, [
       { id: "C0", name: "玩家", location: "loc_A", timer: 0, isPlayer: true },
@@ -48,11 +47,11 @@ describe("中途 GM 的 timer 覆盖契约（同步组全体成员必须一并�
     assert.notEqual(charState(session, "C0").group, 0);
     const internals = session as unknown as {
       liveTruth(): unknown;
-      expectedGmTimerCids(truth: unknown, cids: string[]): string[];
+      expectedGmDurationCids(truth: unknown, cids: string[]): string[];
       characters: { setVars(cid: string, patch: { timer: number | null }): unknown };
     };
     const helper = (cids: string[]): string[] =>
-      internals.expectedGmTimerCids(internals.liveTruth(), cids);
+      internals.expectedGmDurationCids(internals.liveTruth(), cids);
     // 中途 GM 形态：工作集仅 C0 → 期望集含同组的 C1001，不含后台他组的 C1002
     assert.deepEqual(helper(["C0"]), ["C0", "C1001"]);
     // 覆盖以组成员身份为准而非到期状态：timer > clock 或 timer = null 的组成员同样必须被覆盖
@@ -74,8 +73,8 @@ describe("中途 GM 的 timer 覆盖契约（同步组全体成员必须一并�
     ]);
     const runId = `run-gt2-${process.pid}`;
     const session = makeSession(runId, worldId, [20, 5], [
-      gmPkg({ timer: [{ cid: "C0", span: { min: 5 } }] }), // 首次：只覆盖行动者 → 缺少 C1001，重试
-      gmPkg({ timer: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }] }), // 重试：精确覆盖
+      gmPkg({ durations: [{ cid: "C0", span: { min: 5 } }] }), // 首次：只覆盖行动者 → 缺少 C1001，重试
+      gmPkg({ durations: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }] }), // 重试：精确覆盖
     ]);
 
     // C0（先攻 25 独占一批）立 gm_request → 批完成 → 立即 GM（工作集仅 C0，C1001 同组未行动）
@@ -109,21 +108,21 @@ describe("中途 GM 的 timer 覆盖契约（同步组全体成员必须一并�
     assert.ok(gmPrompt.includes("@C0：已到期（已行动）"));
     assert.ok(gmPrompt.includes("@C1001：已到期（未行动）"));
     // 快照注入的 timer 为结构化时间（与世界时钟同形）
-    assert.ok(gmPrompt.includes('"timer":{"y":1,"m":1,"d":1,"h":0,"min":0}'), "快照 timer 不得是分钟标量");
+    assert.ok(gmPrompt.includes('"timer":{"y":0,"m":1,"d":1,"h":0,"min":0}'), "快照 timer 不得是分钟标量");
   });
 });
 
-describe("validateAdjudicationRound 文案与校验（基准集合 = 期望 timer 覆盖集）", () => {
+describe("validateAdjudicationRound 文案与校验（基准集合 = 期望 durations 覆盖集）", () => {
   const base = { events: [], narrativity: "skip", deltas: [], location: [] };
   it("缺少未行动在场成员 → 报缺少；多给后台他组角色 → 报越界", () => {
-    const onlyActor = AdjudicationPackageSchema.parse({ ...base, timer: [{ cid: "C0", span: { min: 5 } }] });
+    const onlyActor = AdjudicationPackageSchema.parse({ ...base, durations: [{ cid: "C0", span: { min: 5 } }] });
     assert.throws(
       () => validateAdjudicationRound(onlyActor, ["C0", "C1001"]),
       /必须精确覆盖同步组全体成员（含刚离组者）且不重复（缺少: C1001/,
     );
     const extraBackground = AdjudicationPackageSchema.parse({
       ...base,
-      timer: [
+      durations: [
         { cid: "C0", span: { min: 5 } },
         { cid: "C1001", span: { min: 5 } },
         { cid: "C1002", span: { min: 5 } },
@@ -136,13 +135,13 @@ describe("validateAdjudicationRound 文案与校验（基准集合 = 期望 time
     // location 校验基准同样随入参扩大：期望集内的未行动成员可设 location，集外不可
     const withLocation = AdjudicationPackageSchema.parse({
       ...base,
-      timer: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }],
+      durations: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }],
       location: [{ cid: "C1001", location: { name: "移位", level: 1 } }],
     });
     assert.doesNotThrow(() => validateAdjudicationRound(withLocation, ["C0", "C1001"]));
     const badLocation = AdjudicationPackageSchema.parse({
       ...base,
-      timer: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }],
+      durations: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }],
       location: [{ cid: "C1002", location: { name: "越界", level: 1 } }],
     });
     assert.throws(
@@ -164,7 +163,7 @@ function charCtx(selfCid: string, states: Record<string, CharacterState>): Chara
 }
 
 describe("快照注入的 timer 结构化渲染", () => {
-  it("snapshotCharacterState 三态：null / 正常分钟值 / LEAVE_TIMER；其余字段原样透传", () => {
+  it("snapshotCharacterState 两态：null / 正常分钟值；其余字段原样透传", () => {
     const base = state({ name: "甲", timer: null });
     assert.deepEqual(snapshotCharacterState(base), { ...base, timer: null });
 
@@ -172,19 +171,16 @@ describe("快照注入的 timer 结构化渲染", () => {
     const timed = state({ name: "乙", timer: minutes });
     assert.deepEqual(snapshotCharacterState(timed), { ...timed, timer: { y: 2, m: 3, d: 4, h: 5, min: 6 } });
 
-    const left = state({ name: "丙", timer: LEAVE_TIMER });
-    assert.deepEqual(snapshotCharacterState(left), { ...left, timer: "已离开待结算" });
-
-    const many = snapshotCharacterStates({ C1: timed, C2: left });
+    const many = snapshotCharacterStates({ C1: timed, C2: base });
     assert.deepEqual(many["C1"]!.timer, { y: 2, m: 3, d: 4, h: 5, min: 6 });
-    assert.equal(many["C2"]!.timer, "已离开待结算");
+    assert.equal(many["C2"]!.timer, null);
   });
 
   it("character_snapshot / characters_snapshot 占位符输出结构化 timer", () => {
     const minutes = worldTimeToMinutes({ y: 1, m: 1, d: 1, h: 6, min: 30 });
     const states: Record<string, CharacterState> = {
       C0: state({ name: "玩家", isPlayer: true, timer: minutes }),
-      C1001: state({ name: "甲", timer: LEAVE_TIMER }),
+      C1001: state({ name: "甲", timer: null }),
     };
     const selfSnap = JSON.parse(CHARACTER_PLACEHOLDERS.character_snapshot!.provide(charCtx("C0", states))) as {
       timer: unknown;
@@ -197,7 +193,7 @@ describe("快照注入的 timer 结构化渲染", () => {
     };
     const allSnap = JSON.parse(GM_PLACEHOLDERS.characters_snapshot!.provide(gmCtx)) as Record<string, { timer: unknown }>;
     assert.deepEqual(allSnap["C0"]!.timer, { y: 1, m: 1, d: 1, h: 6, min: 30 });
-    assert.equal(allSnap["C1001"]!.timer, "已离开待结算");
+    assert.equal(allSnap["C1001"]!.timer, null);
   });
 
   it("GM timers 占位符按 acted 区分标注；未到期与无计时器分支不变", () => {

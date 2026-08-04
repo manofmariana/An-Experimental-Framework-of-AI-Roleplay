@@ -1,5 +1,5 @@
 /**
- * LLM 最近轮次持久化（存档 v2 文件 6）：runs/{runId}/llm-recent/{agent}.json。
+ * LLM 最近轮次持久化（存档 v2 文件 6）：save/{runId}/llm-recent/{agent}.json。
  * 每对象一个文件（此处允许），只存该对象**亲身参与的最近 5 轮**
  * {seq, messages, reasoning}（滚动窗口）——替代旧 prompts/ 逐轮散文件。
  * 用途：将来的 LLM 日志界面；历史轮"提示词/思维链"按钮读此，

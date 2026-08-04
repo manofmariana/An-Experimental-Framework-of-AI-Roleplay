@@ -1,5 +1,5 @@
 /**
- * web/session-transport.js 单元测试（unit 层，优化阶段 D4「SessionTransport」）：
+ * web/session-transport.js 单元测试（unit 层）：
  * fake WebSocket + 假时钟注入，验证连接生命周期守卫——
  * 任意时刻至多一个有效 socket、一个 reconnect timer；旧 generation 回调一律丢弃；
  * 指数退避 1→2→4 封顶；dispose 后无重连；send 未连接返回 false。

@@ -1,5 +1,5 @@
 /**
- * 运行时端口（docs/optimization-review.md §11「最小测试端口」；无 DI 容器，构造参数注入）：
+ * 运行时端口（无 DI 容器，构造参数注入）：
  * 墙钟 / ID 生成 / 骰子。Clock.now() 仅现实时间（run ID、日志用），与 Truth 的 world.time 无关。
  */
 
@@ -15,7 +15,7 @@ export interface IdPorts {
   newRunId(): string;
 }
 
-/** 默认 run ID 生成器：run-{ISO 时间戳}（冒号/点转连字符，沿用现有格式）。 */
+/** 默认 run ID 生成器：run-{ISO 时间戳}（冒号/点转连字符）。 */
 export function createRunIdGenerator(clock: Clock = systemClock): IdPorts {
   return { newRunId: () => `run-${clock.now().toISOString().replace(/[:.]/g, "-")}` };
 }

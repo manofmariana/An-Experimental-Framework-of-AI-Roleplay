@@ -6,7 +6,6 @@ import type { ChatPort } from "../llm/chatPort.js";
 import type { CharacterState } from "../truth/charactersStore.js";
 import type { CastMember } from "../truth/identity.js";
 import { snapshotCharacterState } from "../truth/snapshot.js";
-import { LEAVE_TIMER } from "../scheduler/simulator.js";
 import { DecisionPackageSchema, InitiativeSchema, LocationSchema, type DecisionPackage } from "../types.js";
 import { extractJson } from "./json.js";
 import { runStructuredActivation } from "./structuredActivation.js";
@@ -59,7 +58,7 @@ export const CHARACTER_PLACEHOLDERS: PlaceholderRegistry<CharacterContext> = {
   time: { description: "结构时间机械渲染文本", provide: (context) => context.timeHeader },
   location: { description: "当前地点名", provide: (context) => self(context).location.name },
   /**
-   * 联系人列表（M2-b §5.3），两层规则：
+   * 联系人列表，两层规则：
    * 1. 整体可见性：本角色持有频道（channel !== null，邀请者/被邀请者在 contact 生效时即被分配频道）
    *    或正在应答邀请（incomingContact != null）时，整个名单不可见 → 直接返回空串；
    * 2. 条目过滤（防重入）：只列出后台（timer 未到期/无计时器）且未持有频道的其他角色——频道持有者已在通话中，不可被重复邀请。
@@ -71,7 +70,7 @@ export const CHARACTER_PLACEHOLDERS: PlaceholderRegistry<CharacterContext> = {
       return Object.entries(context.states).filter(([cid, state]) => cid !== context.selfCid && state.channel === null && (state.timer === null || state.timer > context.clock)).sort(([a], [b]) => a.localeCompare(b)).map(([cid, state]) => `- @${cid}`).join("\n");
     },
   },
-  /** 离场通知（M2-b §5.2）：本组中已离开且未结算的成员（timer=LEAVE_TIMER 且 initiative.group 仍指向本组） */
+  /** 离场通知：本组中已离开且未结算的成员（timer=null 且 initiative.group 仍指向本组） */
   departure_notices: {
     description: "本组未结算离场成员列表（可用 recall 标记召回）",
     provide: (context) => {
@@ -80,14 +79,14 @@ export const CHARACTER_PLACEHOLDERS: PlaceholderRegistry<CharacterContext> = {
       return Object.entries(context.states)
         .filter(([cid, state]) =>
           cid !== context.selfCid &&
-          state.timer !== null && state.timer >= LEAVE_TIMER &&
+          state.timer === null &&
           state.initiative?.group === group)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([cid]) => `@${cid} 离开了当前场景，如果不希望他离开，你可以使用 {"type":"recall","target":"${cid}"} 标记召回`)
         .join("\n");
     },
   },
-  /** 被联系通知（M2-b §5.3）：本角色被激活以应答一次邀请时注入；无待答邀请 = 空串 */
+  /** 被联系通知：本角色被激活以应答一次邀请时注入；无待答邀请 = 空串 */
   incoming_contact: {
     description: "待答邀请通知（邀请者 + 途径 + 接受/拒绝方式）",
     provide: (context) => context.incomingContact == null
@@ -97,16 +96,17 @@ export const CHARACTER_PLACEHOLDERS: PlaceholderRegistry<CharacterContext> = {
 };
 
 /**
- * 无状态角色 activation（docs/optimization-review.md §4）：构造只持 ChatPort，
- * 全量上下文由 application context builder（src/application/activationContexts.ts）
- * 逐调用从最新真相现算传入——实例不缓存 recentEvents/proseWindow/scene/clock/cast/
- * Store 引用等任何跨调用状态；一个实例服务全部 NPC，角色差异全在本次 Context。
+ * 无状态角色 activation：构造只持 ChatPort +
+ * 包内 promptsDir（会话级静态配置，非跨调用缓存），全量上下文由 application
+ * context builder（src/application/activationContexts.ts）逐调用从最新真相现算传入——
+ * 实例不缓存 recentEvents/proseWindow/scene/clock/cast/Store 引用等任何跨调用状态；
+ * 一个实例服务全部 NPC，角色差异全在本次 Context。
  */
 export class CharacterActivation {
-  constructor(private llm: ChatPort) {}
+  constructor(private llm: ChatPort, private promptsDir: string) {}
 
   async decide(context: CharacterContext, turn: number, signal: AbortSignal, display?: Display): Promise<{ raw: string; pkg: DecisionPackage }> {
-    const template = loadTemplate("character", Object.keys(CHARACTER_PLACEHOLDERS));
+    const template = loadTemplate("character", Object.keys(CHARACTER_PLACEHOLDERS), this.promptsDir);
     const messages = compilePrompt(template, CHARACTER_PLACEHOLDERS, context);
     const agentName = `character:${context.selfCid}`;
     return runStructuredActivation<DecisionPackage>({

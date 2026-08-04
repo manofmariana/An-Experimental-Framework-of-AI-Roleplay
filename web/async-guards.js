@@ -1,8 +1,8 @@
 /**
- * D5 四个竞态修复的可测纯逻辑（docs/optimization-review.md §10「异步请求生命周期」）：
+ * 四个竞态修复的可测纯逻辑：
  * 零 DOM 零网络——取数函数注入 apiFn，守卫为纯函数；页面层（sessions.js/play.js 及其 view）
  * 只负责把守卫接到真实 api 与 DOM 上。 AbortController 只停无用工作，最终正确性靠这里的
- * epoch/身份检查（与 §10 口径一致）。
+ * epoch/身份检查。
  *
  * 覆盖点：
  * - 竞态 1（会话详情 A/B 晚到互写）：createEpochGuard + fetchRunDetail（取数/渲染分离）；

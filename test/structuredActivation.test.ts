@@ -126,7 +126,7 @@ describe("runStructuredActivation", () => {
     const port = new ScriptedChatPort([result("bad"), result("good")]);
     const { pkg } = await runStructuredActivation<string>({
       port, agentName: "gm", seq: 1, messages, signal,
-      parse: (text) => { if (text === "bad") throw new Error("timer cid 必须精确覆盖"); return text; },
+      parse: (text) => { if (text === "bad") throw new Error("durations cid 必须精确覆盖"); return text; },
       failureLabel: "X 解析失败",
     });
     assert.equal(pkg, "good");
@@ -138,7 +138,7 @@ describe("runStructuredActivation", () => {
     assert.deepEqual(retryMessages.slice(0, messages.length), messages, "重试保留原 messages 前缀");
     const tail = retryMessages[retryMessages.length - 1]!;
     assert.equal(tail.role, "user");
-    assert.ok(tail.content.includes("timer cid 必须精确覆盖"), "尾部消息携带首次校验错误");
+    assert.ok(tail.content.includes("durations cid 必须精确覆盖"), "尾部消息携带首次校验错误");
     assert.ok(tail.content.includes("重新输出"), "尾部消息含重新输出指引");
   });
 

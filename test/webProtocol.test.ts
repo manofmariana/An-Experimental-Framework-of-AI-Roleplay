@@ -1,5 +1,5 @@
 /**
- * web/protocol.js createProtocol 单元测试（unit 层，优化阶段 D4）：
+ * web/protocol.js createProtocol 单元测试（unit 层）：
  * requestId 定向应答关联（并发互不消费、command_error 带 code reject）、
  * sendCommand 从 store 读 runId/revision 自动补身份（豁免口径）、未连接立即 reject、
  * snapshot/transition → store（needsResync 自动补 snapshot query）、流式身份校验后直通。

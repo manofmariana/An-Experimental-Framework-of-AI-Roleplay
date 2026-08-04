@@ -1,4 +1,4 @@
-export const SAVE_SCHEMA_VERSION = 7;
+export const SAVE_SCHEMA_VERSION = 8;
 
 /**
  * version 类加载错误的统一措辞（保留"请新建会话/重启服务"提示——

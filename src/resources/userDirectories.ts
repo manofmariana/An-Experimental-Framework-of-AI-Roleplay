@@ -1,12 +1,14 @@
 /**
- * 用户资源目录解析（优化阶段 A4，docs/optimization-review.md §8「用户数据根」）。
+ * 用户资源目录解析。
  *
  * 单用户阶段固定 handle 为 default_user，但所有资源路径从一开始都经
  * UserDirectories 集中提供，不在 endpoint/业务代码里散落硬编码。
  *
- * 本阶段保持兼容读取：worlds/runs/prompts 仍指向现行 legacy 位置
- * （data/worlds、runs、data/prompts），presetsDir/secretsFile/settingsFile
- * 只定义未来位置（data/<username>/ 下）——不创建目录、不读取。
+ * 布局（物理迁移已完成：旧 data/worlds、data/prompts、根 runs/ 已删除，无 legacy 回落）：
+ * - data/assets/{世界包}/：世界设定集（setting/tone-card/lorebook/time/player/characters/）
+ *   + 包内 prompts/（三份完整提示词副本，全局单例 prompts 目录已废）；
+ * - data/users/{username}/：secrets.json / api-presets/ / settings.json / save/
+ *   （save/ = 存档家目录，原项目根 runs/ 改名迁入户内）。
  *
  * 依赖方向：resources → shared（safeSegment）；config → resources（路径常量派生）。
  * resources 不得反向依赖 config（PROJECT_ROOT 在此自行定位，测试断言与 config 一致）。
@@ -23,17 +25,16 @@ export const DEFAULT_USERNAME = "default_user";
 
 /**
  * 一个用户的全部资源路径。字段含义：
- * - root：用户根（data/<username>/）——未来用户级资源的家；现阶段其下文件尚不存在；
- * - worldsDir / runsDir / promptsDir：现行 legacy 位置（本阶段不迁移数据）；
- * - presetsDir / secretsFile / settingsFile：未来 API 预设、密钥、用户设置的位置
- *   （docs §8 目标结构），现阶段仅定义路径，不创建、不读。
+ * - root：用户根（data/users/{username}/）——用户级资源的家；
+ * - assetsDir：世界资产根（data/assets/，用户间共享；每个世界包内自带 prompts/）；
+ * - saveDir：存档根（{root}/save/，原项目根 runs/ 改名迁入）；
+ * - presetsDir / secretsFile / settingsFile：API 预设、密钥、用户设置（root 下三资源）。
  */
 export interface UserDirectories {
   username: string;
   root: string;
-  worldsDir: string;
-  runsDir: string;
-  promptsDir: string;
+  assetsDir: string;
+  saveDir: string;
   presetsDir: string;
   secretsFile: string;
   settingsFile: string;
@@ -46,15 +47,12 @@ export interface UserDirectories {
 export function resolveUserDirectories(username: string = DEFAULT_USERNAME): UserDirectories {
   const user = safeSegment(username);
   if (!/^[\w-]+$/.test(user)) throw new Error(`非法用户名: ${JSON.stringify(username)}`);
-  const root = path.join(PROJECT_ROOT, "data", user);
+  const root = path.join(PROJECT_ROOT, "data", "users", user);
   return {
     username: user,
     root,
-    // legacy 映射：现行位置（兼容读取，不迁移）
-    worldsDir: path.join(PROJECT_ROOT, "data", "worlds"),
-    runsDir: path.join(PROJECT_ROOT, "runs"),
-    promptsDir: path.join(PROJECT_ROOT, "data", "prompts"),
-    // 未来位置：仅定义，不创建不读
+    assetsDir: path.join(PROJECT_ROOT, "data", "assets"),
+    saveDir: path.join(root, "save"),
     presetsDir: path.join(root, "api-presets"),
     secretsFile: path.join(root, "secrets.json"),
     settingsFile: path.join(root, "settings.json"),

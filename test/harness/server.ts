@@ -1,5 +1,5 @@
 /**
- * 服务端集成测试 harness（优化阶段 D2）：tempDir + fake SessionFactory（真实
+ * 服务端集成测试 harness：tempDir + fake SessionFactory（真实
  * GameSession + DeferredChatPort）+ 随机端口真实 http/ws 服务 + 真实 ws 客户端 helper。
  * 与 SessionHarness 组合（复用其世界设定集构造与 SessionOptions 基座），
  * LLM 端口换成 DeferredChatPort（挂起/手动完成/abort 语义由测试控制）。
@@ -20,6 +20,7 @@ import type { ChatPort } from "../../src/llm/chatPort.js";
 import type { AgentKind } from "../../src/config.js";
 import { resolveUserDirectories, type UserDirectories } from "../../src/resources/userDirectories.js";
 import { startServer } from "../../src/server/index.js";
+import { resolveServerConfig, type ResolvedServerConfig } from "../../src/serverConfig.js";
 import { DeferredChatPort } from "../fakes/deferredChatPort.js";
 import { SessionHarness, type CharSpec } from "./session.js";
 
@@ -33,13 +34,13 @@ export interface WsClient {
 }
 
 export interface ServerHarness {
-  /** 会话装配基座（临时 runs/worlds、世界设定集构造、骰子队列）。 */
+  /** 会话装配基座（临时 save/assets、世界包构造、骰子队列）。 */
   readonly sessions: SessionHarness;
   readonly coordinator: SessionCoordinator;
   readonly deferred: DeferredChatPort;
   readonly server: Server;
   readonly port: number;
-  /** 注入给 HTTP 层的用户资源目录（临时 runs/worlds/prompts，不触碰真实用户数据）。 */
+  /** 注入给 HTTP 层的用户资源目录（临时 assets/save + 三配置资源，不触碰真实用户数据）。 */
   readonly dirs: UserDirectories;
   /** 注入的临时 config.json 路径（HTTP config 域读写目标）。 */
   readonly configFile: string;
@@ -55,7 +56,7 @@ let runCounter = 0;
  */
 export async function serverHarness(
   t: TestContext,
-  opts?: { worldId?: string; chars?: CharSpec[]; dice?: number[] },
+  opts?: { worldId?: string; chars?: CharSpec[]; dice?: number[]; serverConfig?: ResolvedServerConfig },
 ): Promise<ServerHarness> {
   const sessions = new SessionHarness("airp-server-");
   const worldId = opts?.worldId ?? "w";
@@ -88,16 +89,30 @@ export async function serverHarness(
     factory,
   );
 
-  // HTTP 层资源目录全部指向临时根（D3：startServer 注入 UserDirectories/configFile，测试不触碰真实用户数据）
+  // HTTP 层资源目录全部指向临时根（startServer 注入 UserDirectories/configFile，测试不触碰真实用户数据；
+  // presetsDir/secretsFile/settingsFile 同样入临时根——config/secrets/presets 域真实读写）
+  const userRoot = path.join(sessions.root, "users", "test_user");
   const dirs: UserDirectories = {
     ...resolveUserDirectories(),
-    runsDir: sessions.runsDir,
-    worldsDir: sessions.worldsDir,
-    promptsDir: path.join(sessions.root, "prompts"),
+    username: "test_user",
+    root: userRoot,
+    assetsDir: sessions.assetsDir,
+    saveDir: sessions.saveDir,
+    presetsDir: path.join(userRoot, "api-presets"),
+    secretsFile: path.join(userRoot, "secrets.json"),
+    settingsFile: path.join(userRoot, "settings.json"),
   };
   const configFile = path.join(sessions.root, "config.json");
 
-  const server = startServer({ host: "127.0.0.1", port: 0, coordinator, dirs, configFile });
+  const server = startServer({
+    host: "127.0.0.1",
+    port: 0,
+    coordinator,
+    dirs,
+    configFile,
+    // 注入解析后服务端配置（缺省 = 纯默认 loopback 放开，空 env——不读真实 server.json、不吃 OFAIR_* 环境变量）
+    serverConfig: opts?.serverConfig ?? resolveServerConfig(null, {}),
+  });
   await once(server, "listening");
   const port = (server.address() as AddressInfo).port;
 
