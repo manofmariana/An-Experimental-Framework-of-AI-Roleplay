@@ -1,8 +1,8 @@
-import { makeVarChange, type VarChange } from "./worldStore.js";
+import { makeVarChange, type VarChange } from "./varChanges.js";
 
 /**
- * 状态树叶级 diff（状态直编并入 var_changes 用）：对比替换前后的两棵变量树，
- * 产出与现有 var_changes 相同路径约定的变更记录（characters 域 `C1001.timer`、
+ * 状态树叶级 diff（状态直编并入当前步 StepChanges.effects 用）：对比替换前后的两棵变量树，
+ * 产出与 StepChanges 相同路径约定的变更记录（characters 域 `characters.C1001.timer`、
  * world 域 `world.region.harbor.fog`；数组按索引，如 `long_term_memory.3`）。
  *
  * 三类差异：

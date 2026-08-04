@@ -5,7 +5,7 @@ import { diffStateTrees } from "../src/truth/varDiff.js";
 // ---------------------------------------------------------------------------
 // diffStateTrees 纯函数单测：值变化 / 路径新增（before_exists=false）/
 // 路径删除（after_exists=false）/ 嵌套 / 数组按索引（长度差 = 尾部新增/删除）。
-// 路径约定与 var_changes 一致：world 域 "world.x"、characters 域空前缀 "C1001.x"。
+// 路径约定与 var_changes 一致：world 域 "world.x"、characters 域 "characters.C1001.x"。
 // ---------------------------------------------------------------------------
 
 describe("diffStateTrees（状态树叶级 diff）", () => {
@@ -84,12 +84,12 @@ describe("diffStateTrees（状态树叶级 diff）", () => {
     ]);
   });
 
-  it("characters 域空前缀：首段即 CID（C1001.timer 约定）", () => {
+  it("characters 域真相根前缀：characters.C1001.timer 约定", () => {
     const oldChars = { C1001: { timer: 10, vars: { hp: 1 } } };
     const newChars = { C1001: { timer: 20, vars: { hp: 1, mp: 3 } } };
-    assert.deepEqual(diffStateTrees(oldChars, newChars, ""), [
-      { path: "C1001.timer", before: 10, after: 20 },
-      { path: "C1001.vars.mp", before: null, after: 3, before_exists: false },
+    assert.deepEqual(diffStateTrees(oldChars, newChars, "characters"), [
+      { path: "characters.C1001.timer", before: 10, after: 20 },
+      { path: "characters.C1001.vars.mp", before: null, after: 3, before_exists: false },
     ]);
   });
 

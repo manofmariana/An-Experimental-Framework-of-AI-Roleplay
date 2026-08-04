@@ -5,68 +5,75 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { describe, it } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { validateFileConfig } from "../src/contracts/config.js";
 import {
-  handleApi,
   listRuns,
-  placeholdersCatalog,
-  readPromptTemplates,
   readRunArtifact,
+  RunRepositoryError,
+} from "../src/resources/runRepository.js";
+import {
   characterManifestFile,
   listCharacterManifests,
-  validateCharacterManifestForPath,
-  validateConfigPayload,
   validateLorebookPayload,
+} from "../src/resources/worldRepository.js";
+import { resolveUserDirectories } from "../src/resources/userDirectories.js";
+import { createApiHandler, type ApiDeps } from "../src/server/http/router.js";
+import { validateCharacterManifestForPath } from "../src/server/http/routes/characters.js";
+import {
+  placeholdersCatalog,
+  readPromptTemplates,
   validatePromptPayload,
-} from "../src/server/api.js";
+} from "../src/server/http/routes/prompts.js";
+import { PROMPTS_DIR } from "../src/config.js";
 import { safeSegment } from "../src/shared/safeSegment.js";
 import { Lorebook } from "../src/truth/lorebook.js";
 import { CharacterManifestSchema } from "../src/agents/character.js";
 import { SAVE_SCHEMA_VERSION } from "../src/truth/saveSchema.js";
-import type { SessionManager } from "../src/server/sessionManager.js";
+import type { SessionCoordinator } from "../src/application/sessionCoordinator.js";
 import { tempDir } from "./harness/tempDir.js";
 
-describe("validateConfigPayload", () => {
+describe("validateFileConfig（contracts FileConfigSchema，D3 取代手工字段表）", () => {
   it("合法结构通过并保留未知注释字段", () => {
     const raw = {
       _说明: "注释",
       api_key: "sk-x",
       agents: { character: { model: "m" }, gm: {}, prose: { api_key: "sk-y" } },
     };
-    const out = validateConfigPayload(raw);
+    const out = validateFileConfig(raw);
     assert.equal(out._说明, "注释");
     assert.deepEqual(out.agents, raw.agents);
   });
 
   it("非法结构拒绝", () => {
-    assert.throws(() => validateConfigPayload(null), /JSON 对象/);
-    assert.throws(() => validateConfigPayload([]), /JSON 对象/);
-    assert.throws(() => validateConfigPayload({ api_key: 123 }), /api_key/);
-    assert.throws(() => validateConfigPayload({ agents: [] }), /agents/);
-    assert.throws(() => validateConfigPayload({ agents: { npc: {} } }), /未知 agent/);
-    assert.throws(() => validateConfigPayload({ agents: { gm: { timeout: 5 } } }), /未知字段/);
-    assert.throws(() => validateConfigPayload({ agents: { gm: { model: 1 } } }), /必须是字符串/);
+    assert.throws(() => validateFileConfig(null), /JSON 对象/);
+    assert.throws(() => validateFileConfig([]), /JSON 对象/);
+    assert.throws(() => validateFileConfig({ api_key: 123 }), /api_key/);
+    assert.throws(() => validateFileConfig({ agents: [] }), /agents/);
+    assert.throws(() => validateFileConfig({ agents: { npc: {} } }), /npc/);
+    assert.throws(() => validateFileConfig({ agents: { gm: { timeout: 5 } } }), /timeout/);
+    assert.throws(() => validateFileConfig({ agents: { gm: { model: 1 } } }), /agents\.gm\.model/);
   });
 
   it("memory 块：合法通过，非法拒绝", () => {
-    const ok = validateConfigPayload({ memory: { prose_window_turns: 5 } });
+    const ok = validateFileConfig({ memory: { prose_window_turns: 5 } });
     assert.deepEqual(ok.memory, { prose_window_turns: 5 });
-    assert.throws(() => validateConfigPayload({ memory: [] }), /memory 必须是对象/);
-    assert.throws(() => validateConfigPayload({ memory: { foo: 1 } }), /未知字段/);
-    assert.throws(() => validateConfigPayload({ memory: { prose_window_turns: "5" } }), /非负整数/);
-    assert.throws(() => validateConfigPayload({ memory: { prose_window_turns: -1 } }), /非负整数/);
-    assert.throws(() => validateConfigPayload({ memory: { prose_window_turns: 1.5 } }), /非负整数/);
+    assert.throws(() => validateFileConfig({ memory: [] }), /memory/);
+    assert.throws(() => validateFileConfig({ memory: { foo: 1 } }), /foo/);
+    assert.throws(() => validateFileConfig({ memory: { prose_window_turns: "5" } }), /prose_window_turns/);
+    assert.throws(() => validateFileConfig({ memory: { prose_window_turns: -1 } }), /prose_window_turns/);
+    assert.throws(() => validateFileConfig({ memory: { prose_window_turns: 1.5 } }), /prose_window_turns/);
   });
 
   it("gm_interval_cycles：≥1 整数通过，非法拒绝", () => {
-    assert.equal(validateConfigPayload({ gm_interval_cycles: 5 }).gm_interval_cycles, 5);
-    assert.throws(() => validateConfigPayload({ gm_interval_cycles: 0 }), /gm_interval_cycles/);
-    assert.throws(() => validateConfigPayload({ gm_interval_cycles: -2 }), /gm_interval_cycles/);
-    assert.throws(() => validateConfigPayload({ gm_interval_cycles: 1.5 }), /gm_interval_cycles/);
-    assert.throws(() => validateConfigPayload({ gm_interval_cycles: "3" }), /gm_interval_cycles/);
+    assert.equal(validateFileConfig({ gm_interval_cycles: 5 }).gm_interval_cycles, 5);
+    assert.throws(() => validateFileConfig({ gm_interval_cycles: 0 }), /gm_interval_cycles/);
+    assert.throws(() => validateFileConfig({ gm_interval_cycles: -2 }), /gm_interval_cycles/);
+    assert.throws(() => validateFileConfig({ gm_interval_cycles: 1.5 }), /gm_interval_cycles/);
+    assert.throws(() => validateFileConfig({ gm_interval_cycles: "3" }), /gm_interval_cycles/);
   });
 
   it("json_mode / reasoning_effort：顶层与 agents 块同规校验", () => {
-    const ok = validateConfigPayload({
+    const ok = validateFileConfig({
       json_mode: true,
       reasoning_effort: "high",
       agents: { gm: { json_mode: false, reasoning_effort: "minimal" } },
@@ -74,20 +81,14 @@ describe("validateConfigPayload", () => {
     assert.equal(ok.json_mode, true);
     assert.equal(ok.reasoning_effort, "high");
     // json_mode 必须 boolean
-    assert.throws(() => validateConfigPayload({ json_mode: "true" }), /json_mode 必须是布尔值/);
-    assert.throws(() => validateConfigPayload({ json_mode: 1 }), /json_mode 必须是布尔值/);
-    assert.throws(
-      () => validateConfigPayload({ agents: { gm: { json_mode: "yes" } } }),
-      /agents\.gm\.json_mode 必须是布尔值/,
-    );
+    assert.throws(() => validateFileConfig({ json_mode: "true" }), /json_mode/);
+    assert.throws(() => validateFileConfig({ json_mode: 1 }), /json_mode/);
+    assert.throws(() => validateFileConfig({ agents: { gm: { json_mode: "yes" } } }), /agents\.gm\.json_mode/);
     // reasoning_effort 必须 string
+    assert.throws(() => validateFileConfig({ reasoning_effort: 5 }), /reasoning_effort/);
     assert.throws(
-      () => validateConfigPayload({ reasoning_effort: 5 }),
-      /reasoning_effort 必须是字符串/,
-    );
-    assert.throws(
-      () => validateConfigPayload({ agents: { prose: { reasoning_effort: true } } }),
-      /agents\.prose\.reasoning_effort 必须是字符串/,
+      () => validateFileConfig({ agents: { prose: { reasoning_effort: true } } }),
+      /agents\.prose\.reasoning_effort/,
     );
   });
 });
@@ -126,19 +127,21 @@ describe("safeSegment（路径安全）", () => {
   });
 });
 
-describe("listRuns / readRunArtifact（存档 v2 产物）", () => {
-  it("只认目录、按 mtime 倒序；五文件 + stats 读取回环", () => {
+describe("listRuns / readRunArtifact（存档 v7 Generation 布局）", () => {
+  it("只认目录、按 mtime 倒序；Generation 内五文件 + run 根 stats 读取回环", () => {
     const dir = tempDir("airp-runs-");
     // readRunArtifact 是纯读取（不校验版本），fixture 跟随当前 SAVE_SCHEMA_VERSION
     const v = SAVE_SCHEMA_VERSION;
     const mk = (id: string, mtime: Date) => {
       const d = path.join(dir, id);
-      fs.mkdirSync(d);
-      fs.writeFileSync(path.join(d, "events.json"), `{"schema_version":${v},"events":[{"id":"evt_1","t":0,"seq":3}]}`);
-      fs.writeFileSync(path.join(d, "world.json"), `{"schema_version":${v},"world":{"time":{"y":1,"m":1,"d":1,"h":0,"min":5},"weather":"雾"},"pipeline":{"seq":3,"phase":"await_player","working_set":[],"current":null}}`);
-      fs.writeFileSync(path.join(d, "characters.json"), `{"schema_version":${v},"characters":{"C1001":{"name":"林雾","gender":"女","age":"26","personality":"寡言谨慎。","tags":[],"reaction":0,"location":{"name":"灯塔","level":1},"timer":5,"group":0,"initiative":null,"channel":null,"acted":false,"level":1,"isPlayer":false,"relations":{},"long_term_memory":[],"vars":{}}}}`);
-      fs.writeFileSync(path.join(d, "archive.json"), `{"schema_version":${v},"entries":[{"seq":1,"kind":"player","result":{"input":"你好"},"var_changes":[]}]}`);
-      fs.writeFileSync(path.join(d, "lore.json"), `{"schema_version":${v},"entries":[],"changelog":[]}`);
+      const gen = path.join(d, "generations", "000001");
+      fs.mkdirSync(gen, { recursive: true });
+      fs.writeFileSync(path.join(d, "CURRENT"), "000001");
+      fs.writeFileSync(path.join(gen, "events.json"), `{"schema_version":${v},"events":[{"id":"evt_1","t":0,"seq":3}]}`);
+      fs.writeFileSync(path.join(gen, "world.json"), `{"schema_version":${v},"world":{"time":{"y":1,"m":1,"d":1,"h":0,"min":5},"weather":"雾"},"pipeline":{"seq":3,"working_set":[],"current":null}}`);
+      fs.writeFileSync(path.join(gen, "characters.json"), `{"schema_version":${v},"characters":{"C1001":{"name":"林雾","gender":"女","age":"26","personality":"寡言谨慎。","tags":[],"reaction":0,"location":{"name":"灯塔","level":1},"timer":5,"group":0,"initiative":null,"channel":null,"acted":false,"level":1,"isPlayer":false,"relations":{},"long_term_memory":[],"vars":{}}}}`);
+      fs.writeFileSync(path.join(gen, "archive.json"), `{"schema_version":${v},"entries":[{"seq":1,"kind":"player","result":{"input":"你好"},"changes":{"setup":[],"effects":[]}}]}`);
+      fs.writeFileSync(path.join(gen, "lore.json"), `{"schema_version":${v},"entries":[],"changelog":[]}`);
       fs.utimesSync(d, mtime, mtime);
     };
     mk("run-old", new Date(2020, 0, 1));
@@ -166,6 +169,43 @@ describe("listRuns / readRunArtifact（存档 v2 产物）", () => {
     assert.throws(() => readRunArtifact(dir, "..", "events"), /非法名称/);
   });
 
+  it("D3 清理：不存在/旧平铺档/损坏/产物缺失 → 类型化错误（无 readJson fallback、无平铺回落）", () => {
+    const dir = tempDir("airp-runs-err-");
+    const codeOf = (fn: () => unknown) => {
+      try {
+        fn();
+      } catch (err) {
+        assert.ok(err instanceof RunRepositoryError);
+        return err.code;
+      }
+      throw new Error("应抛错");
+    };
+    // 存档目录不存在 → RUN_NOT_FOUND
+    assert.equal(codeOf(() => readRunArtifact(dir, "nope", "events")), "RUN_NOT_FOUND");
+    // 旧平铺档（无 CURRENT）→ LEGACY_RUN_UNSUPPORTED
+    const legacy = path.join(dir, "run-legacy");
+    fs.mkdirSync(legacy, { recursive: true });
+    fs.writeFileSync(path.join(legacy, "events.json"), `{"schema_version":1,"events":[]}`);
+    assert.equal(codeOf(() => readRunArtifact(dir, "run-legacy", "events")), "LEGACY_RUN_UNSUPPORTED");
+    // CURRENT 非数字 → RUN_CORRUPT
+    const badPtr = path.join(dir, "run-bad-ptr");
+    fs.mkdirSync(badPtr, { recursive: true });
+    fs.writeFileSync(path.join(badPtr, "CURRENT"), "abc");
+    assert.equal(codeOf(() => readRunArtifact(dir, "run-bad-ptr", "events")), "RUN_CORRUPT");
+    // 目标文件缺失 → RUN_NOT_FOUND
+    const missing = path.join(dir, "run-missing");
+    fs.mkdirSync(path.join(missing, "generations", "000001"), { recursive: true });
+    fs.writeFileSync(path.join(missing, "CURRENT"), "000001");
+    assert.equal(codeOf(() => readRunArtifact(dir, "run-missing", "events")), "RUN_NOT_FOUND");
+    // JSON 损坏 → RUN_CORRUPT
+    const corrupt = path.join(dir, "run-corrupt");
+    const corruptGen = path.join(corrupt, "generations", "000001");
+    fs.mkdirSync(corruptGen, { recursive: true });
+    fs.writeFileSync(path.join(corrupt, "CURRENT"), "000001");
+    fs.writeFileSync(path.join(corruptGen, "events.json"), "{bad json");
+    assert.equal(codeOf(() => readRunArtifact(dir, "run-corrupt", "events")), "RUN_CORRUPT");
+  });
+
   it("不存在的 runs 目录返回空列表", () => {
     assert.deepEqual(listRuns(path.join(os.tmpdir(), "airp-no-such-dir")), []);
   });
@@ -173,7 +213,7 @@ describe("listRuns / readRunArtifact（存档 v2 产物）", () => {
 
 describe("prompts API（提示词模板端点的纯逻辑）", () => {
   it("readPromptTemplates：三个出厂模板结构完整", () => {
-    const templates = readPromptTemplates();
+    const templates = readPromptTemplates(PROMPTS_DIR);
     assert.deepEqual(
       templates.map((t) => t.id),
       ["character", "gm", "prose"],
@@ -294,14 +334,19 @@ describe("lorebook 读写回环", () => {
 });
 
 // ---------------------------------------------------------------------------
-// PUT /api/session/state（状态栏直接编辑端点）：薄壳转发 SessionManager.applyDirectEdit，
-// busy/校验失败 → 400 + 错误消息。GameSession 层行为见 test/directEdit.test.ts。
+// PUT /api/session/state（状态栏直接编辑端点）：路由层薄壳转发 SessionCoordinator.applyDirectEdit。
+// envelope：成功 200 {ok:true,data:{note}}；LLM 在途 409 SESSION_BUSY；域校验失败 400 VALIDATION_ERROR。
+// GameSession 层行为见 test/directEdit.test.ts；真实 HTTP + transition 广播见 test/httpEnvelope.test.ts。
 // ---------------------------------------------------------------------------
 
-function mockPut(url: string, body: unknown): { req: IncomingMessage; res: ServerResponse; out: { status: number; text: string } } {
-  const req = Readable.from([Buffer.from(JSON.stringify(body))]) as unknown as IncomingMessage;
-  req.method = "PUT";
+function mockReq(method: string, url: string, body?: unknown): IncomingMessage {
+  const req = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]) as unknown as IncomingMessage;
+  req.method = method;
   req.url = url;
+  return req;
+}
+
+function mockRes(): { res: ServerResponse; out: { status: number; text: string } } {
   const out = { status: 0, text: "" };
   const res = {
     writeHead(code: number) {
@@ -312,46 +357,55 @@ function mockPut(url: string, body: unknown): { req: IncomingMessage; res: Serve
       out.text = data ?? "";
     },
   } as unknown as ServerResponse;
-  return { req, res, out };
+  return { res, out };
 }
 
-describe("PUT /api/session/state（直接编辑端点）", () => {
-  it("正常路径：payload 原样转发 applyDirectEdit，返回 200", async () => {
+function stubDeps(applyDirectEdit: (payload: unknown) => void): ApiDeps {
+  return {
+    coordinator: { applyDirectEdit } as unknown as SessionCoordinator,
+    dirs: resolveUserDirectories(),
+    configFile: path.join(tempDir("airp-cfg-"), "config.json"),
+  };
+}
+
+describe("PUT /api/session/state（直接编辑端点，envelope）", () => {
+  it("正常路径：payload 原样转发 applyDirectEdit，返回 200 + note", async () => {
     let captured: unknown = null;
-    const manager = {
-      applyDirectEdit(payload: unknown) {
-        captured = payload;
-      },
-    } as unknown as SessionManager;
+    const handleApi = createApiHandler(stubDeps((payload) => {
+      captured = payload;
+    }));
     const body = { world: { time: { y: 1, m: 1, d: 1, h: 0, min: 0 }, hp: 1 }, characters: {}, events: [] };
-    const { req, res, out } = mockPut("/api/session/state", body);
-    assert.equal(await handleApi(req, res, manager), true);
+    const { res, out } = mockRes();
+    assert.equal(await handleApi(mockReq("PUT", "/api/session/state", body), res), true);
     assert.equal(out.status, 200);
     assert.deepEqual(captured, body);
-    assert.deepEqual(JSON.parse(out.text), { ok: true, note: "已保存，立即生效" });
+    assert.deepEqual(JSON.parse(out.text), { ok: true, data: { note: "已保存，立即生效" } });
   });
 
-  it("校验/忙碌失败：applyDirectEdit 抛错 → 400 + 错误消息", async () => {
-    const manager = {
-      applyDirectEdit(): void {
+  it("忙碌失败：applyDirectEdit 抛「LLM 运行中」→ 409 SESSION_BUSY", async () => {
+    const handleApi = createApiHandler(
+      stubDeps(() => {
         throw new Error("LLM 运行中：请等待当前生成结束后再直接编辑");
-      },
-    } as unknown as SessionManager;
-    const { req, res, out } = mockPut("/api/session/state", { events: [] });
-    assert.equal(await handleApi(req, res, manager), true);
-    assert.equal(out.status, 400);
-    assert.match((JSON.parse(out.text) as { error: string }).error, /运行中/);
+      }),
+    );
+    const { res, out } = mockRes();
+    assert.equal(await handleApi(mockReq("PUT", "/api/session/state", { events: [] }), res), true);
+    assert.equal(out.status, 409);
+    const body = JSON.parse(out.text) as { ok: false; error: { code: string; message: string } };
+    assert.equal(body.ok, false);
+    assert.equal(body.error.code, "SESSION_BUSY");
+    assert.match(body.error.message, /运行中/);
   });
 
-  it("直编成功后 onStateRefresh 回调广播 pipeline（前端输入权限立刻跟随 phase 变化）", async () => {
-    // 广播路径回归：调度变量（acted/initiative 等）直编会改变 deriveNext 的 phase，
-    // 若只广播 state/events，前端输入权限/继续按钮停留在旧 phase（"不生效"假象）
-    const fs = await import("node:fs");
-    const path = await import("node:path");
-    const source = fs.readFileSync(path.join(process.cwd(), "src/server/index.ts"), "utf8");
-    const refresh = source.slice(source.indexOf("onStateRefresh"), source.indexOf("http.createServer"));
-    assert.ok(refresh.includes('type: "state"'), "应广播 state");
-    assert.ok(refresh.includes('type: "events"'), "应广播 events");
-    assert.ok(refresh.includes('type: "pipeline"'), "应广播 pipeline");
+  it("域校验失败：角色集合不一致 → 400 VALIDATION_ERROR", async () => {
+    const handleApi = createApiHandler(
+      stubDeps(() => {
+        throw new Error("角色集合必须与当前一致（直接编辑只改内容，不增删角色）");
+      }),
+    );
+    const { res, out } = mockRes();
+    await handleApi(mockReq("PUT", "/api/session/state", { characters: {} }), res);
+    assert.equal(out.status, 400);
+    assert.equal((JSON.parse(out.text) as { error: { code: string } }).error.code, "VALIDATION_ERROR");
   });
 });

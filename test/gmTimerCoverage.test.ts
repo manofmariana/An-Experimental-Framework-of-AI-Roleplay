@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { CHARACTER_PLACEHOLDERS, type CharacterContext } from "../src/agents/character.js";
 import { GM_PLACEHOLDERS, validateAdjudicationRound, type GmContext } from "../src/agents/gm.js";
-import { GameSession, LEAVE_TIMER } from "../src/loop.js";
+import type { GameSession } from "../src/application/gameSession.js";
+import { LEAVE_TIMER } from "../src/scheduler/simulator.js";
 import type { CharacterState } from "../src/truth/charactersStore.js";
 import { snapshotCharacterState, snapshotCharacterStates } from "../src/truth/snapshot.js";
 import { worldTimeToMinutes } from "../src/truth/timeStore.js";
@@ -45,16 +46,21 @@ describe("中途 GM 的 timer 覆盖契约（同步组全体成员必须一并�
     // 开局组已派生：C0 与 C1001 同组（非 0），C1002 他组后台
     assert.equal(charState(session, "C0").group, charState(session, "C1001").group);
     assert.notEqual(charState(session, "C0").group, 0);
-    const helper = (session as unknown as { expectedGmTimerCids(cids: string[]): string[] })
-      .expectedGmTimerCids.bind(session);
+    const internals = session as unknown as {
+      liveTruth(): unknown;
+      expectedGmTimerCids(truth: unknown, cids: string[]): string[];
+      characters: { setVars(cid: string, patch: { timer: number | null }): unknown };
+    };
+    const helper = (cids: string[]): string[] =>
+      internals.expectedGmTimerCids(internals.liveTruth(), cids);
     // 中途 GM 形态：工作集仅 C0 → 期望集含同组的 C1001，不含后台他组的 C1002
     assert.deepEqual(helper(["C0"]), ["C0", "C1001"]);
     // 覆盖以组成员身份为准而非到期状态：timer > clock 或 timer = null 的组成员同样必须被覆盖
-    charState(session, "C1001").timer = 100;
+    internals.characters.setVars("C1001", { timer: 100 });
     assert.deepEqual(helper(["C0"]), ["C0", "C1001"], "timer 未到期的组成员也必须被覆盖");
-    charState(session, "C1001").timer = null;
+    internals.characters.setVars("C1001", { timer: null });
     assert.deepEqual(helper(["C0"]), ["C0", "C1001"], "timer 为 null 的组成员同样包含（GM 设 timer 无害）");
-    charState(session, "C1001").timer = 0;
+    internals.characters.setVars("C1001", { timer: 0 });
     // 周期末形态（全员已行动、都在工作集）：期望集 == 行动者集合，与旧契约等价
     assert.deepEqual(helper(["C0", "C1001"]), ["C0", "C1001"]);
   });

@@ -29,23 +29,28 @@ interface Rule {
 const RULES: Rule[] = [
   {
     from: "src/scheduler/",
-    forbid: ["node:", "openai", "ws", "src/llm/", "src/server/", "src/truth/"],
-    reason: "scheduler 必须保持纯逻辑（无 IO/LLM/server/truth 依赖，含传递依赖）",
+    forbid: ["node:", "openai", "ws", "src/llm/", "src/server/", "src/truth/", "src/application/"],
+    reason: "scheduler 必须保持纯逻辑（无 IO/LLM/server/truth/application 依赖，含传递依赖）",
   },
   {
     from: "src/compile/",
-    forbid: ["src/server/", "src/truth/", "src/llm/"],
-    reason: "compiler 是纯渲染器，不依赖 server / truth Store 实现 / llm client",
+    forbid: ["src/server/", "src/truth/", "src/llm/", "src/application/"],
+    reason: "compiler 是纯渲染器，不依赖 server / truth Store 实现 / llm client / application",
   },
   {
     from: "src/truth/",
-    forbid: ["src/agents/", "src/server/", "src/llm/"],
-    reason: "真相层不依赖 agents / server / llm",
+    forbid: ["src/agents/", "src/server/", "src/llm/", "src/application/"],
+    reason: "真相层不依赖 agents / server / llm / application",
+  },
+  {
+    from: "src/application/",
+    forbid: ["src/server/"],
+    reason: "application（效果规划器/调度派生收口/会话内核与协调器）不依赖 server（传输层反向依赖它）",
   },
   {
     from: "src/llm/",
-    forbid: ["src/server/", "src/loop.ts", "src/agents/"],
-    reason: "llm 客户端层不反向依赖 server / loop / agents",
+    forbid: ["src/server/", "src/application/", "src/agents/"],
+    reason: "llm 客户端层不反向依赖 server / application / agents",
   },
   {
     from: "src/agents/",
@@ -59,8 +64,8 @@ const RULES: Rule[] = [
   },
   {
     from: "src/contracts/",
-    forbid: ["src/truth/", "src/agents/", "src/server/", "src/llm/", "src/loop.ts"],
-    reason: "contracts 是共享契约层，不依赖 truth / agents / server / llm / loop",
+    forbid: ["src/truth/", "src/agents/", "src/server/", "src/llm/", "src/application/"],
+    reason: "contracts 是共享契约层，不依赖 truth / agents / server / llm / application",
   },
   {
     from: "src/resources/",
@@ -71,10 +76,9 @@ const RULES: Rule[] = [
       "src/llm/",
       "src/compile/",
       "src/scheduler/",
-      "src/loop.ts",
       "src/config.ts",
     ],
-    reason: "resources 只允许依赖 shared / contracts（依赖方向：config → resources，不得反向）",
+    reason: "resources 只允许依赖 shared / contracts / types（依赖方向：config → resources，不得反向）",
   },
 ];
 

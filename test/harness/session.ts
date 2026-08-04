@@ -8,7 +8,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import type { AgentKind, LLMConfig } from "../../src/config.js";
-import { GameSession, type SessionOptions } from "../../src/loop.js";
+import type { GameSession } from "../../src/application/gameSession.js";
+import { createGameSession, resumeGameSession, type SessionOptions } from "../../src/application/sessionFactory.js";
 import type { CharacterState } from "../../src/truth/charactersStore.js";
 import { buildManifest } from "../builders/index.js";
 import { FakeChatScript, type RecordedCall } from "../fakes/chatPort.js";
@@ -107,7 +108,7 @@ export class SessionHarness {
     this.llm.gmQueue = [...(opts?.gm ?? [])];
     this.llm.abortAt = null;
     this.llm.characterQueues = {};
-    return GameSession.create(
+    return createGameSession(
       this.configs,
       runId,
       undefined,
@@ -121,7 +122,7 @@ export class SessionHarness {
     runId: string,
     opts?: { gmIntervalCycles?: number; options?: Partial<SessionOptions> },
   ): GameSession {
-    return GameSession.resume(
+    return resumeGameSession(
       this.configs,
       runId,
       undefined,
@@ -129,9 +130,30 @@ export class SessionHarness {
     );
   }
 
-  /** 读存档文件原文（逐字节断言用）。 */
+  /** 读存档真相文件原文（存档 v6：经 CURRENT 解析到当前 Generation；逐字节断言用）。 */
   runFile(runId: string, file: string): string {
-    return fs.readFileSync(path.join(this.runsDir, runId, file), "utf8");
+    return this.readGenerationFile(runId, "current", file);
+  }
+
+  /** 写一代 Generation（generations/{rev}/ 六文件 JSON + CURRENT 指向；fixture 迁移一次性收口）。 */
+  writeGeneration(dir: string, rev: number, files: Record<string, unknown>): void {
+    const name = String(rev).padStart(6, "0");
+    const genDir = path.join(dir, "generations", name);
+    fs.mkdirSync(genDir, { recursive: true });
+    for (const [file, data] of Object.entries(files)) {
+      fs.writeFileSync(path.join(genDir, file), JSON.stringify(data, null, 2) + "\n", "utf8");
+    }
+    fs.writeFileSync(path.join(dir, "CURRENT"), name, "utf8");
+  }
+
+  /** 读某代（rev 数字）或 CURRENT 指向代（"current"）的真相文件原文。 */
+  readGenerationFile(runId: string, rev: number | "current", file: string): string {
+    const dir = path.join(this.runsDir, runId);
+    const name =
+      rev === "current"
+        ? fs.readFileSync(path.join(dir, "CURRENT"), "utf8").trim()
+        : String(rev).padStart(6, "0");
+    return fs.readFileSync(path.join(dir, "generations", name, file), "utf8");
   }
 
   /** 某 agent 第 seq 次激活的全部消息文本（注入内容断言用）。 */

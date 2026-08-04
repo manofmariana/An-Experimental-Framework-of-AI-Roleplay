@@ -1,8 +1,7 @@
 import readline from "node:readline";
+import { SessionCoordinator } from "./application/sessionCoordinator.js";
 import { loadAgentConfigs } from "./config.js";
 import type { Display } from "./display.js";
-import { GameSession } from "./loop.js";
-import { systemIds } from "./ports.js";
 
 const DIM = "\x1b[2m";
 const ITALIC = "\x1b[3m";
@@ -64,10 +63,13 @@ function printHelp(): void {
   console.log(
     [
       "命令：",
-      "  /state   查看变量库（真相层状态）",
-      "  /events  查看事件日志（唯一真相）",
-      "  /stats   查看缓存命中埋点",
-      "  /quit    退出",
+      "  /state          查看变量库（真相层状态）",
+      "  /events         查看事件日志（唯一真相）",
+      "  /stats          查看缓存命中埋点",
+      "  /continue       按派生状态继续跑",
+      "  /rollback <seq> 回溯到第 seq 步刚完成的位置",
+      "  /reroll <seq>   重 roll：回到第 seq 步之前重跑（原子 rollback_and_continue）",
+      "  /quit           退出",
       "其他输入即玩家意图（你说的话/做的事）。",
     ].join("\n"),
   );
@@ -88,8 +90,8 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const runId = systemIds.newRunId();
-  const session = GameSession.create(configs, runId, makeDisplay());
+  const coordinator = new SessionCoordinator(makeDisplay);
+  const runId = await coordinator.execute({ type: "new_session" });
   console.log(`Agent-AIRP P1-M2a · 运行目录 runs/${runId}/`);
   console.log(
     `模型：角色=${configs.character.model} · GM=${configs.gm.model} · 正文=${configs.prose.model}`,
@@ -106,17 +108,17 @@ async function main(): Promise<void> {
 
     if (line === "/quit") break;
     if (line === "/state") {
-      console.log(JSON.stringify(session.getState(), null, 2));
+      console.log(JSON.stringify(coordinator.query("snapshot").state, null, 2));
       continue;
     }
     if (line === "/events") {
-      for (const e of session.getEvents()) {
+      for (const e of coordinator.query("snapshot").events) {
         console.log(`[${e.id}] (${e.kind}) ${e.payload}`);
       }
       continue;
     }
     if (line === "/stats") {
-      const stats = session.getStats();
+      const stats = coordinator.query("stats") as { turn: number; agent: string; hit: number; miss: number; output: number }[];
       if (stats.length === 0) {
         console.log("（尚无 LLM 调用）");
         continue;
@@ -132,8 +134,16 @@ async function main(): Promise<void> {
     }
 
     try {
-      // 正文已由显示层流式输出，这里不再重复打印
-      await session.handlePlayerInput(line);
+      if (line === "/continue") {
+        await coordinator.execute({ type: "continue" });
+      } else if (line.startsWith("/rollback ")) {
+        await coordinator.execute({ type: "rollback", targetSeq: Number(line.slice("/rollback ".length)) });
+      } else if (line.startsWith("/reroll ")) {
+        await coordinator.execute({ type: "rollback_and_continue", targetSeq: Number(line.slice("/reroll ".length)) });
+      } else {
+        // 正文已由显示层流式输出，这里不再重复打印
+        await coordinator.execute({ type: "player_input", text: line });
+      }
     } catch (err) {
       console.error(`\n[错误] ${err instanceof Error ? err.message : String(err)}`);
     }

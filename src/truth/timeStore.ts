@@ -1,8 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { runDir } from "../config.js";
-import { SAVE_SCHEMA_VERSION, incompatibleSave } from "./saveSchema.js";
+import { SAVE_SCHEMA_VERSION } from "./saveSchema.js";
 
 export const TimeAnchorSchema = z.object({
   y: z.number().int().min(1), m: z.number().int().min(1).max(12), d: z.number().int().min(1).max(35),
@@ -53,27 +52,18 @@ export function renderTimeHeader(time: TimeAnchor, data: Pick<TimeFile, "periods
   return period === undefined ? date : `${date}·${period.key}`;
 }
 
+/** time.json 档内副本容器（纯内存，无 IO）：落盘由 GenerationRepository 在步边界整代提交（存档 v6）。 */
 export class TimeStore {
-  private constructor(private file: string, private data: TimeFile) {}
+  private data: TimeFile;
 
-  static initFrom(runId: string, data: WorldTimeConfig, baseDir?: string): TimeStore {
-    const store = new TimeStore(path.join(baseDir ?? runDir(runId), "time.json"), {
-      schema_version: SAVE_SCHEMA_VERSION, start: data.start, periods: data.periods,
-    });
-    store.persist();
-    return store;
+  constructor(data: TimeFile) {
+    this.data = JSON.parse(JSON.stringify(data)) as TimeFile;
   }
 
-  static load(runId: string, baseDir?: string): TimeStore {
-    const file = path.join(baseDir ?? runDir(runId), "time.json");
-    try { return new TimeStore(file, TimeFileSchema.parse(JSON.parse(fs.readFileSync(file, "utf8")))); }
-    catch (error) { throw incompatibleSave(error); }
-  }
-
+  /** 整代提交的写盘数据源（time.json 信封）。 */
+  saveData(): TimeFile { return this.data; }
+  /** 数据整体替换（错误再同步用：对象身份保持，内容回到指定 Generation）。 */
+  restoreData(data: TimeFile): void { this.data = JSON.parse(JSON.stringify(data)) as TimeFile; }
   get(): TimeFile { return this.data; }
   render(time: TimeAnchor): string { return renderTimeHeader(time, this.data); }
-  private persist(): void {
-    fs.mkdirSync(path.dirname(this.file), { recursive: true });
-    fs.writeFileSync(this.file, JSON.stringify(this.data, null, 2) + "\n", "utf8");
-  }
 }

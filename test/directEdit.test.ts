@@ -1,43 +1,20 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { describe, it, after } from "node:test";
-import { CharacterAgent } from "../src/agents/character.js";
-import { GMAgent } from "../src/agents/gm.js";
-import type { GameSession } from "../src/loop.js";
-import { CharactersStore } from "../src/truth/charactersStore.js";
-import { EventsStore } from "../src/truth/events.js";
-import { WorldStore } from "../src/truth/worldStore.js";
-import type { Event } from "../src/types.js";
+import { describe, it } from "node:test";
+import type { GameSession } from "../src/application/gameSession.js";
+import { GenerationRepository } from "../src/truth/generationRepository.js";
 import { buildAdjudication as gmPkg } from "./builders/index.js";
 import { SessionHarness } from "./harness/session.js";
 
 // ---------------------------------------------------------------------------
 // 状态栏直接编辑（GameSession.applyDirectEdit）：整体替换 world/characters/events，
-// 不经过裁决；world/characters 变量差异净额并入当前步 var_changes（回溯随该步还原），
-// events 域不进 var_changes（回溯按 seq 截断事件）；LLM 在途拒绝；校验失败整体还原。
+// 不经过裁决；world/characters 变量差异净额并入当前步 changes.effects（回溯随该步还原），
+// events 域不进变更记录（回溯按 seq 截断事件）；LLM 在途拒绝；校验失败整体还原。
 // 集成基建 = SessionHarness（临时世界设定集 + fake LLM + 确定性骰子）。
 // ---------------------------------------------------------------------------
 
 const h = new SessionHarness("airp-direct-edit-");
-
-const origCharRestore = CharacterAgent.prototype.restore;
-const origGmRestore = GMAgent.prototype.restore;
-let charRestoreCalls = 0;
-let gmRestoreCalls = 0;
-CharacterAgent.prototype.restore = function (this: CharacterAgent, events: Event[]): void {
-  charRestoreCalls += 1;
-  origCharRestore.call(this, events);
-};
-GMAgent.prototype.restore = function (this: GMAgent, events: Event[]): void {
-  gmRestoreCalls += 1;
-  origGmRestore.call(this, events);
-};
-
-after(() => {
-  CharacterAgent.prototype.restore = origCharRestore;
-  GMAgent.prototype.restore = origGmRestore;
-});
 
 const WORLD_ID = `w-edit-${process.pid}`;
 h.setupWorld(WORLD_ID, [
@@ -96,18 +73,15 @@ describe("applyDirectEdit（状态栏直接编辑）", () => {
     assert.equal(after.characters["C1001"]!.name, "新名字");
     assert.equal(after.characters["C1001"]!.timer, 12345);
 
-    // 持久化：从磁盘重开 store 读回
-    const reopenedWorld = new WorldStore("reopen", { world: { time: { y: 1, m: 1, d: 1, h: 0, min: 0 } } }, dir);
-    assert.equal(reopenedWorld.world["hp"], 42);
-    const reopenedChars = CharactersStore.load("reopen", dir);
-    assert.equal(reopenedChars.get("C1001").name, "新名字");
-    assert.equal(reopenedChars.get("C1001").timer, 12345);
+    // 持久化：从磁盘 loadCurrent 读回（存档 v6：唯一读盘口径）
+    const loaded = new GenerationRepository(dir).loadCurrent();
+    assert.equal(loaded.save.world["hp"], 42);
+    assert.equal(loaded.save.characters["C1001"]!.name, "新名字");
+    assert.equal(loaded.save.characters["C1001"]!.timer, 12345);
   });
 
-  it("整体替换 events：事件表生效，各 agent 内存态按新事件集重建", () => {
+  it("整体替换 events：事件表生效，下一次激活注入即读新事件集（无状态 activation，无缓存可重建）", async () => {
     const { session, dir } = makeSession("events");
-    charRestoreCalls = 0;
-    gmRestoreCalls = 0;
     const events = [
       { id: "evt_e1", t: 0, seq: 1, kind: "world", tags: ["known_by:C1001"], payload: "替换后的事件" },
     ];
@@ -115,17 +89,45 @@ describe("applyDirectEdit（状态栏直接编辑）", () => {
     session.applyDirectEdit({ events });
 
     assert.deepEqual(session.getEvents().map((e) => e.id), ["evt_e1"]);
-    assert.equal(charRestoreCalls, 1, "唯一 NPC agent 重建一次");
-    assert.equal(gmRestoreCalls, 1, "GM 重建一次");
-    // 持久化：从磁盘重开读回
-    const reopened = new EventsStore("reopen", dir);
-    assert.deepEqual(reopened.readAll().map((e) => e.payload), ["替换后的事件"]);
+    // §4：agent 侧无事件缓存——直编后下一次角色激活的 prompt 直接读到新事件
+    await session.continuePipeline(); // seq1 C1001 行动 → 停等玩家
+    assert.ok(h.callsText("character:C1001", 1).includes("替换后的事件"));
+    // 持久化：从磁盘 loadCurrent 读回
+    const loaded = new GenerationRepository(dir).loadCurrent();
+    assert.deepEqual(loaded.save.events.map((e) => e.payload), ["替换后的事件"]);
+  });
+
+  it("直编删中段事件后：GM 步新事件 ID 按水位分配，不与现存冲突", async () => {
+    const { session } = makeSession("watermark", { pause: { ...NO_PAUSE, afterGm: true } });
+    // 三次 GM 步各需一个裁决包（makeSession 的 gm 选项是单包，追加经 fake 队列）
+    h.llm.gmQueue.push(gmFull(), gmFull());
+    // 两次 GM 步 → evt_0001 / evt_0002
+    await session.continuePipeline(); // seq1 C1001 → 停等玩家
+    await session.handlePlayerInput("玩家行动"); // seq2 玩家 → seq3 GM（evt_0001）→ GM 后停
+    await session.continuePipeline(); // seq4 正文 → seq5 C1001 → 停等玩家
+    await session.handlePlayerInput("玩家行动"); // seq6 玩家 → seq7 GM（evt_0002）→ GM 后停
+    const e1 = session.getEvents().find((e) => e.id === "evt_0001");
+    assert.ok(e1, "前置：evt_0001 已提交");
+
+    // 直编：删中段语义——事件表变为 evt_0001 + evt_0003（evt_0002 缺口）。
+    // 长度推导会分配 evt_0003（与现存冲突）；水位推导应分配 evt_0004。
+    session.applyDirectEdit({
+      events: [e1, { id: "evt_0003", t: e1.t, seq: e1.seq, kind: "world", tags: e1.tags, payload: "手工事件" }],
+    });
+
+    await session.continuePipeline(); // seq8 正文 → seq9 C1001 → 停等玩家
+    await session.handlePlayerInput("玩家行动"); // seq10 玩家 → seq11 GM → GM 后停
+
+    const ids = session.getEvents().map((e) => e.id);
+    assert.ok(ids.includes("evt_0004"), `新事件应取水位后的 evt_0004，实为 ${ids.join(",")}`);
+    assert.equal(new Set(ids).size, ids.length, `事件 ID 不得冲突：${ids.join(",")}`);
   });
 
   it("非法 schema 拒绝且不落盘（world 缺 time / characters 缺字段 / events 形状非法 / 增删角色）", () => {
     const { session, dir } = makeSession("invalid");
+    const genDir = path.join(dir, "generations", fs.readFileSync(path.join(dir, "CURRENT"), "utf8").trim());
     const before = Object.fromEntries(
-      ["world.json", "characters.json", "events.json"].map((f) => [f, fs.readFileSync(path.join(dir, f), "utf8")]),
+      ["world.json", "characters.json", "events.json"].map((f) => [f, fs.readFileSync(path.join(genDir, f), "utf8")]),
     );
     const { world, characters } = stateClone(session);
 
@@ -138,9 +140,10 @@ describe("applyDirectEdit（状态栏直接编辑）", () => {
     extraChars["C9999"] = extraChars["C1001"];
     assert.throws(() => session.applyDirectEdit({ characters: extraChars }), /不增删角色/);
 
-    // 未落盘：三个核心文件逐字节不变；运行态也不变
+    // 未落盘：三个核心文件逐字节不变（无新 Generation）；运行态也不变
+    assert.equal(fs.readFileSync(path.join(dir, "CURRENT"), "utf8").trim(), path.basename(genDir));
     for (const [f, content] of Object.entries(before)) {
-      assert.equal(fs.readFileSync(path.join(dir, f), "utf8"), content, `${f} 不应被写入`);
+      assert.equal(fs.readFileSync(path.join(genDir, f), "utf8"), content, `${f} 不应被写入`);
     }
     assert.deepEqual(session.getState(), { world, characters });
   });
@@ -222,12 +225,40 @@ describe("直编调度变量：下一段派生立即使用新值（acted / initi
 
     assert.equal(session.pipelineInfo.phase, "await_player"); // 换序后 C0=25 先行动
   });
+
+  it("docs §3 验收：await_player 中直编把 NPC 先攻改到玩家之前 → 下一次玩家输入被拒 + 派生给出该 NPC", async () => {
+    // dice [20, 5] → C0=25 / C1001=10：开局玩家先行，旧 await_player 成立
+    const runId = `run-edit-init-perm-${process.pid}`;
+    const session = h.makeSession(runId, WORLD_ID, { dice: [20, 5], gmIntervalCycles: 5, gm: [gmFull()] });
+    session.setPauseOptions(NO_PAUSE);
+    assert.equal(session.pipelineInfo.phase, "await_player");
+
+    // 直编换序：C1001=25 排到玩家之前
+    const edit = stateClone(session);
+    const c0 = edit.characters["C0"] as { initiative: { value: number; group: number } };
+    const c1 = edit.characters["C1001"] as { initiative: { value: number; group: number } };
+    const v = c0.initiative.value;
+    c0.initiative.value = c1.initiative.value;
+    c1.initiative.value = v;
+    session.applyDirectEdit({ characters: edit.characters });
+
+    // 编辑提交完成后的下一次权限检查必须立即得到新顺序：旧 await_player 不得放行
+    assert.equal(session.pipelineInfo.phase, "await_character");
+    await assert.rejects(() => session.handlePlayerInput("抢跑"), /不是玩家回合.*C1001/);
+    // 继续：C1001 先行动，随后才轮到玩家
+    await session.continuePipeline();
+    assert.equal(session.pipelineInfo.kind, "character:C1001");
+    assert.equal(session.pipelineInfo.phase, "await_player");
+  });
 });
 
-describe("直编差异并入当前步 var_changes（净额合并，回溯随该步还原）", () => {
-  /** 取 current 或归档条目 var_changes 中某路径的全部记录。 */
-  function recordsOf(source: { var_changes?: { path: string }[] | undefined } | null, path: string) {
-    return (source?.var_changes ?? []).filter((c) => c.path === path);
+describe("直编差异并入当前步 changes.effects（净额合并，回溯随该步还原）", () => {
+  /** 取 current 或归档条目 StepChanges（扁平 = 先 setup 后 effects，与旧扁平口径同序）中某路径的全部记录。 */
+  function recordsOf(
+    source: { changes?: { setup: readonly { path: string }[]; effects: readonly { path: string }[] } | undefined } | null,
+    path: string,
+  ) {
+    return [...(source?.changes?.setup ?? []), ...(source?.changes?.effects ?? [])].filter((c) => c.path === path);
   }
 
   it("用户例子逐步复现：步内 0→100 后直编 50 → 归档净记录 0→50；回溯到该步 = 50、到上一步 = 0", async () => {
@@ -281,7 +312,7 @@ describe("直编差异并入当前步 var_changes（净额合并，回溯随该�
     session.applyDirectEdit({ world: edit.world });
 
     const current = session.getPipelineCurrent();
-    const changes = current?.var_changes ?? [];
+    const changes = current?.changes?.effects ?? [];
     const rec = recordsOf(current, "world.region");
     assert.equal(rec.length, 1);
     assert.deepEqual(rec[0], {
@@ -290,7 +321,7 @@ describe("直编差异并入当前步 var_changes（净额合并，回溯随该�
       after: { harbor: { fog: true } },
       before_exists: false,
     });
-    assert.equal(changes[changes.length - 1], rec[0], "新增记录尾部追加");
+    assert.equal(changes[changes.length - 1], rec[0], "新增记录尾部追加（effects 段）");
 
     session.rollbackTo(1);
     const world = session.getState().world as Record<string, unknown>;
@@ -311,27 +342,27 @@ describe("直编差异并入当前步 var_changes（净额合并，回溯随该�
     session.applyDirectEdit({ world: edit.world });
 
     const current = session.getPipelineCurrent();
-    const changes = current?.var_changes ?? [];
+    const changes = current?.changes?.effects ?? [];
     const rec = recordsOf(current, "world.A");
     assert.equal(rec.length, 1);
     assert.deepEqual(rec[0], { path: "world.A", before: 0, after: null, after_exists: false });
-    assert.equal(changes[changes.length - 1], rec[0], "删除记录尾部追加");
+    assert.equal(changes[changes.length - 1], rec[0], "删除记录尾部追加（effects 段）");
 
     session.rollbackTo(1);
     assert.equal((session.getState().world as Record<string, unknown>)["A"], 0, "回滚后恢复原值");
   });
 
-  it("索引安全：已有条目不删不动（effects_from/markers_from 不位移），同路径只改写末条 after", async () => {
+  it("分段安全：setup 段不受影响；effects 段已有条目不删不动，同路径只改写末条 after + 尾部追加", async () => {
     const { session } = makeSession("idx");
     await session.continuePipeline(); // seq1 C1001 → 停等玩家（current=seq1 角色步）
     const before = JSON.parse(JSON.stringify(session.getPipelineCurrent())) as {
-      var_changes?: { path: string; before: unknown; after: unknown }[];
-      result: { effects_from?: number; markers_from?: number };
+      changes?: { setup: { path: string; before: unknown; after: unknown }[]; effects: { path: string; before: unknown; after: unknown }[] };
+      result: Record<string, unknown>;
     };
-    const beforeChanges = before.var_changes ?? [];
+    const beforeEffects = before.changes?.effects ?? [];
     assert.ok(
-      beforeChanges.some((c) => c.path === "C1001.acted"),
-      "前置：该步已有 C1001.acted 记录（false→true）",
+      beforeEffects.some((c) => c.path === "characters.C1001.acted"),
+      "前置：该步 effects 段已有 C1001.acted 记录（false→true）",
     );
 
     const edit = stateClone(session);
@@ -340,26 +371,26 @@ describe("直编差异并入当前步 var_changes（净额合并，回溯随该�
     session.applyDirectEdit({ world: edit.world, characters: edit.characters });
 
     const after = session.getPipelineCurrent();
-    const afterChanges = after?.var_changes ?? [];
-    assert.equal(afterChanges.length, beforeChanges.length + 1, "只改写末条 + 尾部追加，条目不删不动");
+    assert.deepEqual(after?.changes?.setup ?? [], before.changes?.setup ?? [], "setup 段原样不动");
+    const afterEffects = after?.changes?.effects ?? [];
+    assert.equal(afterEffects.length, beforeEffects.length + 1, "只改写末条 + 尾部追加，条目不删不动");
     // 前 N 条原位：除被改写的 C1001.acted 外逐字节一致
-    for (let i = 0; i < beforeChanges.length; i++) {
-      if (beforeChanges[i]!.path === "C1001.acted") continue;
-      assert.deepEqual(afterChanges[i], beforeChanges[i], `第 ${i} 条不变`);
+    for (let i = 0; i < beforeEffects.length; i++) {
+      if (beforeEffects[i]!.path === "characters.C1001.acted") continue;
+      assert.deepEqual(afterEffects[i], beforeEffects[i], `第 ${i} 条不变`);
     }
-    const acted = recordsOf(after, "C1001.acted");
+    const acted = recordsOf(after, "characters.C1001.acted");
     assert.equal(acted.length, 1, "acted 净记录只有一条（链条 0→1 被改写为 0→0）");
-    assert.deepEqual(acted[0], { path: "C1001.acted", before: false, after: false });
-    assert.deepEqual(afterChanges[afterChanges.length - 1], {
+    assert.deepEqual(acted[0], { path: "characters.C1001.acted", before: false, after: false });
+    assert.deepEqual(afterEffects[afterEffects.length - 1], {
       path: "world.fresh",
       before: null,
       after: 1,
       before_exists: false,
     });
-    // effects_from/markers_from 是 var_changes 下标：条目不删不动 ⇒ 下标语义不位移
-    const afterResult = after?.result as { effects_from?: number; markers_from?: number };
-    assert.equal(afterResult.effects_from, before.result.effects_from);
-    assert.equal(afterResult.markers_from, before.result.markers_from);
+    // v7：数组下标定位（effects_from/markers_from）已删除，分段安全由 setup/effects 结构本身保证
+    const afterResult = after?.result as Record<string, unknown>;
+    assert.ok(!("effects_from" in afterResult) && !("markers_from" in afterResult));
   });
 
   it("current=null（首步之前）：直编不崩溃、不并入，编辑即初始基线", () => {

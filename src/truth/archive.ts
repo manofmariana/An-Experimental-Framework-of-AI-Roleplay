@@ -1,34 +1,33 @@
-import fs from "node:fs";
-import path from "node:path";
 import { z } from "zod";
-import { runDir } from "../config.js";
-import { VarChangeSchema, type PipelineCurrent } from "./worldStore.js";
-import { SAVE_SCHEMA_VERSION, incompatibleSave } from "./saveSchema.js";
+import { StepChangesSchema, emptyStepChanges, type PipelineCurrent } from "./worldStore.js";
+import { SAVE_SCHEMA_VERSION } from "./saveSchema.js";
 
 export const ArchiveEntrySchema = z.object({
-  seq: z.number(), kind: z.string(), result: z.unknown(), edited: z.boolean().optional(), var_changes: z.array(VarChangeSchema).optional(),
+  seq: z.number(), kind: z.string(), result: z.unknown(), edited: z.boolean().optional(), changes: StepChangesSchema.optional(),
 });
 export type ArchiveEntry = z.infer<typeof ArchiveEntrySchema>;
 export const ArchiveFileSchema = z.object({ schema_version: z.literal(SAVE_SCHEMA_VERSION), entries: z.array(ArchiveEntrySchema) });
+export type ArchiveFile = z.infer<typeof ArchiveFileSchema>;
 
 export function buildArchiveEntry(current: PipelineCurrent | null): ArchiveEntry | null {
   if (current === null) return null;
-  const entry: ArchiveEntry = { seq: current.seq, kind: current.kind, result: current.result, var_changes: current.var_changes ?? [] };
+  const entry: ArchiveEntry = { seq: current.seq, kind: current.kind, result: current.result, changes: current.changes ?? emptyStepChanges() };
   if (current.edited === true) entry.edited = true;
   return entry;
 }
 
+/** 步骤归档容器（纯内存，无 IO）：落盘由 GenerationRepository 在步边界整代提交（存档 v7）。 */
 export class ArchiveStore {
-  private file: string; private entries: ArchiveEntry[];
-  constructor(runId: string, baseDir?: string) {
-    const dir = path.join(baseDir ?? runDir(runId)); fs.mkdirSync(dir, { recursive: true }); this.file = path.join(dir, "archive.json");
-    if (fs.existsSync(this.file)) {
-      try { this.entries = ArchiveFileSchema.parse(JSON.parse(fs.readFileSync(this.file, "utf8"))).entries; }
-      catch (error) { throw incompatibleSave(error); }
-    } else { this.entries = []; this.persist(); }
+  private entries: ArchiveEntry[];
+  constructor(entries: ArchiveEntry[] = []) {
+    this.entries = JSON.parse(JSON.stringify(entries)) as ArchiveEntry[];
   }
-  append(entry: ArchiveEntry): void { this.entries.push(ArchiveEntrySchema.parse(entry)); this.persist(); }
+  /** 整代提交的写盘数据源（archive.json 的 entries 载荷）。 */
+  saveData(): ArchiveEntry[] { return this.entries; }
+  /** 数据整体替换（错误再同步用：对象身份保持，内容回到指定 Generation）。 */
+  restoreData(entries: ArchiveEntry[]): void { this.entries = JSON.parse(JSON.stringify(entries)) as ArchiveEntry[]; }
+  /** 追加（容器级替换：live 数据 commit 后恒冻结，不得原地 push）。 */
+  append(entry: ArchiveEntry): void { this.entries = [...this.entries, ArchiveEntrySchema.parse(entry)]; }
   readAll(): ArchiveEntry[] { return [...this.entries]; }
-  truncateToSeq(targetSeq: number): void { this.entries = this.entries.filter((entry) => entry.seq <= targetSeq); this.persist(); }
-  private persist(): void { fs.writeFileSync(this.file, JSON.stringify({ schema_version: SAVE_SCHEMA_VERSION, entries: this.entries }, null, 2) + "\n", "utf8"); }
+  truncateToSeq(targetSeq: number): void { this.entries = this.entries.filter((entry) => entry.seq <= targetSeq); }
 }

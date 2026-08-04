@@ -5,8 +5,9 @@ import type { AdjudicationPackage, DecisionPackage } from "./types.js";
  * 由 CLI / WebDisplay 实现；GameSession/agents 只面向接口，headless 场景传 undefined 即可。
  */
 export interface Display {
-  /** agent 开始一次 LLM 调用（打印分段小标题；turn 为真实轮次） */
-  agentStart(agent: string, title: string, turn?: number): void;
+  /** agent 开始一次 LLM 调用（打印分段小标题；turn 为真实轮次；
+   *  activationId = 消息身份（D2，`${runId}:act:${n}`），CLI 等不感知身份的实现可忽略） */
+  agentStart(agent: string, title: string, turn?: number, activationId?: string): void;
   /** 流式增量（逐 token） */
   delta(agent: string, text: string): void;
   /** 思维链流式增量（推理模型；非推理模型不触发） */

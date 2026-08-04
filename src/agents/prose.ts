@@ -3,7 +3,6 @@ import { loadTemplate } from "../compile/template.js";
 import type { Display } from "../display.js";
 import type { ChatPort } from "../llm/chatPort.js";
 import type { CastMember } from "../truth/identity.js";
-import type { AdjudicationPackage } from "../types.js";
 
 export interface ProseContext {
   toneCard: string; worldLore: string; recentEvents: string[]; cast: CastMember[];
@@ -20,16 +19,16 @@ export const PROSE_PLACEHOLDERS: PlaceholderRegistry<ProseContext> = {
   current_scene: { description: "本轮各角色台词与内心", provide: (context) => context.currentScene },
 };
 
-export class ProseAgent {
+/**
+ * 无状态正文 activation（docs/optimization-review.md §4）：构造只持 ChatPort，
+ * toneCard/worldLore/cast 与逐轮素材全部由 builder 现算进 ProseContext 逐调用传入。
+ */
+export class ProseActivation {
   readonly agentName = "prose";
-  constructor(private llm: ChatPort, private toneCard: string, private worldLore: string, private cast: CastMember[]) {}
-  async render(turn: number, adjudication: AdjudicationPackage, sceneText: string, turnInput: { recentEvents: string[]; triggeredLore: string; lastProse: string }, signal: AbortSignal, display?: Display): Promise<string> {
+  constructor(private llm: ChatPort) {}
+  async render(context: ProseContext, turn: number, signal: AbortSignal, display?: Display): Promise<string> {
     const template = loadTemplate("prose", Object.keys(PROSE_PLACEHOLDERS));
-    const messages = compilePrompt(template, PROSE_PLACEHOLDERS, {
-      toneCard: this.toneCard, worldLore: this.worldLore, recentEvents: turnInput.recentEvents,
-      cast: this.cast, triggeredLore: turnInput.triggeredLore, lastProse: turnInput.lastProse,
-      gmEvent: JSON.stringify({ events: adjudication.events, narrativity: adjudication.narrativity }), currentScene: sceneText,
-    });
+    const messages = compilePrompt(template, PROSE_PLACEHOLDERS, context);
     const onDelta = display ? (delta: string) => display.delta(this.agentName, delta) : undefined;
     const onReasoningDelta = display ? (delta: string) => display.reasoningDelta(this.agentName, delta) : undefined;
     const { text } = await this.llm.chat(

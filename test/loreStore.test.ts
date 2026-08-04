@@ -1,18 +1,14 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
 import { describe, it } from "node:test";
 import { LoreStore, rollbackLore, type LoreFile } from "../src/truth/loreStore.js";
-import { tempDir } from "./harness/tempDir.js";
 import { SAVE_SCHEMA_VERSION } from "../src/truth/saveSchema.js";
 import type { LoreEntry } from "../src/types.js";
 
 const e = (id: string, content = `${id}内容`): LoreEntry => ({ id, tags: [], content });
 
-describe("LoreStore（存档 v2 文件 2：lore.json 档内副本 + changelog 回滚）", () => {
+describe("LoreStore（档内副本 + changelog 回滚；纯内存容器）", () => {
   it("initFrom 拷入世界 lorebook（只动副本）", () => {
-    const dir = tempDir("airp-lore-");
-    const store = LoreStore.initFrom("t1", [e("a"), e("b")], dir);
+    const store = LoreStore.initFrom([e("a"), e("b")]);
     assert.deepEqual(
       store.book().all().map((x) => x.id),
       ["a", "b"],
@@ -20,19 +16,18 @@ describe("LoreStore（存档 v2 文件 2：lore.json 档内副本 + changelog �
     // 档内变更不影响传入数组
     store.applyChange({ seq: 3, op: "delete", before: e("a"), after: null });
     assert.deepEqual(
-      LoreStore.load("t1", dir).book().all().map((x) => x.id),
+      new LoreStore(store.saveData()).book().all().map((x) => x.id),
       ["b"],
     );
   });
 
   it("applyChange：add/delete/update 均带 before/after + seq 锚", () => {
-    const dir = tempDir("airp-lore-");
-    const store = LoreStore.initFrom("t1", [e("a")], dir);
+    const store = LoreStore.initFrom([e("a")]);
     store.applyChange({ seq: 4, op: "add", before: null, after: e("b") });
     store.applyChange({ seq: 8, op: "update", before: e("b"), after: e("b", "b改后") });
     store.applyChange({ seq: 12, op: "delete", before: e("a"), after: null });
 
-    const book = LoreStore.load("t1", dir).book();
+    const book = new LoreStore(store.saveData()).book();
     assert.equal(book.getByIds(["b"])[0]!.content, "b改后");
     assert.throws(() => book.getByIds(["a"]), /不存在/);
   });
@@ -64,13 +59,12 @@ describe("LoreStore（存档 v2 文件 2：lore.json 档内副本 + changelog �
     );
   });
 
-  it("rollbackToSeq 落盘", () => {
-    const dir = tempDir("airp-lore-");
-    const store = LoreStore.initFrom("t1", [e("a")], dir);
+  it("rollbackToSeq 后 saveData 回环读回", () => {
+    const store = LoreStore.initFrom([e("a")]);
     store.applyChange({ seq: 5, op: "delete", before: e("a"), after: null });
     store.rollbackToSeq(3);
     assert.deepEqual(
-      LoreStore.load("t1", dir).book().all().map((x) => x.id),
+      new LoreStore(store.saveData()).book().all().map((x) => x.id),
       ["a"],
     );
   });

@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { CharacterAgent, type CharacterManifest } from "../src/agents/character.js";
-import { GMAgent, validateAdjudicationRound } from "../src/agents/gm.js";
+import { CharacterActivation, type CharacterContext, type CharacterManifest } from "../src/agents/character.js";
+import { GmActivation, validateAdjudicationRound, type GmContext } from "../src/agents/gm.js";
 import { LLMAbortedError } from "../src/llm/chatPort.js";
 import { OpenAIChatAdapter } from "../src/llm/openaiChatAdapter.js";
 import { CharactersStore } from "../src/truth/charactersStore.js";
-import { Lorebook } from "../src/truth/lorebook.js";
-import { tempDir } from "./harness/tempDir.js";
 
 const manifest: CharacterManifest = {
   id: "C1001", name: "林雾", gender: "女", age: "26", personality: "谨慎。",
@@ -27,10 +25,22 @@ function failingLlm(err: Error) {
   };
 }
 
-function makeCharacter(llm: unknown): CharacterAgent {
-  const dir = tempDir("airp-abort-");
-  const store = CharactersStore.initFrom("t1", [manifest], 0, dir);
-  return new CharacterAgent(manifest, llm as never, store, [], "");
+/** 最小角色上下文（无状态 activation：上下文逐调用传入，测试就地构造）。 */
+function characterCtx(): CharacterContext {
+  const store = CharactersStore.fromManifests([manifest], 0);
+  return {
+    selfCid: "C1001", states: store.all(), cast: [], worldSnapshot: "{}", activatedLore: "",
+    recentEvents: [], proseWindow: [], currentScene: "", timeHeader: "", clock: 0,
+  };
+}
+
+/** 最小 GM 上下文。 */
+function gmCtx(): GmContext {
+  const store = CharactersStore.fromManifests([manifest], 0);
+  return {
+    setting: "设定", cast: [], loreFull: "", events: [], proseWindow: [], currentScene: "场景",
+    worldSnapshot: "{}", states: store.all(), clock: 0, timeHeader: "",
+  };
 }
 
 describe("abort 不触发重试（停止 ≠ 可重试的失败）", () => {
@@ -65,17 +75,15 @@ describe("abort 不触发重试（停止 ≠ 可重试的失败）", () => {
 
   it("character.decide：LLMAbortedError 直接向上传播，只调用一次", async () => {
     const llm = failingLlm(new LLMAbortedError("半截", ""));
-    const agent = makeCharacter(llm);
-    await assert.rejects(() => agent.decide(1, new AbortController().signal), LLMAbortedError);
+    const activation = new CharacterActivation(llm as never);
+    await assert.rejects(() => activation.decide(characterCtx(), 1, new AbortController().signal), LLMAbortedError);
     assert.equal(llm.state.calls, 1);
   });
 
   it("gm.adjudicate：LLMAbortedError 直接向上传播，只调用一次", async () => {
     const llm = failingLlm(new LLMAbortedError("", ""));
-    const dir = tempDir("airp-abort-");
-    const store = CharactersStore.initFrom("t1", [manifest], 0, dir);
-    const gm = new GMAgent(llm as never, "设定", new Lorebook([]), [], store);
-    await assert.rejects(() => gm.adjudicate(1, "场景", {}, ["C1001"], new AbortController().signal), LLMAbortedError);
+    const gm = new GmActivation(llm as never);
+    await assert.rejects(() => gm.adjudicate(gmCtx(), 1, ["C1001"], new AbortController().signal), LLMAbortedError);
     assert.equal(llm.state.calls, 1);
   });
 
@@ -98,10 +106,8 @@ describe("abort 不触发重试（停止 ≠ 可重试的失败）", () => {
         return { text: JSON.stringify(pkg), reasoning: "" };
       },
     };
-    const dir = tempDir("airp-abort-");
-    const store = CharactersStore.initFrom("t1", [manifest], 0, dir);
-    const gm = new GMAgent(llm as never, "设定", new Lorebook([]), [], store);
-    const { pkg } = await gm.adjudicate(1, "场景", {}, ["C1001"], new AbortController().signal);
+    const gm = new GmActivation(llm as never);
+    const { pkg } = await gm.adjudicate(gmCtx(), 1, ["C1001"], new AbortController().signal);
     assert.equal(state.calls, 2);
     assert.deepEqual(pkg.timer.map((item) => item.cid), ["C1001"]);
     assert.doesNotThrow(() => validateAdjudicationRound(pkg, ["C1001"]));
@@ -120,8 +126,8 @@ describe("abort 不触发重试（停止 ≠ 可重试的失败）", () => {
         return { text: '{"action": "点头", "inner": "先看看。", "dialogue": "好。"}', reasoning: "" };
       },
     };
-    const agent = makeCharacter(llm);
-    const { pkg } = await agent.decide(1, new AbortController().signal);
+    const activation = new CharacterActivation(llm as never);
+    const { pkg } = await activation.decide(characterCtx(), 1, new AbortController().signal);
     assert.equal(state.calls, 2);
     assert.equal(pkg.dialogue, "好。");
   });

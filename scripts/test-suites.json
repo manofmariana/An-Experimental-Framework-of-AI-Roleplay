@@ -1,13 +1,29 @@
 {
   "unit": [
     "test/simulator.test.ts",
+    "test/derive.test.ts",
+    "test/invitations.test.ts",
     "test/compiler.test.ts",
     "test/types.test.ts",
     "test/varDiff.test.ts",
     "test/identity.test.ts",
     "test/workingSet.test.ts",
+    "test/eventWatermark.test.ts",
     "test/llmClient.test.ts",
-    "test/contracts.test.ts"
+    "test/contracts.test.ts",
+    "test/saveSet.test.ts",
+    "test/actorEffects.test.ts",
+    "test/gmEffects.test.ts",
+    "test/workingSetProjection.test.ts",
+    "test/prepareNextCommand.test.ts",
+    "test/structuredActivation.test.ts",
+    "test/transitionProjection.test.ts",
+    "test/webStore.test.ts",
+    "test/webTransport.test.ts",
+    "test/webProtocol.test.ts",
+    "test/webResourceContext.test.ts",
+    "test/webAsyncGuards.test.ts",
+    "test/webStateEditor.test.ts"
   ],
   "contract": [
     "test/template.test.ts",
@@ -20,28 +36,35 @@
     "test/auditContracts.test.ts",
     "test/llmRecent.test.ts",
     "test/history.test.ts",
+    "test/protocolContract.test.ts",
     "test/charactersStore.test.ts",
     "test/events.test.ts",
     "test/loreStore.test.ts",
     "test/timeStore.test.ts",
     "test/worldStore.test.ts",
     "test/archive.test.ts",
-    "test/rollback.test.ts"
+    "test/rollback.test.ts",
+    "test/generationRepository.test.ts"
   ],
   "application": [
     "test/loopSchedule.test.ts",
+    "test/invitationFlow.test.ts",
     "test/directEdit.test.ts",
+    "test/commitExecutor.test.ts",
     "test/editMarkers.test.ts",
     "test/gmTimerCoverage.test.ts",
     "test/pauseOptions.test.ts",
     "test/reloadConfig.test.ts",
     "test/reproActedRollback.test.ts",
     "test/resume.test.ts",
-    "test/abort.test.ts"
+    "test/abort.test.ts",
+    "test/activationContexts.test.ts",
+    "test/sessionCoordinator.test.ts"
   ],
   "integration": [
     "test/serverApi.test.ts",
+    "test/httpEnvelope.test.ts",
     "test/wsReroll.test.ts",
-    "test/wsStateBroadcast.test.ts"
+    "test/wsProtocol.test.ts"
   ]
 }

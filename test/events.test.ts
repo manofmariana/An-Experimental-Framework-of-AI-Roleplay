@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
 import { describe, it } from "node:test";
 import { EventsStore, truncateEvents } from "../src/truth/events.js";
-import { tempDir } from "./harness/tempDir.js";
 import type { Event } from "../src/types.js";
 
 function evt(partial: Partial<Event> & { id: string; seq: number }): Event {
@@ -16,26 +13,22 @@ function evt(partial: Partial<Event> & { id: string; seq: number }): Event {
   };
 }
 
-describe("EventsStore（存档 v2 文件 1：events.json）", () => {
-  it("append 立刻写入；readAll 按 (t, id) 排序；重载可读", () => {
-    const dir = tempDir("airp-ev-");
-    const store = new EventsStore("t1", dir);
+describe("EventsStore（纯内存容器；落盘归 GenerationRepository）", () => {
+  it("append 入内存；readAll 按 (t, id) 排序；saveData 回环可读", () => {
+    const store = new EventsStore();
     store.append(evt({ id: "evt_0002", seq: 3, t: 5 }));
     store.append(evt({ id: "evt_0001", seq: 3, t: 3 }));
     store.append(evt({ id: "evt_0003", seq: 4, t: 5 }));
 
-    // 单文件 JSON 数组（替代 events.jsonl）
-    const raw = JSON.parse(fs.readFileSync(path.join(dir, "events.json"), "utf8")) as { events: unknown[] };
-    assert.equal(raw.events.length, 3);
+    assert.equal(store.saveData().length, 3);
 
     const ids = store.readAll().map((e) => e.id);
     assert.deepEqual(ids, ["evt_0001", "evt_0002", "evt_0003"]);
-    assert.deepEqual(new EventsStore("t1", dir).readAll().map((e) => e.id), ids);
+    assert.deepEqual(new EventsStore(store.saveData()).readAll().map((e) => e.id), ids);
   });
 
   it("readWindow / readVisibleTo（known_by 标签 ∧ time，无地点成分，ADR 0002）", () => {
-    const dir = tempDir("airp-ev-");
-    const store = new EventsStore("t1", dir);
+    const store = new EventsStore();
     store.append(evt({ id: "evt_0001", seq: 1, t: 1, location: "loc_lighthouse" }));
     store.append(evt({ id: "evt_0002", seq: 2, t: 2, tags: ["known_by:C0"] })); // C1001 不可见
     store.append(evt({ id: "evt_0003", seq: 3, t: 9, location: "loc_baitan" })); // t > at
@@ -46,7 +39,7 @@ describe("EventsStore（存档 v2 文件 1：events.json）", () => {
     assert.deepEqual(visible.map((e) => e.id), ["evt_0001", "evt_0004"]);
   });
 
-  it("truncateEvents 纯函数 + truncateToSeq 落盘（回溯丢弃不留底）", () => {
+  it("truncateEvents 纯函数 + truncateToSeq 后 saveData 回环（回溯丢弃不留底）", () => {
     const events = [evt({ id: "e1", seq: 3 }), evt({ id: "e2", seq: 7 }), evt({ id: "e3", seq: 12 })];
     assert.deepEqual(
       truncateEvents(events, 7).map((e) => e.id),
@@ -54,10 +47,8 @@ describe("EventsStore（存档 v2 文件 1：events.json）", () => {
     );
     assert.equal(events.length, 3); // 纯函数不改入参
 
-    const dir = tempDir("airp-ev-");
-    const store = new EventsStore("t1", dir);
-    for (const e of events) store.append(e);
+    const store = new EventsStore(events);
     store.truncateToSeq(7);
-    assert.deepEqual(new EventsStore("t1", dir).readAll().map((e) => e.id), ["e1", "e2"]);
+    assert.deepEqual(new EventsStore(store.saveData()).readAll().map((e) => e.id), ["e1", "e2"]);
   });
 });

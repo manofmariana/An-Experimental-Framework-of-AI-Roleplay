@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { OpenAIChatAdapter } from "../src/llm/openaiChatAdapter.js";
-import { GameSession } from "../src/loop.js";
+import { createGameSession } from "../src/application/sessionFactory.js";
 import type { LLMConfig } from "../src/config.js";
 import { SessionHarness } from "./harness/session.js";
 
@@ -50,7 +50,7 @@ describe("GameSession.applyResolvedConfigs（设置页保存即生效的可注�
     const runId = `test-reload-${process.pid}`;
     const options = h.sessionOptions(runId, { gmIntervalCycles: 3, rollDice: () => 10 });
     delete options.chatPorts; // 真实 adapter 路径：不注入 fake ChatPort
-    const session = GameSession.create(
+    const session = createGameSession(
       { character: cfgA, gm: cfgA, prose: cfgA },
       runId,
       undefined,

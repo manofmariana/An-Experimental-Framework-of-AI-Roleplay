@@ -1,9 +1,50 @@
-/** 世界页：setting / tone-card 编辑器 + lorebook 条目表格（增删改、enabled 开关）。 */
+/** 世界页：世界包选择器 + setting / tone-card 编辑器 + lorebook 条目表格（增删改、enabled 开关）。
+ *  D5 ResourceContext（docs/optimization-review.md §10）：打开即捕获不可变 ctx
+ *  （GET/PUT 全程携带 ?set=——修复「无法编辑非默认包」）；切换包 = 重新捕获 ctx + 重载表单
+ *  （旧表单不存活）；保存写打开时捕获的同一 ctx，不重读 picker；界面上持续显示「正在编辑」的包名。 */
 import { api, el } from "../app.js";
+import { createResourceContext } from "../resource-context.js";
 
 export async function renderWorld(root) {
   root.appendChild(el("h2", null, "世界"));
-  const data = await api("/api/world");
+  const { sets } = await api("/api/worlds");
+  if (!sets || sets.length === 0) {
+    root.appendChild(el("div", "muted", "（没有可用的世界设定集）"));
+    return;
+  }
+
+  // 世界包选择器（数据源 = /api/worlds 列表端点）
+  const bar = el("div", "world-set-bar");
+  bar.appendChild(el("span", "muted", "世界包："));
+  const picker = el("select");
+  for (const s of sets) {
+    const opt = el("option", null, s);
+    opt.value = s;
+    picker.appendChild(opt);
+  }
+  const editing = el("span", "muted");
+  bar.append(picker, editing);
+  const host = el("div");
+  root.append(bar, host);
+
+  const load = async (setId) => {
+    const ctx = createResourceContext({ worldSetId: setId }); // 捕获即不可变
+    editing.textContent = `　正在编辑：${ctx.worldSetId}`;
+    host.textContent = "";
+    await renderWorldForm(host, ctx);
+  };
+  picker.onchange = () => {
+    load(picker.value).catch((err) => {
+      host.textContent = "";
+      host.appendChild(el("div", "line-error", `加载失败：${err.message}`));
+    });
+  };
+  await load(picker.value);
+}
+
+/** 表单整体（两个 Markdown 编辑器 + lorebook 表格）；所有 URL 经捕获的 ctx 构造。 */
+async function renderWorldForm(host, ctx) {
+  const data = await api(ctx.worldUrl());
 
   // ---- 两个 Markdown 编辑器 ----
   const editors = [
@@ -11,7 +52,7 @@ export async function renderWorld(root) {
     ["tone-card", "世界基调卡（正文的 L1）", data.toneCard],
   ];
   for (const [name, label, content] of editors) {
-    root.appendChild(el("h3", null, label));
+    host.appendChild(el("h3", null, label));
     const ta = el("textarea");
     ta.rows = 10;
     ta.value = content;
@@ -20,17 +61,17 @@ export async function renderWorld(root) {
     save.onclick = async () => {
       status.textContent = "";
       try {
-        const resp = await api(`/api/world/${name}`, "PUT", { content: ta.value });
+        const resp = await api(ctx.worldFileUrl(name), "PUT", { content: ta.value });
         status.textContent = ` ${resp.note}`;
       } catch (err) {
         status.textContent = ` 保存失败：${err.message}`;
       }
     };
-    root.append(ta, el("div"), save, status);
+    host.append(ta, el("div"), save, status);
   }
 
   // ---- lorebook 表格 ----
-  root.appendChild(el("h3", null, "Lorebook 条目"));
+  host.appendChild(el("h3", null, "Lorebook 条目"));
   const table = el("table");
   const head = el("tr");
   for (const h of ["ID", "标签（逗号分隔）", "内容", "启用", ""]) head.appendChild(el("th", null, h));
@@ -58,7 +99,7 @@ export async function renderWorld(root) {
     table.appendChild(tr);
   };
   for (const entry of data.lorebook) addRow(entry);
-  root.appendChild(table);
+  host.appendChild(table);
 
   const addBtn = el("button", "act", "新增条目");
   addBtn.onclick = () => addRow();
@@ -80,11 +121,11 @@ export async function renderWorld(root) {
       });
     }
     try {
-      const resp = await api("/api/world/lorebook", "PUT", entries);
+      const resp = await api(ctx.worldFileUrl("lorebook"), "PUT", entries);
       status.textContent = ` ${resp.note}`;
     } catch (err) {
       status.textContent = ` 保存失败：${err.message}`;
     }
   };
-  root.append(el("div"), addBtn, saveBtn, status);
+  host.append(el("div"), addBtn, saveBtn, status);
 }

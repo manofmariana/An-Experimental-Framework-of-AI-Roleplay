@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { deleteRun, listRuns, validateAlias, writeAlias } from "../src/server/api.js";
+import { deleteRun, listRuns, validateAlias, writeAlias } from "../src/resources/runRepository.js";
 import { tempDir } from "./harness/tempDir.js";
 
 function mkRun(dir: string, id: string): void {

@@ -1,3 +1,4 @@
+import { LEAVE_TIMER } from "../scheduler/simulator.js";
 import type { CharacterState } from "./charactersStore.js";
 import { minutesToWorldTime, type TimeAnchor } from "./timeStore.js";
 
@@ -13,8 +14,8 @@ export type SnapshotCharacterState = Omit<CharacterState, "timer"> & {
 export function snapshotCharacterState(state: CharacterState): SnapshotCharacterState {
   const { timer, ...rest } = state;
   if (timer === null) return { ...rest, timer: null };
-  // LEAVE_TIMER（Number.MAX_SAFE_INTEGER）：离开标记的冻结值，渲染为语义文本而非天文数字
-  if (timer >= Number.MAX_SAFE_INTEGER) return { ...rest, timer: "已离开待结算" };
+  // LEAVE_TIMER：离开标记的冻结值，渲染为语义文本而非天文数字
+  if (timer >= LEAVE_TIMER) return { ...rest, timer: "已离开待结算" };
   return { ...rest, timer: minutesToWorldTime(timer) };
 }
 
@@ -22,4 +23,33 @@ export function snapshotCharacterStates(
   states: Readonly<Record<string, CharacterState>>,
 ): Record<string, SnapshotCharacterState> {
   return Object.fromEntries(Object.entries(states).map(([cid, state]) => [cid, snapshotCharacterState(state)]));
+}
+
+// ---------------------------------------------------------------------------
+// 只读快照（docs/optimization-review.md §7「不可变 Snapshot 与只读查询」）
+// ---------------------------------------------------------------------------
+
+/** 递归 readonly 映射：查询出口（getState/getEvents/snapshot 等）的返回类型，编译期挡写入。 */
+export type DeepReadonly<T> = T extends (infer U)[]
+  ? readonly DeepReadonly<U>[]
+  : T extends (...args: never[]) => unknown
+    ? T
+    : T extends object
+      ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
+      : T;
+
+/**
+ * 递归 Object.freeze（恒冻结策略：本地私有应用，无生产模式分叉）。
+ * 接线点：GenerationRepository.loadGeneration 返回前 + GameSession 每次 commit/adopt 后——
+ * 让绕过 VarChange/校验的越界写入在测试中立刻抛 TypeError，而不是静默污染真相。
+ * 幂等（重复冻结同一对象安全）；Store 内部变异全部是容器级替换式，不受冻结影响。
+ */
+export function deepFreeze<T>(value: T): DeepReadonly<T> {
+  if (typeof value === "object" && value !== null) {
+    for (const key of Object.keys(value)) {
+      deepFreeze((value as Record<string, unknown>)[key]);
+    }
+    Object.freeze(value);
+  }
+  return value as DeepReadonly<T>;
 }

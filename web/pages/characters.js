@@ -1,23 +1,68 @@
-/** 角色页：统一 manifest 字段与结构化 location 编辑。 */
+/** 角色页：世界包选择器 + 统一 manifest 字段与结构化 location 编辑。
+ *  D5 ResourceContext（docs/optimization-review.md §10）：打开即捕获不可变 ctx
+ *  （GET/PUT 全程携带 ?set=——修复「无法编辑非默认包」）；切换包 = 重新捕获 ctx + 重载列表；
+ *  保存写打开时捕获的同一 ctx，不重读 picker；界面上持续显示「正在编辑」的包名。 */
 import { api, el } from "../app.js";
+import { createResourceContext } from "../resource-context.js";
 
 export async function renderCharacters(root) {
   root.appendChild(el("h2", null, "角色"));
-  const list = await api("/api/characters");
+  const { sets } = await api("/api/worlds");
+  if (!sets || sets.length === 0) {
+    root.appendChild(el("div", "muted", "（没有可用的世界设定集）"));
+    return;
+  }
+
+  // 世界包选择器（数据源 = /api/worlds 列表端点）
+  const bar = el("div", "world-set-bar");
+  bar.appendChild(el("span", "muted", "世界包："));
+  const setPicker = el("select");
+  for (const s of sets) {
+    const opt = el("option", null, s);
+    opt.value = s;
+    setPicker.appendChild(opt);
+  }
+  const editing = el("span", "muted");
+  bar.append(setPicker, editing);
+  const host = el("div");
+  root.append(bar, host);
+
+  const load = async (setId) => {
+    const ctx = createResourceContext({ worldSetId: setId }); // 捕获即不可变
+    editing.textContent = `　正在编辑：${ctx.worldSetId}`;
+    host.textContent = "";
+    await renderSetCharacters(host, ctx);
+  };
+  setPicker.onchange = () => {
+    load(setPicker.value).catch((err) => {
+      host.textContent = "";
+      host.appendChild(el("div", "line-error", `加载失败：${err.message}`));
+    });
+  };
+  await load(setPicker.value);
+}
+
+/** 指定包的角色列表 + 编辑表单；所有 URL 经捕获的 ctx 构造。 */
+async function renderSetCharacters(host, ctx) {
+  const list = await api(ctx.charactersUrl());
+  if (list.length === 0) {
+    host.appendChild(el("div", "muted", "（该世界包没有角色）"));
+    return;
+  }
   const picker = el("select");
   for (const item of list) { const option = el("option", null, `${item.manifest.name}（${item.id}）`); option.value = item.id; picker.appendChild(option); }
-  root.appendChild(picker);
-  const host = el("div"); root.appendChild(host);
+  host.appendChild(picker);
+  const formHost = el("div"); host.appendChild(formHost);
 
   const renderForm = (id) => {
-    const source = list.find((item) => item.id === id)?.manifest; host.textContent = ""; if (!source) return;
+    const source = list.find((item) => item.id === id)?.manifest; formHost.textContent = ""; if (!source) return;
     const fields = {};
     const add = (key, label, multiline = false) => {
       const wrap = el("label", "field"); wrap.appendChild(el("span", null, label));
       const input = multiline ? el("textarea") : document.createElement("input"); if (!multiline) input.type = "text";
       const value = source[key]; input.value = Array.isArray(value) ? value.join("\n") : String(value ?? "");
       if (multiline) input.rows = 4; if (key === "id") input.disabled = true;
-      wrap.appendChild(input); host.appendChild(wrap); fields[key] = input;
+      wrap.appendChild(input); formHost.appendChild(wrap); fields[key] = input;
     };
     add("id", "ID"); add("name", "名字"); add("gender", "性别"); add("age", "年龄（字符串）"); add("personality", "性格（1-2句）", true);
     add("locationName", "初始地点名"); fields.locationName.value = source.location?.name ?? "";
@@ -33,10 +78,10 @@ export async function renderCharacters(root) {
         timer: fields.timer.value.trim() === "" ? null : Number(fields.timer.value), reaction: Number(fields.reaction.value) || 0,
         level: Number(fields.level.value) || 1, tags: lines("tags"), initial_memories: lines("initial_memories"), relations: source.relations ?? {}, vars: source.vars ?? {},
       };
-      try { const response = await api(`/api/characters/${id}`, "PUT", manifest); status.textContent = ` ${response.note}`; }
+      try { const response = await api(ctx.characterUrl(id), "PUT", manifest); status.textContent = ` ${response.note}`; }
       catch (error) { status.textContent = ` 保存失败：${error.message}`; }
     };
-    host.append(save, status);
+    formHost.append(save, status);
   };
-  picker.onchange = () => renderForm(picker.value); if (list.length > 0) renderForm(list[0].id);
+  picker.onchange = () => renderForm(picker.value); renderForm(list[0].id);
 }

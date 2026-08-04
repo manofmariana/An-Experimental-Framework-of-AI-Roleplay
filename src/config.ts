@@ -1,8 +1,12 @@
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
-import { ResolvedAgentConfigSchema } from "./contracts/config.js";
+import { ResolvedAgentConfigSchema, type FileConfigPayload } from "./contracts/config.js";
 import { resolveUserDirectories } from "./resources/userDirectories.js";
+import {
+  listWorldSets as listWorldSetsIn,
+  resolveWorldDir as resolveWorldDirIn,
+} from "./resources/worldRepository.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -40,31 +44,12 @@ export interface LLMConfig {
 export type AgentKind = "character" | "gm" | "prose";
 export const AGENT_KINDS: readonly AgentKind[] = ["character", "gm", "prose"];
 
-interface AgentOverride {
-  api_key?: string;
-  base_url?: string;
-  model?: string;
-  json_mode?: boolean;
-  reasoning_effort?: string;
-}
-
-/** config.json 的文件形状（顶层 + 每 agent 可选覆盖块 + memory 块；"_"-前缀字段为注释，忽略） */
-export interface FileConfig {
-  api_key?: string;
-  base_url?: string;
-  model?: string;
-  /** JSON 模式（默认 false）；agents 块可逐 agent 覆盖 */
-  json_mode?: boolean;
-  /** 思考强度（DeepSeek reasoning_effort）；原样透传不锁枚举；agents 块可逐 agent 覆盖 */
-  reasoning_effort?: string;
-  agents?: Partial<Record<AgentKind, AgentOverride>>;
-  memory?: {
-    /** 正文滑窗大小：未压缩轮次中最近 N 轮注入正文，更早的只注入事件（默认 5） */
-    prose_window_turns?: number;
-  };
-  /** GM 硬保险间隔（行动周期数）：距上次 GM 激活满 N 个行动周期 → 周期末强制激活 GM（默认 3） */
-  gm_interval_cycles?: number;
-}
+/**
+ * config.json 的文件形状（顶层 + 每 agent 可选覆盖块 + memory 块；"_"-前缀字段为注释，忽略）。
+ * D3 起类型唯一出处 = contracts/config.ts FileConfigSchema（zod infer；原手写 interface 与
+ * server 手工字段表、前端字段数组三份定义漂移已收敛为一份契约）。
+ */
+export type FileConfig = FileConfigPayload;
 
 function readFileConfig(): FileConfig {
   if (!fs.existsSync(CONFIG_FILE)) return {};
@@ -127,28 +112,17 @@ export function runDir(runId: string): string {
 // 世界设定集（data/worlds/{setId}/，§10 工程决定：存档创建时可选）
 // ---------------------------------------------------------------------------
 
-/** 列出可选世界设定集（data/worlds 下的目录名，按字典序，确定性）。 */
+/** 列出可选世界设定集（data/worlds 下的目录名，按字典序，确定性）。实现唯一出处 = resources/worldRepository。 */
 export function listWorldSets(): string[] {
-  if (!fs.existsSync(WORLDS_DIR)) return [];
-  return fs
-    .readdirSync(WORLDS_DIR, { withFileTypes: true })
-    .filter((d) => d.isDirectory())
-    .map((d) => d.name)
-    .sort((a, b) => a.localeCompare(b));
+  return listWorldSetsIn(WORLDS_DIR);
 }
 
 /**
  * 解析世界设定集目录。setId 省略/空串 = 缺省（DEFAULT_WORLD_SET）。
- * 拒绝路径穿越与不存在/缺文件的设定集。
+ * 拒绝路径穿越与不存在/缺文件的设定集（WorldRepositoryError，HTTP 层映射 400/404）。
  */
 export function resolveWorldDir(setId?: string): string {
-  const id = setId === undefined || setId === "" ? DEFAULT_WORLD_SET : setId;
-  if (!/^[\w-]+$/.test(id)) throw new Error(`非法世界设定集名: ${JSON.stringify(id)}`);
-  const dir = path.join(WORLDS_DIR, id);
-  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
-    throw new Error(`世界设定集不存在: ${id}（可选：${listWorldSets().join(", ") || "无"}）`);
-  }
-  return dir;
+  return resolveWorldDirIn(WORLDS_DIR, setId, DEFAULT_WORLD_SET);
 }
 
 // ---------------------------------------------------------------------------

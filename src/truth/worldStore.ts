@@ -1,81 +1,14 @@
-import fs from "node:fs";
-import path from "node:path";
 import { z } from "zod";
-import { runDir } from "../config.js";
 import type { StateDelta } from "../types.js";
 import { WorkingSetEntrySchema, type WorkingSetEntry } from "./workingSet.js";
-import { SAVE_SCHEMA_VERSION, incompatibleSave } from "./saveSchema.js";
+import { SAVE_SCHEMA_VERSION } from "./saveSchema.js";
 import { TimeAnchorSchema, minutesToWorldTime, worldTimeToMinutes, type TimeAnchor } from "./timeStore.js";
+import { VarChangeSchema, deleteByPath, getByPath, makeVarChange, setByPath, type VarChange } from "./varChanges.js";
 
 export type StateTree = Record<string, unknown>;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-export const VarChangeSchema = z.object({
-  path: z.string(),
-  before: z.unknown(),
-  after: z.unknown(),
-  before_exists: z.boolean().optional(),
-  /** 信息性标记（直编删除路径时置 false）：反转只依赖 before/before_exists，不读 after 侧 */
-  after_exists: z.boolean().optional(),
-});
-export type VarChange = z.infer<typeof VarChangeSchema>;
-
-export function makeVarChange(path: string, before: unknown, after: unknown): VarChange {
-  const change: VarChange = { path, before: before ?? null, after: after ?? null };
-  if (before === undefined) change.before_exists = false;
-  return change;
-}
-
-export function getByPath(root: unknown, dotted: string): unknown {
-  let node = root;
-  for (const segment of dotted.split(".")) {
-    if (typeof node !== "object" || node === null) return undefined;
-    node = (node as Record<string, unknown>)[segment]; // 数组按数字字符串下标取值
-  }
-  return node;
-}
-
-export function setByPath(root: Record<string, unknown>, dotted: string, value: unknown): void {
-  const segments = dotted.split(".");
-  if (segments.length === 0 || segments.some((s) => s === "")) throw new Error(`invalid path: ${dotted}`);
-  let node: Record<string, unknown> = root;
-  for (const segment of segments.slice(0, -1)) {
-    const child = node[segment];
-    if (child === undefined) {
-      const fresh: Record<string, unknown> = {};
-      node[segment] = fresh;
-      node = fresh;
-    } else if (typeof child === "object" && child !== null) {
-      node = child as Record<string, unknown>; // 数组同样按数字字符串下标穿透
-    } else throw new Error(`path ${dotted} 穿过非对象节点: ${segment}`);
-  }
-  node[segments[segments.length - 1]!] = value;
-}
-
-export function deleteByPath(root: Record<string, unknown>, dotted: string, minDepth = 0): void {
-  const segments = dotted.split(".");
-  const stack: [Record<string, unknown>, string][] = [];
-  let node: Record<string, unknown> = root;
-  for (const segment of segments.slice(0, -1)) {
-    const child = node[segment];
-    if (typeof child !== "object" || child === null) return;
-    stack.push([node, segment]);
-    node = child as Record<string, unknown>;
-  }
-  const leafKey = segments[segments.length - 1]!;
-  // 数组元素删除 = splice（before_exists=false 的反转：该下标原本不存在，删除后长度复原）；
-  // 对象键删除 = delete
-  if (Array.isArray(node)) node.splice(Number(leafKey), 1);
-  else delete node[leafKey];
-  for (let i = stack.length - 1; i >= minDepth; i--) {
-    const [parent, segment] = stack[i]!;
-    const child = parent[segment];
-    if (isRecord(child) && Object.keys(child).length === 0) delete parent[segment];
-    else break;
-  }
 }
 
 export function applyDeltas(state: StateTree, deltas: StateDelta[]): StateTree {
@@ -105,15 +38,39 @@ export function applyDeltas(state: StateTree, deltas: StateDelta[]): StateTree {
   return next;
 }
 
-export const PipelinePhaseSchema = z.enum(["await_player", "await_character", "await_gm", "await_prose"]);
-export type PipelinePhase = z.infer<typeof PipelinePhaseSchema>;
+/**
+ * 步骤变化分段（存档 v7，docs/optimization-review.md §3「步骤变化分段」）：
+ * setup = 调度在该步执行前产生的变化（时钟跳转/周期计数/维护性 acted 清零/邀请激活 timer 弹出）；
+ * effects = 本步 DecisionPackage/AdjudicationPackage 经效果规划器产生的变化。
+ * 取代数组下标定位（effects_from/markers_from）；回滚倒序反转 effects 再倒序反转 setup。
+ */
+export const StepChangesSchema = z.object({
+  setup: z.array(VarChangeSchema),
+  effects: z.array(VarChangeSchema),
+});
+export type StepChanges = z.infer<typeof StepChangesSchema>;
+
+/** 空分段（每次调用新建，防共享数组被改写）。 */
+export function emptyStepChanges(): StepChanges {
+  return { setup: [], effects: [] };
+}
+
+/**
+ * 扁平化（先 setup 后 effects，与旧扁平 var_changes 同序）：
+ * 倒序反转该序列 ≡ 先倒序 effects 再倒序 setup——回滚/CommitPlan/测试断言共用一个出口。
+ */
+export function flatChanges(changes: StepChanges | undefined): VarChange[] {
+  return [...(changes?.setup ?? []), ...(changes?.effects ?? [])];
+}
+
 export const PipelineCurrentSchema = z.object({
   seq: z.number(), kind: z.string(), result: z.unknown(),
-  var_changes: z.array(VarChangeSchema).optional(), interrupted: z.boolean().optional(), edited: z.boolean().optional(),
+  changes: StepChangesSchema.optional(), interrupted: z.boolean().optional(), edited: z.boolean().optional(),
 });
 export type PipelineCurrent = z.infer<typeof PipelineCurrentSchema>;
 export const PipelineSchema = z.object({
-  seq: z.number(), phase: PipelinePhaseSchema, working_set: z.array(WorkingSetEntrySchema), current: PipelineCurrentSchema.nullable(),
+  // phase 已删除（v7）：派生量不落盘，消费方一律 phaseOf(deriveNext(...)) 现算
+  seq: z.number(), working_set: z.array(WorkingSetEntrySchema), current: PipelineCurrentSchema.nullable(),
 });
 export type Pipeline = z.infer<typeof PipelineSchema>;
 
@@ -125,23 +82,36 @@ export const WorldFileSchema = z.object({
 });
 export type WorldFile = z.infer<typeof WorldFileSchema>;
 
-const INITIAL_PIPELINE: Pipeline = { seq: 0, phase: "await_player", working_set: [], current: null };
+const INITIAL_PIPELINE: Pipeline = { seq: 0, working_set: [], current: null };
 
+/**
+ * world/pipeline 状态容器（纯内存，无 IO）：每次变异只改内存；
+ * 落盘由 GenerationRepository 在步边界整代提交（存档 v7，唯一写盘出口）。
+ */
 export class WorldStore {
-  private file: string;
   private data: WorldFile;
 
-  constructor(runId: string, initial: { world: StateTree & { time: TimeAnchor } }, baseDir?: string) {
-    const dir = path.join(baseDir ?? runDir(runId));
-    fs.mkdirSync(dir, { recursive: true });
-    this.file = path.join(dir, "world.json");
-    if (fs.existsSync(this.file)) {
-      try { this.data = WorldFileSchema.parse(JSON.parse(fs.readFileSync(this.file, "utf8"))); }
-      catch (error) { throw incompatibleSave(error); }
-    } else {
-      this.data = { schema_version: SAVE_SCHEMA_VERSION, world: initial.world, pipeline: { ...INITIAL_PIPELINE, working_set: [] } };
-      this.persist();
-    }
+  constructor(data: WorldFile) {
+    this.data = JSON.parse(JSON.stringify(data)) as WorldFile;
+  }
+
+  /** 新档初始容器：world 变量树 + 空流水线。 */
+  static initial(world: StateTree & { time: TimeAnchor }): WorldStore {
+    return new WorldStore({
+      schema_version: SAVE_SCHEMA_VERSION,
+      world,
+      pipeline: { ...INITIAL_PIPELINE, working_set: [] },
+    });
+  }
+
+  /** 整代提交的写盘数据源（world.json 信封）。 */
+  saveData(): WorldFile {
+    return this.data;
+  }
+
+  /** 数据整体替换（错误再同步用：对象身份保持，内容回到指定 Generation）。 */
+  restoreData(data: WorldFile): void {
+    this.data = JSON.parse(JSON.stringify(data)) as WorldFile;
   }
 
   get world(): StateTree & { time: TimeAnchor } { return this.data.world; }
@@ -160,7 +130,6 @@ export class WorldStore {
       changes.push(makeVarChange(`world.${delta.path}`, before, getByPath(nextWorld, delta.path)));
     }
     this.data = { ...this.data, world: nextWorld };
-    this.persist();
     return changes;
   }
 
@@ -169,7 +138,6 @@ export class WorldStore {
     const before = this.data.world.time;
     const after = minutesToWorldTime(to);
     this.data = { ...this.data, world: { ...this.data.world, time: after } };
-    this.persist();
     return { path: "world.time", before, after };
   }
 
@@ -180,12 +148,10 @@ export class WorldStore {
     if (change.before_exists === false) deleteByPath(world, dotted);
     else setByPath(world, dotted, change.before);
     this.data = { ...this.data, world };
-    this.persist();
   }
 
   setPipeline(patch: Partial<Pipeline>): void {
     this.data = { ...this.data, pipeline: { ...this.data.pipeline, ...patch } };
-    this.persist();
   }
 
   snapshot(): { world: StateTree & { time: TimeAnchor } } {
@@ -194,15 +160,11 @@ export class WorldStore {
 
   restoreSnapshot(snapshot: { world: StateTree & { time: TimeAnchor } }): void {
     this.data = { ...this.data, world: JSON.parse(JSON.stringify(snapshot.world)) as StateTree & { time: TimeAnchor } };
-    this.persist();
   }
 
-  /** 整体替换世界变量树（状态栏直接编辑用）：先校验（time 锚必须保留），失败抛错不落盘。 */
+  /** 整体替换世界变量树（状态栏直接编辑用）：先校验（time 锚必须保留），失败抛错不变更。 */
   replaceWorld(world: unknown): void {
     const parsed = WorldStateSchema.parse(world);
     this.data = { ...this.data, world: parsed };
-    this.persist();
   }
-
-  private persist(): void { fs.writeFileSync(this.file, JSON.stringify(this.data, null, 2) + "\n", "utf8"); }
 }

@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { CHARACTER_PLACEHOLDERS, type CharacterContext } from "../src/agents/character.js";
 import { GM_PLACEHOLDERS, type GmContext } from "../src/agents/gm.js";
-import { GameSession, LEAVE_TIMER } from "../src/loop.js";
+import type { GameSession } from "../src/application/gameSession.js";
+import { LEAVE_TIMER } from "../src/scheduler/simulator.js";
 import type { CharacterState } from "../src/truth/charactersStore.js";
 import {
   buildAdjudication as gmPkg,
@@ -23,6 +24,13 @@ const callsText = h.callsText.bind(h);
 const readRun = h.runFile.bind(h);
 const charState = h.charState.bind(h);
 const worldVars = h.worldVars.bind(h);
+
+/** StepChanges 扁平视图（断言用：先 setup 后 effects，与存档 v6 扁平 var_changes 同序）。 */
+function flat(step: {
+  changes?: { setup: readonly { path: string; before?: unknown; after?: unknown }[]; effects: readonly { path: string; before?: unknown; after?: unknown }[] } | undefined;
+}): readonly { path: string; before?: unknown; after?: unknown }[] {
+  return [...(step.changes?.setup ?? []), ...(step.changes?.effects ?? [])];
+}
 
 function makeSession(
   runId: string,
@@ -98,7 +106,7 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
       [{ payload: "GM事件", tags: ["known_by:C1001", "known_by:C0"], t: 0, seq: 5 }],
     );
 
-    // seq7 是 current（组 1 第三周期首步）：var_changes 含时钟跳转
+    // seq7 是 current（组 1 第三周期首步）：changes 含时钟跳转（setup 段）
     const world = JSON.parse(readRun(runId, "world.json")) as {
       world: { time: { min: number } };
       pipeline: { working_set: { cid: string }[] };
@@ -106,7 +114,7 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     assert.equal(world.world.time.min, 5);
     assert.deepEqual(world.pipeline.working_set.map((w) => w.cid), ["C1001"], "GM 步已清算工作集");
     const seq7 = session.getPipelineCurrent()!;
-    assert.deepEqual(seq7.var_changes!.map((c) => c.path), ["world.time", "C1001.acted"]);
+    assert.deepEqual(flat(seq7).map((c) => c.path), ["world.time", "characters.C1001.acted"]);
 
     // 正文输入：台词+内心（无标记）+ GM 事件包
     const prosePrompt = callsText("prose", 6);
@@ -147,9 +155,9 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     assert.equal(worldVars(session)["cycles_since_gm"], 0);
     assert.equal(charState(session, "C1001").timer, 5);
     assert.equal(charState(session, "C0").timer, 5, "在场组未行动成员一并被 GM 推进（组不撕裂）");
-    // 结算成员转后台 acted 清零（GM 步 var_changes 留痕）；C1001 在 seq3 重新行动
+    // 结算成员转后台 acted 清零（GM 步 changes 留痕）；C1001 在 seq3 重新行动
     assert.ok(
-      session.getArchive()[1]!.var_changes!.some((c) => c.path === "C1001.acted" && c.after === false),
+      flat(session.getArchive()[1]!).some((c) => c.path === "characters.C1001.acted" && c.after === false),
       "结算成员转后台 acted 清零",
     );
     assert.equal(charState(session, "C1001").acted, true, "seq3 已重新行动");
@@ -189,9 +197,9 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
       [...session.getArchive(), session.getPipelineCurrent()!].map((e) => `${e.seq}:${e.kind}`),
       ["1:player", "2:character:C1001", "3:gm"],
     );
-    // 玩家步 var_changes 含触发落账（结构化输入的标记程序即时执行）
+    // 玩家步 changes 含触发落账（结构化输入的标记程序即时执行）
     const seq1 = session.getArchive()[0]!;
-    assert.ok(seq1.var_changes!.some((c) => c.path === "world.gm_trigger" && c.after === true));
+    assert.ok(flat(seq1).some((c) => c.path === "world.gm_trigger" && c.after === true));
     // 同值批注入隔离：C1001 的 #当前场景 不含玩家言行；GM 见全部
     assert.ok(!callsText("character:C1001", 2).includes("秘密输入X"), "同值批互不可见");
     assert.ok(callsText("gm", 3).includes("秘密输入X"));
@@ -322,11 +330,11 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     assert.equal(charState(session, "C1001").channel, 1);
     assert.equal(charState(session, "C1002").channel, 1);
     assert.equal(session.pipelineInfo.phase, "await_player");
-    // 邀请延迟生效：邀请时 timer 不动，激活落账才从邀请前值 60 置 0（应答步 var_changes 留痕）
+    // 邀请延迟生效：邀请时 timer 不动，激活落账才从邀请前值 60 置 0（应答步 changes 留痕）
     const answer = session.getArchive()[2]!;
     assert.equal(answer.kind, "character:C1002");
     assert.ok(
-      answer.var_changes!.some((c) => c.path === "C1002.timer" && c.before === 60 && c.after === 0),
+      flat(answer).some((c) => c.path === "characters.C1002.timer" && c.before === 60 && c.after === 0),
       "邀请激活：timer 置 0 弹出（before 留存邀请前值）",
     );
     // confirm：并入邀请者组（新组）、位置 ≠ 组位置 → 先攻 8+5-1=12、timer 归 0、计入已行动
@@ -336,15 +344,15 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     assert.notEqual(invitee.group, 0);
     assert.deepEqual(invitee.initiative, { value: 12, group: invitee.group });
     assert.ok(
-      answer.var_changes!.some((c) => c.path === "C1002.acted" && c.after === true),
+      flat(answer).some((c) => c.path === "characters.C1002.acted" && c.after === true),
       "首轮回复计入已行动（confirm 效应置 acted）",
     );
-    // incoming_contact 传递路径：应答步激活时把邀请者 + 途径注入 CharacterContext（邀请者 @C1001、途径「电话」）
-    // （应答是 C1002 最近一次激活时观测；其后的常规激活会清空该上下文）
-    const agentC1002 = (
-      session as unknown as { charAgents: Map<string, { incomingContact: unknown }> }
-    ).charAgents.get("C1002")!;
-    assert.deepEqual(agentC1002.incomingContact, { inviter: "C1001", channel: "电话" });
+    // incoming_contact 注入（无状态 activation §4，逐调用 Context）：应答步（seq3）激活的 prompt
+    // 含邀请者 + 途径通知；其后的常规激活（seq8，见下方续跑）不再注入该通知
+    assert.ok(
+      callsText("character:C1002", 3).includes("@C1001 正在通过「电话」联系你"),
+      "应答步激活注入被联系通知（邀请者 @C1001、途径「电话」）",
+    );
 
     // 玩家行动（seq5）→ 周期完成 X=1 → 周期末 GM（seq6，覆盖三人）→ 全部推远到 15
     // → t=15 组弹出：C1001（先攻 25，seq7）→ C1002（12，seq8）→ 停等玩家
@@ -356,14 +364,16 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
       "1:character:C1001", "2:gm", "3:character:C1002", "4:character:C1001",
       "5:player", "6:gm", "7:character:C1001", "8:character:C1002",
     ]);
-    // GM（seq6）重设 timer 后：双方推入未来、结算成员 acted 清零（GM 步 var_changes 留痕）、频道跨地点存续（不同地不清）
+    // GM（seq6）重设 timer 后：双方推入未来、结算成员 acted 清零（GM 步 changes 留痕）、频道跨地点存续（不同地不清）
     assert.equal(charState(session, "C1002").timer, 15);
     assert.ok(
-      session.getArchive()[5]!.var_changes!.some((c) => c.path === "C1002.acted" && c.after === false),
+      flat(session.getArchive()[5]!).some((c) => c.path === "characters.C1002.acted" && c.after === false),
       "结算成员 acted 清零",
     );
     assert.equal(charState(session, "C1002").channel, 1, "接受者保留频道（持有者仍异地）");
     assert.equal(charState(session, "C1001").channel, 1);
+    // 常规激活（seq8 非应答步）不再注入被联系通知
+    assert.ok(!callsText("character:C1002", 8).includes("正在通过"), "常规激活不注入被联系通知");
   });
 
   it("邀请·拒绝：timer 还原为邀请前值、不计入已行动、失去频道（全体同地 → 频道全清）", async () => {
@@ -398,14 +408,14 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     // seq5 玩家 → 周期完成 → seq6 周期末 GM → t=15 弹出：seq7 C1001（C1002 单人组串行在后）→ 停等玩家
     assert.equal(session.turnCount, 7);
     assert.equal(session.pipelineInfo.phase, "await_player");
-    // 拒绝：timer 自动还原为邀请前值（应答步 var_changes：0 → 60），不调用 GM
+    // 拒绝：timer 自动还原为邀请前值（应答步 changes：0 → 60），不调用 GM
     const answer = session.getArchive()[2]!;
     assert.ok(
-      answer.var_changes!.some((c) => c.path === "C1002.timer" && c.before === 0 && c.after === 60),
+      flat(answer).some((c) => c.path === "characters.C1002.timer" && c.before === 0 && c.after === 60),
       "拒绝：timer 自动还原为邀请前值",
     );
     assert.ok(
-      !answer.var_changes!.some((c) => c.path === "C1002.acted" && c.after === true),
+      !flat(answer).some((c) => c.path === "characters.C1002.acted" && c.after === true),
       "拒绝回复不计入已行动",
     );
     const invitee = charState(session, "C1002");
@@ -468,7 +478,7 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     assert.equal(resumed.pipelineInfo.phase, "await_player");
   });
 
-  it("interrupted character 保留 schedule setup var_changes（含时钟跳转），回滚逐字节恢复", async () => {
+  it("interrupted character 保留 schedule setup 段（含时钟跳转；effects 空段），回滚逐字节恢复", async () => {
     const worldId = `w-t7-${process.pid}`;
     setupWorld(worldId, [
       { id: "C0", name: "玩家", location: "loc_A", timer: 0, isPlayer: true },
@@ -484,7 +494,7 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     await session.handlePlayerInput("推进"); // seq2 player → seq3 GM(full) → seq4 prose → seq5 abort
     const current = session.getPipelineCurrent()!;
     assert.equal(current.interrupted, true);
-    assert.deepEqual(current.var_changes?.map((change) => change.path), ["world.time"]);
+    assert.deepEqual(flat(current).map((change) => change.path), ["world.time"]);
     assert.equal(session.worldTime, 5);
     session.rollbackTo(4);
     const beforeWorld = readRun(runId, "world.json");
@@ -550,8 +560,8 @@ describe("主循环集成（M2-b：无判定轮 + 行动顺序表 + 标记体系
     const current = session.getPipelineCurrent()!;
     assert.equal(current.edited, true);
     assert.deepEqual(
-      current.var_changes?.map((c) => c.path).filter((p) => p.endsWith(".timer")).sort(),
-      ["C0.timer", "C1001.timer"],
+      flat(current).map((c) => c.path).filter((p) => p.endsWith(".timer")).sort(),
+      ["characters.C0.timer", "characters.C1001.timer"],
     );
 
     llm.abortAt = null;

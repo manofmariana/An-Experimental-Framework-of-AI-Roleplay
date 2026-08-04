@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { GameSession, LEAVE_TIMER } from "../src/loop.js";
+import type { GameSession } from "../src/application/gameSession.js";
+import { LEAVE_TIMER } from "../src/scheduler/simulator.js";
 import {
   buildAdjudication as gmPkg,
   buildDecision as decision,
@@ -157,7 +158,7 @@ describe("工作集跨周期注入（#当前场景：GM 清算前的全体言行
 });
 
 
-describe("编辑 = 重读整个输出并完整处理（effects_from 整段反向 + 全效应重放）", () => {
+describe("编辑 = 重读整个输出并完整处理（changes.effects 整段反向 + 同一规划器全效应重放）", () => {
   it("邀请应答步：编辑移除 confirm → 接受效应全反向（含单人邀请者的配对）+ 拒绝效应重放；再编辑加回 confirm → 再次接受", async () => {
     // C0 远未来（不抢前台）；C1001 单人邀请者；C1002 受邀者。开局无同桶 → 无组无先攻投掷。
     const session = makeSession("invite-edit", [
@@ -201,15 +202,16 @@ describe("编辑 = 重读整个输出并完整处理（effects_from 整段反向
     assert.equal(inviterAfterReject.group, 0, "单人邀请者的配对成组被一并反向");
     assert.equal(inviterAfterReject.initiative, null, "邀请者补投先攻被反向");
     assert.equal(inviterAfterReject.channel, null, "全体持有者同地 → 频道全清");
-    // 落账：effects_from/invitation 上下文保留（供再次编辑）
-    let result = session.getPipelineCurrent()!.result as {
-      effects_from?: number;
+    // 落账：changes 分段（setup 保留在反向范围外）+ invitation 上下文保留（供再次编辑）
+    let current = session.getPipelineCurrent()!;
+    let result = current.result as {
       invitation?: { contactSeq: number; inviter: string; channel: string; preInviteTimer: number | null };
     };
-    assert.equal(result.effects_from, 2, "setup（时钟跳转 + timer 弹出）保留在反向范围外");
+    assert.equal(current.changes?.setup.length, 2, "setup（时钟跳转 + timer 弹出）保留在反向范围外");
+    assert.ok(result !== null && !("effects_from" in result) && !("markers_from" in result), "下标定位字段已删除");
     assert.deepEqual(result.invitation, { contactSeq: 1, inviter: "C1001", channel: "电话", preInviteTimer: 60 });
 
-    // 连续编辑同一步：加回 confirm → 基于第一次落账的 effects_from 再次反向+重放接受
+    // 连续编辑同一步：加回 confirm → 基于落账的 changes.effects 再次反向+重放接受
     session.editResult(JSON.stringify(decision({ dialogue: "改主意了，我到。", markers: [{ type: "confirm" }] })));
     const reaccepted = charState(session, "C1002");
     assert.notEqual(reaccepted.group, 0);
@@ -218,8 +220,8 @@ describe("编辑 = 重读整个输出并完整处理（effects_from 整段反向
     assert.deepEqual(reaccepted.initiative, { value: 12, group: reaccepted.group });
     assert.equal(reaccepted.timer, 0);
     assert.equal(reaccepted.acted, true);
-    result = session.getPipelineCurrent()!.result as {
-      effects_from?: number;
+    current = session.getPipelineCurrent()!;
+    result = current.result as {
       invitation?: { contactSeq: number; inviter: string; channel: string; preInviteTimer: number | null };
     };
     assert.deepEqual(result.invitation, { contactSeq: 1, inviter: "C1001", channel: "电话", preInviteTimer: 60 });

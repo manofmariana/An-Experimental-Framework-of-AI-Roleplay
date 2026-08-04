@@ -7,7 +7,7 @@ import {
   proseWindow,
   proseWindowFor,
   proseWindowForRound,
-} from "../src/loop.js";
+} from "../src/application/historyProjection.js";
 import type { ArchiveEntry } from "../src/truth/archive.js";
 import type { Event } from "../src/types.js";
 
@@ -28,7 +28,7 @@ const adjudication = {
 };
 
 function step(seq: number, kind: string, result: unknown): ArchiveEntry {
-  return { seq, kind, result, var_changes: [] };
+  return { seq, kind, result, changes: { setup: [], effects: [] } };
 }
 
 /** 含玩家的完整轮：player → character:C1001 → gm → prose。 */
@@ -143,7 +143,7 @@ describe("buildHistory（M2：按轮分组——一轮 = 若干 actor 步 + gm �
       kind: "character:C1001",
       result: { raw: "半截 JSON" },
       interrupted: true,
-      var_changes: [],
+      changes: { setup: [], effects: [] },
     });
     assert.equal(h.mode, "full");
     if (h.mode !== "full") return;
@@ -158,7 +158,7 @@ describe("buildHistory（M2：按轮分组——一轮 = 若干 actor 步 + gm �
   it("Web 历史渲染对缺失 decision 的 interrupted character 使用安全占位", async () => {
     const fs = await import("node:fs");
     const path = await import("node:path");
-    const source = fs.readFileSync(path.join(process.cwd(), "web/pages/play.js"), "utf8");
+    const source = fs.readFileSync(path.join(process.cwd(), "web/views/play-stream.js"), "utf8");
     assert.match(source, /if \(character\.decision\)[\s\S]*character\.interrupted/);
   });
 });

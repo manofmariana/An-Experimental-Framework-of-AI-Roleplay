@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { GameSession } from "../src/loop.js";
+import type { GameSession } from "../src/application/gameSession.js";
 import { buildAdjudication as gmPkg } from "./builders/index.js";
 import { SessionHarness } from "./harness/session.js";
 

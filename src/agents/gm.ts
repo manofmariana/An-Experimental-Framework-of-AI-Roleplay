@@ -1,14 +1,13 @@
 import { compilePrompt, type PlaceholderRegistry } from "../compile/compiler.js";
 import { loadTemplate } from "../compile/template.js";
 import type { Display } from "../display.js";
-import { LLMAbortedError, type ChatPort } from "../llm/chatPort.js";
-import type { CharacterState, CharactersStore } from "../truth/charactersStore.js";
+import type { ChatPort } from "../llm/chatPort.js";
+import type { CharacterState } from "../truth/charactersStore.js";
 import { buildCastLines, type CastMember } from "../truth/identity.js";
-import type { Lorebook } from "../truth/lorebook.js";
 import { snapshotCharacterStates } from "../truth/snapshot.js";
-import type { StateTree } from "../truth/worldStore.js";
-import { AdjudicationPackageSchema, minutesToText, spanToMinutes, type AdjudicationPackage, type Event } from "../types.js";
+import { AdjudicationPackageSchema, minutesToText, spanToMinutes, type AdjudicationPackage } from "../types.js";
 import { extractJson } from "./json.js";
+import { runStructuredActivation } from "./structuredActivation.js";
 
 /** 普通在场轮的上下文级裁决契约：timer 精确覆盖"同步组全体成员（含刚离组者）"
  *  （以组成员身份为准、无论 timer 值——周期序列是组状态、与 timer 无关，覆盖未行动成员是为
@@ -48,41 +47,27 @@ export const GM_PLACEHOLDERS: PlaceholderRegistry<GmContext> = {
   contacts: { description: "可联系对象列表（后台且未持有频道）", provide: (context) => playable(context.states).filter(([, state]) => state.channel === null && (state.timer === null || state.timer > context.clock)).map(([cid, state]) => `- @${cid}（${state.name}）：${state.location.name}`).join("\n") },
 };
 
-export class GMAgent {
-  readonly agentName = "gm"; private loreFull: string; private events: string[] = []; private proseWindow: string[] = []; private clock = 0; private timeHeader = "";
-  constructor(private llm: ChatPort, private setting: string, lorebook: Lorebook, private cast: CastMember[], private characters: CharactersStore) {
-    this.loreFull = lorebook.all().map((entry) => `[${entry.id}]（标签：${entry.tags.join("、")}）\n${entry.content}`).join("\n\n");
-  }
-  observe(events: Event[]): void { for (const event of events) this.events.push(event.payload); }
-  restore(events: Event[]): void { this.events = events.map((event) => event.payload); }
-  updateWindow(blocks: string[]): void { this.proseWindow = blocks; }
-  updateSituation(clock: number, timeHeader: string): void { this.clock = clock; this.timeHeader = timeHeader; }
+/**
+ * 无状态 GM activation（docs/optimization-review.md §4）：构造只持 ChatPort，
+ * 全量上下文（含 loreFull——lore 运行期可编辑，必须逐调用读档内副本渲染）由
+ * application context builder 现算传入；无任何跨调用缓存。
+ */
+export class GmActivation {
+  readonly agentName = "gm";
+  constructor(private llm: ChatPort) {}
   /** expectedTimerCids = timer 必须精确覆盖的 cid 集（同步组全体成员 ∪ 刚离组者，由 loop.expectedGmTimerCids 派生） */
-  async adjudicate(turn: number, sceneText: string, world: StateTree, expectedTimerCids: readonly string[], signal: AbortSignal, display?: Display): Promise<{ raw: string; pkg: AdjudicationPackage }> {
+  async adjudicate(context: GmContext, turn: number, expectedTimerCids: readonly string[], signal: AbortSignal, display?: Display): Promise<{ raw: string; pkg: AdjudicationPackage }> {
     const template = loadTemplate("gm", Object.keys(GM_PLACEHOLDERS));
-    const messages = compilePrompt(template, GM_PLACEHOLDERS, {
-      setting: this.setting, cast: this.cast, loreFull: this.loreFull, events: this.events,
-      proseWindow: this.proseWindow, currentScene: sceneText, worldSnapshot: JSON.stringify(world),
-      states: this.characters.all(), clock: this.clock, timeHeader: this.timeHeader,
+    const messages = compilePrompt(template, GM_PLACEHOLDERS, context);
+    return runStructuredActivation<AdjudicationPackage>({
+      port: this.llm, agentName: this.agentName, seq: turn, messages, signal,
+      ...(display !== undefined ? { display } : {}),
+      parse: (text) => {
+        const pkg = AdjudicationPackageSchema.parse(extractJson(text));
+        validateAdjudicationRound(pkg, expectedTimerCids);
+        return pkg;
+      },
+      failureLabel: "GM 裁决包解析失败",
     });
-    const onDelta = display ? (delta: string) => display.delta(this.agentName, delta) : undefined;
-    const onReasoningDelta = display ? (delta: string) => display.reasoningDelta(this.agentName, delta) : undefined;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const { text } = await this.llm.chat(
-        {
-          agent: this.agentName, seq: turn, messages,
-          ...(onDelta !== undefined ? { onDelta } : {}),
-          ...(onReasoningDelta !== undefined ? { onReasoningDelta } : {}),
-        },
-        signal,
-      );
-      try { const pkg = AdjudicationPackageSchema.parse(extractJson(text)); validateAdjudicationRound(pkg, expectedTimerCids); return { raw: text, pkg }; }
-      catch (error) {
-        if (error instanceof LLMAbortedError) throw error;
-        if (attempt === 1) throw new Error(`GM 裁决包解析失败（重试后仍失败）。原文：\n${text}`, { cause: error });
-        display?.retry(this.agentName, attempt + 1, (error as Error).message);
-      }
-    }
-    throw new Error("unreachable");
   }
 }

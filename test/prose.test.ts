@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { PROSE_PLACEHOLDERS, type ProseContext } from "../src/agents/prose.js";
 import { compilePrompt } from "../src/compile/compiler.js";
 import { loadTemplate } from "../src/compile/template.js";
-import { participantTags } from "../src/loop.js";
+import { participantTags } from "../src/application/historyProjection.js";
 import { Lorebook } from "../src/truth/lorebook.js";
 
 describe("prose 输入", () => {

@@ -1,12 +1,9 @@
-import fs from "node:fs";
-import path from "node:path";
 import { z } from "zod";
-import { runDir } from "../config.js";
 import type { CharacterManifest } from "../agents/character.js";
 import { InitiativeSchema, LocationSchema, PLAYER_CID, type RelationUpdate } from "../types.js";
 import { RelationsDataSchema, normalizeCid, type RelationEntry, type RelationsData } from "./identity.js";
-import { deleteByPath, makeVarChange, setByPath, type VarChange } from "./worldStore.js";
-import { SAVE_SCHEMA_VERSION, incompatibleSave } from "./saveSchema.js";
+import { deleteByPath, makeVarChange, setByPath, type VarChange } from "./varChanges.js";
+import { SAVE_SCHEMA_VERSION } from "./saveSchema.js";
 
 export const CharacterStateSchema = z.object({
   name: z.string().min(1), gender: z.string(), age: z.string(), personality: z.string().min(1),
@@ -45,10 +42,22 @@ function fromManifest(manifest: CharacterManifest, startMinutes: number): Charac
   };
 }
 
+/**
+ * 角色状态容器（纯内存，无 IO）：每次变异只改内存；
+ * 落盘由 GenerationRepository 在步边界整代提交（存档 v6，唯一写盘出口）。
+ */
 export class CharactersStore {
-  private constructor(private file: string, private data: CharactersFile) {}
+  private data: CharactersFile;
 
-  static initFrom(runId: string, manifests: CharacterManifest[], startMinutes: number, baseDir?: string): CharactersStore {
+  constructor(characters: Record<string, CharacterState>) {
+    this.data = {
+      schema_version: SAVE_SCHEMA_VERSION,
+      characters: JSON.parse(JSON.stringify(characters)) as Record<string, CharacterState>,
+    };
+  }
+
+  /** 纯工厂：manifests → 初始角色表（建档校验：CID 不重复、C0 与 isPlayer 双向一致）。 */
+  static fromManifests(manifests: CharacterManifest[], startMinutes: number): CharactersStore {
     const characters: Record<string, CharacterState> = {};
     for (const manifest of manifests) {
       if (characters[manifest.id] !== undefined) throw new Error(`重复角色 CID: ${manifest.id}`);
@@ -56,17 +65,12 @@ export class CharactersStore {
       if (manifest.id !== PLAYER_CID && manifest.isPlayer) throw new Error(`只有 ${PLAYER_CID} 可以标记为玩家: ${manifest.id}`);
       characters[manifest.id] = fromManifest(manifest, startMinutes);
     }
-    const store = new CharactersStore(path.join(baseDir ?? runDir(runId), "characters.json"), {
-      schema_version: SAVE_SCHEMA_VERSION, characters,
-    });
-    store.persist();
-    return store;
+    return new CharactersStore(characters);
   }
 
-  static load(runId: string, baseDir?: string): CharactersStore {
-    const file = path.join(baseDir ?? runDir(runId), "characters.json");
-    try { return new CharactersStore(file, CharactersFileSchema.parse(JSON.parse(fs.readFileSync(file, "utf8")))); }
-    catch (error) { throw incompatibleSave(error); }
+  /** 整代提交的写盘数据源（characters.json 的 characters 载荷）。 */
+  saveData(): Record<string, CharacterState> {
+    return this.data.characters;
   }
 
   get(cid: string): CharacterState {
@@ -89,17 +93,16 @@ export class CharactersStore {
       if (update.name !== undefined) next.name = update.name;
       if (update.impression !== undefined) next.impression = update.impression;
       relations[target] = next;
-      changes.push(makeVarChange(`${cid}.relations.${target}`, previous, next));
+      changes.push(makeVarChange(`characters.${cid}.relations.${target}`, previous, next));
     }
     this.data = { ...this.data, characters: { ...this.data.characters, [cid]: { ...state, relations } } };
-    this.persist();
     return changes;
   }
 
   appendLongTerm(cid: string, text: string): VarChange {
     const state = this.get(cid); const before = [...state.long_term_memory]; const after = [...before, text];
     this.data = { ...this.data, characters: { ...this.data.characters, [cid]: { ...state, long_term_memory: after } } };
-    this.persist(); return makeVarChange(`${cid}.long_term_memory`, before, after);
+    return makeVarChange(`characters.${cid}.long_term_memory`, before, after);
   }
 
   setVars(cid: string, patch: CharacterVarPatch): VarChange[] {
@@ -107,11 +110,10 @@ export class CharactersStore {
     for (const key of CHARACTER_VAR_KEYS) {
       const value = patch[key]; if (value === undefined) continue;
       next[key] = JSON.parse(JSON.stringify(value)) as unknown;
-      changes.push(makeVarChange(`${cid}.${key}`, state[key], value));
+      changes.push(makeVarChange(`characters.${cid}.${key}`, state[key], value));
     }
     if (changes.length > 0) {
       this.data = { ...this.data, characters: { ...this.data.characters, [cid]: next as CharacterState } };
-      this.persist();
     }
     return changes;
   }
@@ -121,25 +123,24 @@ export class CharactersStore {
     if (existing !== undefined) {
       if (!existing.isPlayer) {
         this.data = { ...this.data, characters: { ...this.data.characters, [PLAYER_CID]: { ...existing, isPlayer: true } } };
-        this.persist();
       }
       return;
     }
     this.data = { ...this.data, characters: { ...this.data.characters, [PLAYER_CID]: fromManifest({ ...manifest, id: PLAYER_CID, isPlayer: true }, startMinutes) } };
-    this.persist();
   }
 
   revertChange(change: VarChange): void {
-    const dot = change.path.indexOf("."); if (dot <= 0) throw new Error(`charactersStore 无法反向的路径: ${change.path}`);
-    const cid = change.path.slice(0, dot); const rest = change.path.slice(dot + 1); const state = this.data.characters[cid];
+    const PREFIX = "characters.";
+    if (!change.path.startsWith(PREFIX)) throw new Error(`charactersStore 无法反向的路径: ${change.path}`);
+    const dotted = change.path.slice(PREFIX.length); // 剥真相根前缀后：CID.rest
+    const dot = dotted.indexOf("."); if (dot <= 0) throw new Error(`charactersStore 无法反向的路径: ${change.path}`);
+    const cid = dotted.slice(0, dot); const rest = dotted.slice(dot + 1); const state = this.data.characters[cid];
     if (!state) throw new Error(`charactersStore 反向时找不到角色: ${cid}`);
     const copy = JSON.parse(JSON.stringify(state)) as Record<string, unknown>;
     if (change.before_exists === false) deleteByPath(copy, rest, 1); else setByPath(copy, rest, change.before);
     this.data = { ...this.data, characters: { ...this.data.characters, [cid]: copy as CharacterState } };
-    this.persist();
   }
 
   snapshot(): CharactersFile { return JSON.parse(JSON.stringify(this.data)) as CharactersFile; }
-  restoreSnapshot(snapshot: CharactersFile): void { this.data = CharactersFileSchema.parse(JSON.parse(JSON.stringify(snapshot))); this.persist(); }
-  private persist(): void { fs.mkdirSync(path.dirname(this.file), { recursive: true }); fs.writeFileSync(this.file, JSON.stringify(this.data, null, 2) + "\n", "utf8"); }
+  restoreSnapshot(snapshot: CharactersFile): void { this.data = CharactersFileSchema.parse(JSON.parse(JSON.stringify(snapshot))); }
 }

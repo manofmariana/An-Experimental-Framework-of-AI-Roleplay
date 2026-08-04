@@ -11,6 +11,9 @@
  */
 import { knownByTag, type Event } from "../types.js";
 
+/** 离开标记的"冻结"timer 哨兵（全项目单源）：未结算离开集合的判据 = group=0 且 timer 为该值；调度视图视同无计时器。 */
+export const LEAVE_TIMER = Number.MAX_SAFE_INTEGER;
+
 /** 调度视图中的角色（M2-b 契约：group 合并双变量；initiative 结构化 {value, group}）。 */
 export interface SimChar {
   /** 到期时刻（分钟标量，绝对时刻）；null = 无计时器 */

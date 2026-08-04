@@ -4,6 +4,8 @@
  */
 import type { CharacterManifest } from "../../src/agents/character.js";
 import type { CharacterState } from "../../src/truth/charactersStore.js";
+import type { SaveSet } from "../../src/truth/generationRepository.js";
+import { SAVE_SCHEMA_VERSION } from "../../src/truth/saveSchema.js";
 import type { Event } from "../../src/types.js";
 
 /**
@@ -82,6 +84,25 @@ export function buildEvent(overrides: Partial<Event> & { id: string }): Event {
     kind: "world",
     tags: [],
     payload: `payload-${overrides.id}`,
+    ...overrides,
+  };
+}
+
+const SAVE_SET_START = { y: 1, m: 1, d: 1, h: 6, min: 0 };
+
+/**
+ * 整代存档（Generation 六文件载荷）：缺省 = 刚建会话的空档（seq=0、无进行中步、仅玩家 C0），
+ * 即可提交态基线；各违规用例用 overrides 精准打破一条。
+ */
+export function buildSaveSet(overrides?: Partial<SaveSet>): SaveSet {
+  return {
+    world: { time: SAVE_SET_START },
+    pipeline: { seq: 0, working_set: [], current: null },
+    characters: { C0: buildCharacterState({ isPlayer: true }) },
+    events: [],
+    archive: [],
+    lore: { schema_version: SAVE_SCHEMA_VERSION, entries: [], changelog: [] },
+    time: { schema_version: SAVE_SCHEMA_VERSION, start: SAVE_SET_START, periods: [{ key: "白天", from: 6, to: 18 }] },
     ...overrides,
   };
 }

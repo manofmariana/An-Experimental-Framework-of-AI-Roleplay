@@ -1313,6 +1313,51 @@ Builder 不写盘；fixture 只测试外部兼容；fake 实现端口；harness 
 
 ## 12. 规模控制、接口收敛与实施顺序
 
+### 改造的根本目的
+
+本轮改造的根本目的不是增加架构层、文件数或接口数，而是让系统从“多个入口各自修改状态、各自解释规则、各自处理失败”的发散结构，收敛为少量可证明的一致路径：
+
+```text
+所有输入
+→ 制式 application command
+→ 统一 planner / deterministic preparation
+→ 单一 CommitPlan
+→ 单一 Generation commit
+→ 单 revision Snapshot / Transition
+```
+
+需要实现的最终性质是：
+
+1. **唯一真相写入路径**：正常输出、玩家输入、角色输出、GM 裁决、编辑重放、状态直编、规则计算和回滚不能各自拥有专线写法。
+2. **同一语义只实现一次**：玩家与 NPC 只在取得 DecisionPackage 的方式上不同；正常执行与编辑重放使用同一效果规划器；HTTP、WS、CLI 只负责把输入转为同一 application command。
+3. **状态在事务内收敛**：确定性规则、从动变量、调度准备和固定动作在同一 draft 中运行到固定点，一次提交，不暴露中间半状态。
+4. **读取绑定单一 revision**：Prompt、scheduler、query、Web Snapshot 和 Transition 都从同一个不可变 TruthSnapshot 读取，不拼接不同提交时刻的数据。
+5. **外部能力可替换**：LLM、文件系统、网络、随机数、墙钟、ID 和用户目录通过少量真实端口隔离，业务规则不依赖具体 adapter。
+6. **失败路径可证明**：中止、写盘失败、陈旧 revision、非法编辑和损坏存档有明确边界，不依靠“按顺序刚好没出错”。
+7. **扩展沿制式入口进入**：未来角色/世界变量膨胀、多角色批量修改、声明式动作、API presets、联机和多用户不再新增旁路，而是复用既有 command/query/commit/transition 接口。
+8. **降低净认知复杂度**：虽然模块和文件会增加，但任何单一业务规则所需理解的上下文、可写入口和失败状态必须减少。
+
+判断改造是否成功不能看“创建了多少新接口”，而应看：旧专线是否删除、同一规则是否只剩一个实现、一次命令是否只有一个提交、一个 query 是否只有一个 revision、测试是否无需穿透内部实现。
+
+### 净删除与核心文件瘦身要求
+
+改造不是在旧架构上叠加一套新架构。每阶段都必须产生净删除：删除旧 mutation、重复 planner、专用重放、专用 reroll、散落 persist、协议字面量、prototype patch 或全局路径旁路。短期兼容 adapter 必须只转发到新入口，不得保留独立状态和业务判断。
+
+`src/loop.ts` 是最明确的收敛指标。当前约 1900 行，混合 Session 装配、调度、邀请、角色/GM/正文步骤、效果应用、持久化、编辑、回滚、直编、pause/stop、query 和配置热更新。改造后这些职责分别进入 SessionFactory/composition root、scheduler derive、application planners、CommitExecutor、GenerationRepository、TruthQuery 和 SessionCoordinator。
+
+最终要求：
+
+- `loop.ts` 缩减到约 100–300 行的兼容 facade/composition entry，或者直接删除；
+- 不再包含文件 IO 或具体 LLM client；
+- 不再直接调用 Store mutation/persist；
+- 不再实现 effect、邀请推导、编辑专用重放、回滚细节或 HTTP/WS DTO；
+- 只允许转发 application command、暴露只读 Snapshot/query，或装配 Coordinator；
+- SessionCoordinator 自身也不得成为新的巨型 loop，建议控制在约 300–500 行，领域规则继续留在 planner/derive/policy 纯模块。
+
+如果改造完成后 `loop.ts` 仍接近当前规模，或者 Coordinator 复制了原 loop 的全部分支，同时旧 Store/agent/session 入口仍然有效，则说明只是横向搬运和叠加抽象，改造应判定为失败。
+
+生产代码总量增加主要来自当前确实缺失的 Generation 原子提交、整体校验、用户资源、Secrets/Preset、协议 DTO 和前端 store；原 `loop.ts` 现有行为应以迁移、合并和删除重复代码为主，而不是继续膨胀。
+
 ### 接口增加的原则
 
 规划中的接口不是为了“模块化而模块化”，也不是把每个内部函数都包装成 interface。新增接口只有在满足以下至少一项时才保留：
@@ -1407,6 +1452,8 @@ ResourceContext      # 用户资源身份与路径
 
 **结果：** 测试和外部边界先稳定，后续大改不再依赖全局 prototype、真实默认目录或源码正则。
 
+**实施状态（已完成）：** ChatPort/OpenAIChatAdapter/CallLogChatPort 取代 LLMClient（无兼容壳，prototype patch 归零）；Clock/IdPorts/DicePort 落 `src/ports.ts`；`scripts/check-dependencies.ts` 依赖审计 + 四层测试套件（unit/contract/application/integration）；test/builders、fakes、harness 就位，临时目录统一收口；UserDirectories(default_user) 与 contracts/config、contracts/secrets 建立（legacy 路径兼容读取，未做数据迁移）。基线 293 场景全绿。
+
 #### 阶段 B：收敛真相写入与回滚核心
 
 5. 实现 `TruthSnapshot`、GenerationRepository、CURRENT/上一代管理和 `CommitPlan`。
@@ -1415,6 +1462,8 @@ ResourceContext      # 用户资源身份与路径
 8. 让正常执行、编辑重放、直接编辑、确定性计算和回滚都进入同一 CommitExecutor。
 
 **结果：** 真相层形成唯一写入口；一轮一个 Generation，恢复和回滚不再依赖多 Store 顺序写入。
+
+**实施状态（已完成）：** 存档 v6 Generation 布局（CURRENT + generations/ + 旁路留根）落地；六个 Store 纯内存化，唯一写盘出口为 `GenerationRepository.commit`（.tmp→重读校验→rename→CURRENT 原子切换→保留两代+灾备回退）；`validateSaveSet` 默认接入 commit 与 load；SaveLoadError 六类 + RevisionConflictError；VarChange 引擎迁 `truth/varChanges.ts` 且路径统一真相根（characters.* 前缀）；事件 ID 改 `scanEventWatermark` 水位；五路径（init/step/gm/rollback/admin_edit）全部经 `CommitExecutor`；editResult/rollbackTo/applyDirectEdit 全 draft 化（失败连内存都不动，GM「先反转后校验」缺陷已修）；恒冻结 + DeepReadonly 查询出口（炸出并修复一处测试越界写入与一处 working_set 玩家条目形状失真）。基线 349 场景全绿。**遗留指标**：`loop.ts` 2177 行，其瘦身（目标 100–300 行 facade）由阶段 C 承担并逐片验收净减。
 
 #### 阶段 C：收敛调度与 application 编排
 
@@ -1425,6 +1474,8 @@ ResourceContext      # 用户资源身份与路径
 
 **结果：** 正常输出、编辑、回滚和确定性规则共享一套规划与调度路径。
 
+**实施状态（已完成）：** `scheduler/derive.ts`（NextCommand 判别联合，`d.cid!` 消除）+ `scheduler/invitations.ts`（InvitationProjection，增量 applyStep + 五重建点，`timer after===0` 猜测删除）落地；统一效果规划器 `application/{actorEffects,gmEffects,scheduleEffects,workingSetProjection}.ts`（玩家/NPC/编辑重放同一 planActorDecision，GM 同一 planGmAdjudication）；StepChanges(setup/effects) 取代 effects_from/markers_from 下标定位，phase 去持久化，存档 v7（一次 bump 覆盖两件事）；`prepareNextCommand` 统一三路径入口 + DeterministicRulePort 空壳（固定点+签名检测+迭代上限）；GM/character 激活循环收敛 `runStructuredActivation`；`SessionCoordinator`（247 行）收拢九命令串行入口，rollback_and_continue 单任务复合，baseRevision 校验就绪（协议接线留 D），CLI 同入口复用；**loop.ts 与 sessionManager.ts 整文件删除（合计 -1942 行）**，wsReroll 源码正则断言拆除。基线 429 场景全绿。**遗留**：§4 无状态 activation 主体（context builder/runId 绑定日志/第二次重试携带首次错误）为排期缺口，建议阶段 D 前单独立项。
+
 #### 阶段 D：收敛协议与客户端
 
 13. 用 Zod 权威 schema + `web/protocol.js` 建立 WS/HTTP DTO 和稳定错误 envelope。
@@ -1433,6 +1484,8 @@ ResourceContext      # 用户资源身份与路径
 16. 建立前端 session-store、session-transport、resource-context，修复异步竞态和非默认 world set 编辑。
 
 **结果：** 网络层只是 Coordinator 的制式适配器，前端不再自行拼接不同 revision 的状态。
+
+**实施状态（已完成）：** 入站协议唯一权威 `contracts/protocol.ts`（Zod discriminated union，`.strict()`，reroll 消息删除不留兼容映射，前端重 roll = 单条 rollback_and_continue）；下行收敛为 command_result/command_error/transition/snapshot/流式七种（全带 runId+activationId，activationId 经 Display 可选第 4 参注入，CLI 零改动）；每提交一条 Transition（引用差分，rollback_and_continue 合并单条），Coordinator.query("snapshot") 单 revision 一致读；会话切换 dispose+epoch 旧 run 不提交不广播；stop 幂等身份核对。服务端 api.ts（523 行）消亡，拆为 ws-transport/ws-controller/http 分域 routes + resources 仓储；HTTP 统一 envelope 与状态码矩阵（含 405+Allow、409、500 映射）；readRunArtifact 平铺回落与 readJson fallback 删除；config 三份定义漂移收敛为 contracts 一份（顺带修复直编自锁基线 bug）。前端 session-store（纯 reducer）/session-transport（generation 守卫+单 timer 退避）/protocol 工厂/resource-context 就位；四个点名竞态全部修复（会话详情 epoch、CID 逆序、读档失败不导航、modal 晚到 + runId 变化统一关闭）；非默认世界包编辑接通（?set= 前端接线）；play.js 1225→409 行纯编排，三个 view 抽出；busy 语义重建（selectBusy 单测锁定）消除瞬闪。真实双 WS 客户端 + DeferredChatPort 集成测试就位（revision 冲突/强制切换/合并 transition/重连单 snapshot/幂等 stop）；wsStateBroadcast 源码正则测试拆除。基线 504 场景全绿。**遗留**：中止超时强制失效计时器（dispose 旗标兜底，known-issues 登记）；historyPatch 恒整段重渲；两处源码正则测试仅最小修正未重写。
 
 #### 阶段 E：资源管理、安全和文档收口
 

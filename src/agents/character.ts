@@ -2,12 +2,14 @@ import { z } from "zod";
 import { compilePrompt, type PlaceholderRegistry } from "../compile/compiler.js";
 import { loadTemplate } from "../compile/template.js";
 import type { Display } from "../display.js";
-import { LLMAbortedError, type ChatPort } from "../llm/chatPort.js";
-import { CharactersStore, type CharacterState } from "../truth/charactersStore.js";
-import { renderForReader, type CastMember } from "../truth/identity.js";
+import type { ChatPort } from "../llm/chatPort.js";
+import type { CharacterState } from "../truth/charactersStore.js";
+import type { CastMember } from "../truth/identity.js";
 import { snapshotCharacterState } from "../truth/snapshot.js";
-import { DecisionPackageSchema, InitiativeSchema, LocationSchema, type DecisionPackage, type Event, type Location } from "../types.js";
+import { LEAVE_TIMER } from "../scheduler/simulator.js";
+import { DecisionPackageSchema, InitiativeSchema, LocationSchema, type DecisionPackage } from "../types.js";
 import { extractJson } from "./json.js";
+import { runStructuredActivation } from "./structuredActivation.js";
 
 export const CharacterManifestSchema = z.object({
   id: z.string(), name: z.string().min(1), gender: z.string(), age: z.string(), personality: z.string().min(1),
@@ -31,9 +33,6 @@ export interface CharacterContext {
 function self(context: CharacterContext): CharacterState {
   const state = context.states[context.selfCid]; if (!state) throw new Error(`未知角色 CID: ${context.selfCid}`); return state;
 }
-
-/** 离开标记的"冻结"timer（与 loop.ts 的 LEAVE_TIMER 同值；此处独立定义以避免 character→loop 循环依赖） */
-const LEAVE_TIMER = Number.MAX_SAFE_INTEGER;
 
 export const CHARACTER_PLACEHOLDERS: PlaceholderRegistry<CharacterContext> = {
   name: { description: "角色名", provide: (context) => self(context).name },
@@ -97,48 +96,24 @@ export const CHARACTER_PLACEHOLDERS: PlaceholderRegistry<CharacterContext> = {
   },
 };
 
-export class CharacterAgent {
-  readonly agentName: string;
-  private recentEvents: string[] = []; private proseWindow: string[] = []; private currentScene = ""; private timeHeader = ""; private worldSnapshot = "{}"; private clock = 0;
-  private incomingContact: { inviter: string; channel: string } | null = null;
-  constructor(private manifest: CharacterManifest, private llm: ChatPort, private characters: CharactersStore, private cast: CastMember[], private activatedLore: string) {
-    this.agentName = `character:${manifest.id}`;
-  }
-  get id(): string { return this.manifest.id; }
-  get location(): Location { return this.characters.get(this.id).location; }
-  perceive(events: Event[]): void { const relations = this.characters.get(this.id).relations; for (const event of events) this.recentEvents.push(renderForReader(event.payload, this.id, relations)); }
-  updateWindow(blocks: string[]): void { this.proseWindow = blocks; }
-  updateScene(sceneText: string): void { this.currentScene = sceneText; }
-  updateSituation(header: string, world: Record<string, unknown>, clock: number): void { this.timeHeader = header; this.worldSnapshot = JSON.stringify(world); this.clock = clock; }
-  updateIncomingContact(contact: { inviter: string; channel: string } | null): void { this.incomingContact = contact; }
+/**
+ * 无状态角色 activation（docs/optimization-review.md §4）：构造只持 ChatPort，
+ * 全量上下文由 application context builder（src/application/activationContexts.ts）
+ * 逐调用从最新真相现算传入——实例不缓存 recentEvents/proseWindow/scene/clock/cast/
+ * Store 引用等任何跨调用状态；一个实例服务全部 NPC，角色差异全在本次 Context。
+ */
+export class CharacterActivation {
+  constructor(private llm: ChatPort) {}
 
-  async decide(turn: number, signal: AbortSignal, display?: Display): Promise<{ raw: string; pkg: DecisionPackage }> {
+  async decide(context: CharacterContext, turn: number, signal: AbortSignal, display?: Display): Promise<{ raw: string; pkg: DecisionPackage }> {
     const template = loadTemplate("character", Object.keys(CHARACTER_PLACEHOLDERS));
-    const messages = compilePrompt(template, CHARACTER_PLACEHOLDERS, {
-      selfCid: this.id, states: this.characters.all(), cast: this.cast, worldSnapshot: this.worldSnapshot,
-      activatedLore: this.activatedLore, recentEvents: this.recentEvents, proseWindow: this.proseWindow,
-      currentScene: this.currentScene, timeHeader: this.timeHeader, clock: this.clock,
-      incomingContact: this.incomingContact,
+    const messages = compilePrompt(template, CHARACTER_PLACEHOLDERS, context);
+    const agentName = `character:${context.selfCid}`;
+    return runStructuredActivation<DecisionPackage>({
+      port: this.llm, agentName, seq: turn, messages, signal,
+      ...(display !== undefined ? { display } : {}),
+      parse: (text) => DecisionPackageSchema.parse(extractJson(text)),
+      failureLabel: `角色 ${self(context).name} 决策包解析失败`,
     });
-    const onDelta = display ? (delta: string) => display.delta(this.agentName, delta) : undefined;
-    const onReasoningDelta = display ? (delta: string) => display.reasoningDelta(this.agentName, delta) : undefined;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const { text } = await this.llm.chat(
-        {
-          agent: this.agentName, seq: turn, messages,
-          ...(onDelta !== undefined ? { onDelta } : {}),
-          ...(onReasoningDelta !== undefined ? { onReasoningDelta } : {}),
-        },
-        signal,
-      );
-      try { return { raw: text, pkg: DecisionPackageSchema.parse(extractJson(text)) }; }
-      catch (error) {
-        if (error instanceof LLMAbortedError) throw error;
-        if (attempt === 1) throw new Error(`角色 ${this.manifest.name} 决策包解析失败（重试后仍失败）。原文：\n${text}`, { cause: error });
-        display?.retry(this.agentName, attempt + 1, (error as Error).message);
-      }
-    }
-    throw new Error("unreachable");
   }
-  restore(events: Event[]): void { this.recentEvents = []; this.perceive(events); }
 }

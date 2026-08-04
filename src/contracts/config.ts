@@ -11,6 +11,66 @@ import { z } from "zod";
 import { MaskedSecretSchema, maskSecret, SecretKindSchema } from "./secrets.js";
 
 // ---------------------------------------------------------------------------
+// config.json 文件形状（优化阶段 D3：取代 server 手工字段表，三份定义收敛为一份）
+// 顶层 passthrough——未知字段（如 "_说明" 注释）原样保留；agents/memory 块 strict——
+// 未知 agent / 块内未知字段即拒（与原手工表口径一致）。
+// ---------------------------------------------------------------------------
+
+/** 顶层与 agents 块同规的覆盖块（json_mode 布尔、reasoning_effort 字符串原样透传）。 */
+export const AgentOverrideBlockSchema = z
+  .object({
+    api_key: z.string().optional(),
+    base_url: z.string().optional(),
+    model: z.string().optional(),
+    json_mode: z.boolean().optional(),
+    reasoning_effort: z.string().optional(),
+  })
+  .strict();
+export type AgentOverrideBlock = z.infer<typeof AgentOverrideBlockSchema>;
+
+export const FileConfigSchema = z
+  .object({
+    api_key: z.string().optional(),
+    base_url: z.string().optional(),
+    model: z.string().optional(),
+    json_mode: z.boolean().optional(),
+    reasoning_effort: z.string().optional(),
+    agents: z
+      .object({
+        character: AgentOverrideBlockSchema.optional(),
+        gm: AgentOverrideBlockSchema.optional(),
+        prose: AgentOverrideBlockSchema.optional(),
+      })
+      .strict()
+      .optional(),
+    memory: z
+      .object({ prose_window_turns: z.number().int().min(0).optional() })
+      .strict()
+      .optional(),
+    gm_interval_cycles: z.number().int().min(1).optional(),
+  })
+  .passthrough();
+export type FileConfigPayload = z.infer<typeof FileConfigSchema>;
+
+/**
+ * 校验 config.json 结构（PUT /api/config 前置闸；取代 api.ts 手工字段表）。
+ * 未知顶层字段（注释）原样保留；结构非法抛 Error（消息 = 逐 issue 路径 + 原因）。
+ */
+export function validateFileConfig(raw: unknown): FileConfigPayload {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error("配置必须是 JSON 对象");
+  }
+  const result = FileConfigSchema.safeParse(raw);
+  if (!result.success) {
+    const issues = result.error.issues
+      .map((issue) => `${issue.path.join(".") || "(顶层)"}: ${issue.message}`)
+      .join("；");
+    throw new Error(`配置校验失败：${issues}`);
+  }
+  return result.data;
+}
+
+// ---------------------------------------------------------------------------
 // 服务端/部署配置（最小骨架；docs §8「服务端配置」的字段在阶段 E 逐项填充）
 // ---------------------------------------------------------------------------
 export const ServerConfigSchema = z.object({

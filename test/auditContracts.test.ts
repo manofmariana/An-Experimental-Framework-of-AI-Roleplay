@@ -9,11 +9,12 @@ import type { PromptTemplate } from "../src/compile/template.js";
 // M2-b 批次 A：loop.ts 待批次 B 重写（simulator 已无 deriveGroups 导出，运行期无法链接），
 // 仅「六核心文件」套件跳过并走运行期占位；批次 B 恢复静态 import。
 import { readRecent, recordRecent } from "../src/llm/recent.js";
-import { GameSession } from "../src/loop.js";
+import { resumeGameSession } from "../src/application/sessionFactory.js";
 import { reconcileGroups } from "../src/scheduler/simulator.js";
 import { CharactersFileSchema, CharactersStore } from "../src/truth/charactersStore.js";
-import { LoreStore, rollbackLore, type LoreFile } from "../src/truth/loreStore.js";
+import { LoreFileSchema, LoreStore, rollbackLore, type LoreFile } from "../src/truth/loreStore.js";
 import { SAVE_SCHEMA_VERSION } from "../src/truth/saveSchema.js";
+import { SaveLoadError, type SaveLoadErrorKind } from "../src/truth/validation/errors.js";
 import { WorldStore } from "../src/truth/worldStore.js";
 import { DecisionPackageSchema, SpanSchema, type LoreEntry } from "../src/types.js";
 import { tempDir } from "./harness/tempDir.js";
@@ -51,21 +52,19 @@ function decision(relations: unknown) {
 }
 
 describe("WorldStore 原子性与回滚路径契约", () => {
-  it("批量 delta 中途失败时内存与磁盘均保持原状", () => {
-    const dir = temp("airp-audit-world-");
-    const store = new WorldStore("t", { world: { time: start, hp: 10, blocked: 1 } }, dir);
-    const before = fs.readFileSync(path.join(dir, "world.json"), "utf8");
+  it("批量 delta 中途失败时内存保持原状", () => {
+    const store = WorldStore.initial({ time: start, hp: 10, blocked: 1 });
+    const before = JSON.stringify(store.saveData());
     assert.throws(() => store.apply([
       { path: "hp", op: "-=", value: 2 },
       { path: "blocked.value", op: "=", value: 3 },
     ]), /穿过非对象节点/);
     assert.equal(store.world.hp, 10);
-    assert.equal(fs.readFileSync(path.join(dir, "world.json"), "utf8"), before);
+    assert.equal(JSON.stringify(store.saveData()), before);
   });
 
   it("setClock 拒绝 NaN、Infinity 与小数分钟且不改时钟", () => {
-    const dir = temp("airp-audit-clock-");
-    const store = new WorldStore("t", { world: { time: start } }, dir);
+    const store = WorldStore.initial({ time: start });
     for (const value of [Number.NaN, Number.POSITIVE_INFINITY, 1.5]) {
       assert.throws(() => store.setClock(value), /有限整数分钟/);
     }
@@ -73,8 +72,7 @@ describe("WorldStore 原子性与回滚路径契约", () => {
   });
 
   it("同一路径连续 delta 生成逐步 before 并可倒序恢复", () => {
-    const dir = temp("airp-audit-revert-");
-    const store = new WorldStore("t", { world: { time: start, hp: 10 } }, dir);
+    const store = WorldStore.initial({ time: start, hp: 10 });
     const changes = store.apply([
       { path: "hp", op: "-=", value: 2 },
       { path: "hp", op: "+=", value: 5 },
@@ -85,8 +83,7 @@ describe("WorldStore 原子性与回滚路径契约", () => {
   });
 
   it("WorldStore 只接受精确 world. 前缀的回滚路径", () => {
-    const dir = temp("airp-audit-path-");
-    const store = new WorldStore("t", { world: { time: start } }, dir);
+    const store = WorldStore.initial({ time: start });
     assert.throws(() => store.revertChange({ path: "worldly.hp", before: 1, after: 2 }), /无法反向的路径/);
   });
 });
@@ -111,13 +108,11 @@ describe("Lore 顺序保持与 v3 changelog 兼容", () => {
   });
 
   it("既有 v3 changelog 缺 before_index 仍可加载并回滚", () => {
-    const dir = temp("airp-audit-lore-v3-");
-    fs.writeFileSync(path.join(dir, "lore.json"), JSON.stringify({
+    const store = new LoreStore(LoreFileSchema.parse({
       schema_version: SAVE_SCHEMA_VERSION,
       entries: [entry("b", "new")],
       changelog: [{ seq: 2, op: "update", before: entry("b", "old"), after: entry("b", "new") }],
     }));
-    const store = LoreStore.load("t", dir);
     store.rollbackToSeq(1);
     assert.equal(store.book().all()[0]!.content, "old");
   });
@@ -192,47 +187,73 @@ describe("Decision relations 与 CharactersStore 初始化不变量", () => {
     }
   });
 
-  it("CharactersStore.initFrom 拒绝重复角色 ID", () => {
-    const dir = temp("airp-audit-chars-dup-");
-    assert.throws(() => CharactersStore.initFrom("t", [manifest("C1001"), manifest("C1001")], 0, dir), /重复角色 CID/);
+  it("CharactersStore.fromManifests 拒绝重复角色 ID", () => {
+    assert.throws(() => CharactersStore.fromManifests([manifest("C1001"), manifest("C1001")], 0), /重复角色 CID/);
   });
 
-  it("CharactersStore.initFrom 强制 C0 与 isPlayer 双向一致", () => {
-    assert.throws(() => CharactersStore.initFrom("t", [manifest("C0", false)], 0, temp("airp-audit-player-c0-")), /必须标记为玩家/);
-    assert.throws(() => CharactersStore.initFrom("t", [manifest("C1001", true)], 0, temp("airp-audit-player-npc-")), /只有 C0/);
+  it("CharactersStore.fromManifests 强制 C0 与 isPlayer 双向一致", () => {
+    assert.throws(() => CharactersStore.fromManifests([manifest("C0", false)], 0), /必须标记为玩家/);
+    assert.throws(() => CharactersStore.fromManifests([manifest("C1001", true)], 0), /只有 C0/);
   });
 });
 
-describe("六核心文件 schema_version 一致性", () => {
+describe("Generation 内六核心文件 schema_version 一致性（存档 v6）", () => {
   const cfg = { apiKey: "dummy", baseURL: "http://127.0.0.1:9", model: "m", jsonMode: false };
   const configs = { character: cfg, gm: cfg, prose: cfg };
   const coreFiles = ["world.json", "events.json", "characters.json", "lore.json", "time.json", "archive.json"];
 
-  function initializedDir(): string {
+  /** 新档 → 返回 {dir, genDir}（genDir = CURRENT 指向的 Generation 目录）。 */
+  function initializedDir(): { dir: string; genDir: string } {
     const dir = temp("airp-audit-core-");
-    GameSession.resume(configs, "audit", undefined, { baseDir: dir, proseWindowTurns: 5, rollDice: () => 10 });
-    return dir;
+    resumeGameSession(configs, "audit", undefined, { baseDir: dir, proseWindowTurns: 5, rollDice: () => 10 });
+    const revision = fs.readFileSync(path.join(dir, "CURRENT"), "utf8").trim();
+    return { dir, genDir: path.join(dir, "generations", revision) };
   }
 
-  it("六个核心文件任一版本混入均明确拒绝", () => {
+  it("Generation 布局：CURRENT + generations/{rev}/ 六文件，续档不再推进 revision", () => {
+    const { dir, genDir } = initializedDir();
+    assert.equal(fs.readFileSync(path.join(dir, "CURRENT"), "utf8"), "000001");
     for (const file of coreFiles) {
-      const dir = initializedDir();
-      const filePath = path.join(dir, file);
+      const data = JSON.parse(fs.readFileSync(path.join(genDir, file), "utf8")) as { schema_version: unknown };
+      assert.equal(data.schema_version, SAVE_SCHEMA_VERSION, `${file} 带统一版本`);
+    }
+    // 旁路产物留 run 根：meta.json 不进 Generation
+    assert.ok(fs.existsSync(path.join(dir, "meta.json")));
+    assert.ok(!fs.existsSync(path.join(genDir, "meta.json")));
+  });
+
+  /** 断言 resume 抛 SaveLoadError 且 kind 命中 + 措辞正则（类型化加载错误，docs/optimization-review.md §7）。 */
+  function expectResumeError(dir: string, kind: SaveLoadErrorKind, pattern: RegExp): void {
+    assert.throws(
+      () => resumeGameSession(configs, "audit", undefined, { baseDir: dir, proseWindowTurns: 5 }),
+      (error: unknown) => {
+        assert.ok(error instanceof SaveLoadError, `应为 SaveLoadError，实为 ${String(error)}`);
+        assert.equal(error.kind, kind, `kind 应为 ${kind}：${error.message}`);
+        assert.match(error.message, pattern);
+        return true;
+      },
+    );
+  }
+
+  it("六个核心文件任一版本混入均明确拒绝（version 类，保留新建会话措辞）", () => {
+    for (const file of coreFiles) {
+      const { dir, genDir } = initializedDir();
+      const filePath = path.join(genDir, file);
       const data = JSON.parse(fs.readFileSync(filePath, "utf8")) as { schema_version: number };
       fs.writeFileSync(filePath, JSON.stringify({ ...data, schema_version: SAVE_SCHEMA_VERSION - 1 }));
-      assert.throws(() => GameSession.resume(configs, "audit", undefined, { baseDir: dir, proseWindowTurns: 5 }), /核心文件版本混合/);
+      expectResumeError(dir, "version", /核心文件版本混合/);
     }
   });
 
-  it("六核心文件存在但缺少其中一个时明确拒绝", () => {
-    const dir = initializedDir();
-    fs.rmSync(path.join(dir, "archive.json"));
-    assert.throws(() => GameSession.resume(configs, "audit", undefined, { baseDir: dir, proseWindowTurns: 5 }), /核心文件版本混合/);
+  it("Generation 内缺少任一核心文件时明确拒绝（incomplete 类；单代存档无上一代可回退）", () => {
+    const { dir, genDir } = initializedDir();
+    fs.rmSync(path.join(genDir, "archive.json"));
+    expectResumeError(dir, "incomplete", /缺核心文件/);
   });
 
   it("六核心文件版本一致时可纯数据续档", () => {
-    const dir = initializedDir();
-    const resumed = GameSession.resume(configs, "audit", undefined, { baseDir: dir, proseWindowTurns: 5, rollDice: () => 10 });
+    const { dir } = initializedDir();
+    const resumed = resumeGameSession(configs, "audit", undefined, { baseDir: dir, proseWindowTurns: 5, rollDice: () => 10 });
     assert.equal(resumed.turnCount, 0);
     assert.equal(resumed.getEvents().length, 0);
   });

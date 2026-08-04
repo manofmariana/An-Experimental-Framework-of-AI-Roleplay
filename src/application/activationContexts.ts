@@ -1,0 +1,190 @@
+/**
+ * activation 上下文构建器（docs/optimization-review.md §4 主体片）：
+ * 三个无状态 activation 的全部注入上下文在这里从**最新真相 + 派生投影现算**——
+ * 每次调用读 live stores 的只读数据（恒冻结保证不被误写），无任何跨调用缓存：
+ * - cast 每次现建（动态改名/增角色后下一次调用直接读到最新）；
+ * - lore 逐调用从 loreStore 档内副本渲染（运行期可编辑，必须读到最新）；
+ * - setting/toneCard 是世界设定集静态文本（运行期不变），由装配层注入并持有。
+ * 数据同源同渲染函数（与原 agent 内推入缓存的取数口径逐一对应），只改就绪时机。
+ *
+ * 阶段 D 登记：旧 run 在途 activation 完成结果的丢弃（消息身份 runId/activationId/epoch）
+ * 不在本片范围，属 SessionCoordinator 会话隔离收敛（见 sessionCoordinator.ts 注释）。
+ */
+import type { CharacterContext } from "../agents/character.js";
+import type { GmContext } from "../agents/gm.js";
+import type { ProseContext } from "../agents/prose.js";
+import { groupLocation, LEAVE_TIMER } from "../scheduler/simulator.js";
+import {
+  renderForGm,
+  renderForReader,
+  renderRefsForGm,
+  renderRefsForReader,
+  type CastMember,
+} from "../truth/identity.js";
+import { Lorebook } from "../truth/lorebook.js";
+import type { TruthStores } from "../truth/stores.js";
+import { renderScene } from "../truth/workingSet.js";
+import type { AdjudicationPackage } from "../types.js";
+import {
+  lastProse,
+  participantTags,
+  proseWindowFor,
+  proseWindowForRound,
+} from "./historyProjection.js";
+import { playableCharacters, simCharsOf } from "./scheduleEffects.js";
+
+/** 世界设定集静态文本（运行期不变；装配层加载后注入，builder 允许持有）。 */
+export interface ActivationStatics {
+  /** 世界设定全文（GM setting 注入 + 正文 worldLore 注入，同源） */
+  setting: string;
+  /** 世界基调卡全文（正文 toneCard 注入） */
+  toneCard: string;
+}
+
+/**
+ * 演员表现建：唯一真相 = characters 档内副本的 name（C0 与 NPC 同规），按 CID 排序（确定性）。
+ * 不维护任何长期 cast 状态——改名/增角色后下一次调用直接反映。
+ */
+export function buildCast(truth: TruthStores): CastMember[] {
+  return Object.entries(truth.characters.all())
+    .map(([cid, state]) => ({ cid, name: state.name }))
+    .sort((a, b) => a.cid.localeCompare(b.cid));
+}
+
+/** 远程成员集：位置 ≠ 组位置（组位置 = 组内先攻最高者的 location，派生不落盘）。 */
+export function remoteCidsOf(truth: TruthStores): Set<string> {
+  const sim = simCharsOf(truth);
+  const out = new Set<string>();
+  for (const [cid, s] of Object.entries(playableCharacters(truth))) {
+    if (s.group === 0) continue;
+    const gl = groupLocation(sim, s.group);
+    if (gl !== null && s.location.name !== gl) out.add(cid);
+  }
+  return out;
+}
+
+/**
+ * 本轮 #当前场景（角色视角）：同值批次注入隔离——
+ * 与行动者同组且先攻同值的他人本轮条目不可见（同时性的迷雾；从角色变量派生，续档安全）。
+ * 自己的条目恒可见；未结算离开者（group=0 + timer=LEAVE_TIMER）的条目产生时仍在组内，
+ * 对原组成员保持可见；位置 ≠ 组位置的成员标注"远程"（§5.3 注入标注）。
+ */
+export function sceneForCid(truth: TruthStores, cid: string): string {
+  const initiative = truth.characters.get(cid).initiative;
+  const entries = truth.world.pipeline.working_set.filter((e) => {
+    if (e.cid === cid) return true; // 自己的过往言行可见（同值批隔离只对他人条目生效）
+    const otherState = truth.characters.get(e.cid);
+    // 未结算离开者：同值批隔离不适用（其条目是在组内时产生的，继续对原组成员可见）
+    if (otherState.group === 0 && otherState.timer !== null && otherState.timer >= LEAVE_TIMER) return true;
+    if (initiative === null) return true;
+    const other = otherState.initiative;
+    return other === null || other.group !== initiative.group || other.value !== initiative.value;
+  });
+  return renderScene(entries, cid, remoteCidsOf(truth));
+}
+
+/** 角色 activation 上下文输入（truth 之外的全部变量逐调用传入）。 */
+export interface CharacterContextInput {
+  truth: TruthStores;
+  cid: string;
+  proseWindowTurns: number;
+  /** 邀请应答激活的待答邀请（incoming_contact 注入）；常规激活省略 */
+  invitation?: { inviter: string; channel: string };
+}
+
+/** GM activation 上下文输入。 */
+export interface GmContextInput {
+  truth: TruthStores;
+  proseWindowTurns: number;
+  /** 本轮待裁决言行（GM 视角 renderScene，无读者过滤） */
+  sceneText: string;
+  /** 本轮行动者 → 行动时所在组（连续场景滑窗过滤输入） */
+  roundScenes: Record<string, number>;
+}
+
+/** 正文 activation 上下文输入。 */
+export interface ProseContextInput {
+  truth: TruthStores;
+  proseWindowTurns: number;
+  /** 本轮 GM 裁决包（gm_event 注入 = events + narrativity） */
+  adjudication: AdjudicationPackage;
+  /** 本轮各角色台词+内心（renderSpeech 产出） */
+  currentScene: string;
+  /** 本轮参与者 cid（triggered lore 标签并集输入） */
+  participantCids: string[];
+}
+
+/**
+ * activation 上下文构建器：持有世界集静态文本，其余全部逐调用现算。
+ * 方法均为纯读取组装（不写真相、不做 IO）。
+ */
+export class ActivationContextBuilder {
+  constructor(private readonly statics: ActivationStatics) {}
+
+  /** 角色上下文：私域快照 + 可见事件（身份替换渲染）+ 同场景正文滑窗 + 当前场景 + 标签激活 lore。 */
+  character(input: CharacterContextInput): CharacterContext {
+    const { truth, cid } = input;
+    const state = truth.characters.get(cid);
+    const relations = state.relations;
+    return {
+      selfCid: cid,
+      states: truth.characters.all(),
+      cast: buildCast(truth),
+      worldSnapshot: JSON.stringify(truth.world.world),
+      activatedLore: Lorebook.render(truth.loreStore.book().getByTags(state.tags)),
+      recentEvents: truth.events
+        .readVisibleTo(cid, truth.world.clock)
+        .map((event) => renderForReader(event.payload, cid, relations)),
+      proseWindow: proseWindowFor(truth.archive.readAll(), cid, state.group, input.proseWindowTurns).map((block) =>
+        renderRefsForReader(block, relations),
+      ),
+      currentScene: sceneForCid(truth, cid),
+      timeHeader: truth.timeStore.render(truth.world.world.time),
+      clock: truth.world.clock,
+      incomingContact: input.invitation ?? null,
+    };
+  }
+
+  /** GM 上下文：全部已 commit 事件（@ID 原文）+ lore 全文（逐调用渲染档内副本）+ 连续场景滑窗。 */
+  gm(input: GmContextInput): GmContext {
+    const { truth } = input;
+    return {
+      setting: this.statics.setting,
+      cast: buildCast(truth),
+      loreFull: truth.loreStore
+        .book()
+        .all()
+        .map((entry) => `[${entry.id}]（标签：${entry.tags.join("、")}）\n${entry.content}`)
+        .join("\n\n"),
+      events: truth.events.readAll().map((event) => event.payload),
+      proseWindow: proseWindowForRound(truth.archive.readAll(), input.roundScenes, input.proseWindowTurns).map((block) =>
+        renderRefsForGm(block),
+      ),
+      currentScene: input.sceneText,
+      worldSnapshot: JSON.stringify(truth.world.world),
+      states: truth.characters.all(),
+      clock: truth.world.clock,
+      timeHeader: truth.timeStore.render(truth.world.world.time),
+    };
+  }
+
+  /** 正文上下文：静态文本 + 现建 cast + 近期事件（演员表渲染）+ 触发 lore + 上轮正文。 */
+  prose(input: ProseContextInput): ProseContext {
+    const { truth } = input;
+    const cast = buildCast(truth);
+    return {
+      toneCard: this.statics.toneCard,
+      worldLore: this.statics.setting,
+      recentEvents: truth.events
+        .readWindow(input.proseWindowTurns)
+        .map((event) => renderForGm(event.payload, cast)),
+      cast,
+      triggeredLore: Lorebook.render(
+        truth.loreStore.book().getByTags(participantTags(input.participantCids.map((cid) => truth.characters.get(cid)))),
+      ),
+      lastProse: lastProse(truth.archive.readAll()),
+      gmEvent: JSON.stringify({ events: input.adjudication.events, narrativity: input.adjudication.narrativity }),
+      currentScene: input.currentScene,
+    };
+  }
+}
