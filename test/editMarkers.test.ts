@@ -150,7 +150,9 @@ describe("工作集跨周期注入（#当前场景：GM 清算前的全体言行
     const session = makeSession("cycle-scene", [
       { id: "C0", name: "玩家", location: "loc_A", timer: 0, isPlayer: true },
       { id: "C1001", name: "甲", location: "loc_A", timer: 0 },
-    ], [5, 20], 2, [
+      // 开局先攻 2 骰；seq5 GM 激活前 fortune 4 骰（值随意，填 50）；
+      // GM 后评估：全员被 durations 覆盖 → 无休眠组，不消费评估骰
+    ], [5, 20, 50, 50, 50, 50], 2, [
       gmPkg({
         durations: [
           { cid: "C0", span: { min: 5 } },
@@ -190,11 +192,14 @@ describe("工作集跨周期注入（#当前场景：GM 清算前的全体言行
 describe("编辑 = 重读整个输出并完整处理（changes.effects 整段反向 + 同一规划器全效应重放）", () => {
   it("邀请应答步：编辑移除 confirm → 接受效应全反向（含单人邀请者的配对）+ 拒绝效应重放；再编辑加回 confirm → 再次接受", async () => {
     // C0 远未来（不抢前台）；C1001 单人邀请者；C1002 受邀者。开局无同桶 → 无组无先攻投掷。
+    // 骰子序：seq2 GM 激活前 fortune 4 骰（50×4）→ GM 后评估 2 个休眠单人组
+    // （sC0 timer=100、sC1002 timer=60 均在未来；C1001 被 durations 覆盖整组跳过）各 1 个 d100
+    // （给 100 恒不命中）→ seq3 配对补投 2 骰 → 再次接受重放再补投 2 骰。
     const session = makeSession("invite-edit", [
       { id: "C0", name: "玩家", location: "loc_A", timer: 100, isPlayer: true },
       { id: "C1001", name: "甲", location: "loc_A", timer: 0 },
       { id: "C1002", name: "乙", location: "loc_B", timer: 60 },
-    ], [10, 8, 10, 8], 5, [
+    ], [50, 50, 50, 50, 100, 100, 10, 8, 10, 8], 5, [
       gmPkg({ durations: [{ cid: "C1001", span: { min: 5 } }] }), // seq2：contact 触发 GM 立即结算
     ]);
     session.setPauseOptions({ everyStep: true, beforeGm: false, afterGm: false, afterProse: false });

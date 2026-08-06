@@ -44,7 +44,9 @@ function makeSession(
 ): { session: GameSession; dir: string } {
   const runId = `run-ce-${tag}-${process.pid}`;
   const session = h.makeSession(runId, WORLD_ID, {
-    dice: [5, 20],
+    // 2 颗开局先攻 + 1 个 GM 步的 fortune 4 骰（良恶/程度判定，值只进提示词）；
+    // 各测试至多跑 1 个 GM 步，且 gmFull() durations 覆盖全部角色 → 突发评估整组跳过、不消费骰子。
+    dice: [5, 20, 50, 50, 50, 50],
     gmIntervalCycles: 1,
     gm: options?.gm ?? [gmFull()],
   });

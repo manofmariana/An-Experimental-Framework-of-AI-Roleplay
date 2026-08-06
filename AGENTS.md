@@ -54,7 +54,7 @@ npm run check      # 日常门禁 = typecheck + test:arch + test:fast
 - `test/` — node:test 测试（`builders/` `fakes/` `harness/` 测试基建）
 - `scripts/` — 依赖审计与四层套件 runner
 - `docs/` — 全部项目文档（见「文档体系」）
-- `data/assets/{setId}/` — 世界包：`setting.md` / `tone-card.md` / `lorebook.json` / `time.json` / `player.json` / `characters/*.json` / `prompts/*.prompt.json`（示例包 `baitan`，新会话可选）
+- `data/assets/{setId}/` — 世界包：`setting.md` / `tone-card.md` / `lorebook.json` / `time.json` / `incident.json`（突发公式配置，参数唯一出处）/ `player.json` / `characters/*.json` / `prompts/*.prompt.json`（四份：character/gm/prose + gm-incident 突发变体；示例包 `baitan`，新会话可选）
 - `data/users/{username}/` — 用户资源：`secrets.json` / `api-presets/` / `settings.json` / `save/{runId}/` 存档（Generation 布局：`CURRENT` + `generations/{revision}/` 六真相文件，旁路产物留 run 根）
 
 ## 配置

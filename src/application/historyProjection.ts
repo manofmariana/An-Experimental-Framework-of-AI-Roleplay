@@ -23,6 +23,17 @@ export interface HistoryCharacterCard {
   raw?: string;
 }
 
+/** 一轮内命中的突发事件（incident 步产出；raw 供历史卡原始返回/编辑入口）。 */
+export interface HistoryIncident {
+  seq: number;
+  text: string;
+  location: string;
+  malignant: boolean;
+  severity: number;
+  /** 原始返回（历史卡"原始返回"视图与编辑种子数据源） */
+  raw?: string;
+}
+
 export interface HistoryTurn {
   /** 本轮首步 seq */
   turn: number;
@@ -36,6 +47,8 @@ export interface HistoryTurn {
   raws?: { gm?: string; prose?: string };
   adjudication?: AdjudicationPackage;
   prose?: string;
+  /** 本轮突发事件（incident 步，一轮可多条） */
+  incidents?: HistoryIncident[];
 }
 
 export interface HistorySimpleEvent {
@@ -59,6 +72,8 @@ export interface StepLike {
  * 按"轮"分组：一轮 = 若干 player/character 步 + 一个 gm 步（+ 可选 prose 步），
  * 可无 player 步（NPC 独立轮）；gm 步闭合一轮；一轮内多个玩家步（无判定轮跨周期）
  * 各自成组——玩家卡按 seq 归位，不被同组后者覆盖。无归档（空档）→ 从事件集构建简化历史。
+ * incident（突发，调度透明步）总发生在某轮 gm/prose 之后：归属同 actor 步规则
+ * （前一轮 gm 已闭合 → 开启新一轮）；interrupted 突发步无 incident 产出，跳过不渲染。
  */
 export function buildHistory(
   events: readonly DeepReadonly<Event>[],
@@ -116,6 +131,27 @@ export function buildHistory(
       const result = step.result as { raw?: string; prose: string };
       t.prose = result.prose;
       if (result.raw !== undefined) (t.raws ??= {}).prose = result.raw;
+    } else if (step.kind === "incident") {
+      // 突发步（调度透明）：incident 总在某轮 gm/prose 之后，前一轮 gm 已闭合 → 开启新一轮
+      const result = step.result as {
+        raw?: string;
+        incident?: { text: string; deltas: unknown[] };
+        target: { cids: string[]; location: string };
+        roll: { D: number; T: number; p: number; malignant: boolean; severity: number };
+      };
+      if (result.incident !== undefined) {
+        if (cur === null || cur.seqs.gm !== undefined) cur = openTurn(step.seq);
+        const t: HistoryTurn = cur;
+        const inc: HistoryIncident = {
+          seq: step.seq,
+          text: result.incident.text,
+          location: result.target.location,
+          malignant: result.roll.malignant,
+          severity: result.roll.severity,
+        };
+        if (result.raw !== undefined) inc.raw = result.raw;
+        (t.incidents ??= []).push(inc);
+      }
     }
   }
   return { mode: "full", turns };

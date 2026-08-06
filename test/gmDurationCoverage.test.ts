@@ -72,7 +72,10 @@ describe("中途 GM 的 durations 覆盖契约（同步组全体成员必须一�
       { id: "C1002", name: "乙", location: "loc_B", timer: 30 },
     ]);
     const runId = `run-gt2-${process.pid}`;
-    const session = makeSession(runId, worldId, [20, 5], [
+    // 骰子队列：先攻 2（开局派组）→ GM 激活 fortune 4（良恶/程度，值仅入提示词，统一填 50；
+    // 覆盖不全的重试在同一激活内，不重投 fortune）→ GM 轮后突发评估 1（C0/C1001 组被
+    // durations 覆盖跳过；C1002 timer=30 在未来、单人组休眠 → 1×d100，给 100 恒不命中）
+    const session = makeSession(runId, worldId, [20, 5, 50, 50, 50, 50, 100], [
       gmPkg({ durations: [{ cid: "C0", span: { min: 5 } }] }), // 首次：只覆盖行动者 → 缺少 C1001，重试
       gmPkg({ durations: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }] }), // 重试：精确覆盖
     ]);
@@ -189,7 +192,7 @@ describe("快照注入的 timer 结构化渲染", () => {
 
     const gmCtx: GmContext = {
       setting: "", cast: [], loreFull: "", events: [], proseWindow: [], currentScene: "",
-      worldSnapshot: "{}", states, clock: 10, timeHeader: "",
+      worldSnapshot: "{}", states, clock: 10, timeHeader: "", fortune: "",
     };
     const allSnap = JSON.parse(GM_PLACEHOLDERS.characters_snapshot!.provide(gmCtx)) as Record<string, { timer: unknown }>;
     assert.deepEqual(allSnap["C0"]!.timer, { y: 1, m: 1, d: 1, h: 6, min: 30 });
@@ -205,7 +208,7 @@ describe("快照注入的 timer 结构化渲染", () => {
     };
     const gmCtx: GmContext = {
       setting: "", cast: [], loreFull: "", events: [], proseWindow: [], currentScene: "",
-      worldSnapshot: "{}", states, clock: 10, timeHeader: "",
+      worldSnapshot: "{}", states, clock: 10, timeHeader: "", fortune: "",
     };
     const out = GM_PLACEHOLDERS.timers!.provide(gmCtx);
     assert.ok(out.includes("- @C0：已到期（已行动）"));

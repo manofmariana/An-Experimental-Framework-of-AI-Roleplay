@@ -155,6 +155,41 @@ describe("buildHistory（按轮分组——一轮 = 若干 actor 步 + gm 步（
     });
   });
 
+  it("incident 步归入新一轮，字段取自 result（incident.text/target.location/roll + raw）", () => {
+    const archive = [
+      ...round(1, "正文一"),
+      step(5, "incident", {
+        raw: "…",
+        incident: { text: "塔外传来巨响，[[守灯人|@C1001]] 被惊醒", deltas: [] },
+        target: { cids: ["C1001"], location: "灯塔外" },
+        roll: { D: 2, T: 30, p: 0.5, malignant: true, severity: 3.6 },
+      }),
+    ];
+    const h = buildHistory([], archive, null);
+    assert.equal(h.mode, "full");
+    if (h.mode !== "full") return;
+    assert.equal(h.turns.length, 2, "incident 发生在上一轮 gm/prose 之后 → 开启新一轮");
+    assert.equal(h.turns[0]!.incidents, undefined);
+    assert.equal(h.turns[1]!.turn, 5);
+    assert.deepEqual(h.turns[1]!.incidents, [
+      { seq: 5, text: "塔外传来巨响，[[守灯人|@C1001]] 被惊醒", location: "灯塔外", malignant: true, severity: 3.6, raw: "…" },
+    ]);
+  });
+
+  it("interrupted incident 步（result 无 incident 字段）跳过不渲染", () => {
+    const h = buildHistory([], round(1, "正文一"), {
+      seq: 5,
+      kind: "incident",
+      result: { raw: "半截 JSON" },
+      interrupted: true,
+      changes: { setup: [], effects: [] },
+    });
+    assert.equal(h.mode, "full");
+    if (h.mode !== "full") return;
+    assert.equal(h.turns.length, 1, "无产出的 interrupted 突发步不开新轮");
+    assert.equal(h.turns[0]!.incidents, undefined);
+  });
+
   it("Web 历史渲染对缺失 decision 的 interrupted character 使用安全占位", async () => {
     const fs = await import("node:fs");
     const path = await import("node:path");

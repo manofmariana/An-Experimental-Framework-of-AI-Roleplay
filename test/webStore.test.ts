@@ -196,7 +196,7 @@ describe("session-store：streaming 身份校验", () => {
 });
 
 describe("session-store：selectBusy 语义锁", () => {
-  it("busy = streaming 非空 || phase !== await_player", () => {
+  it("busy = streaming 非空 || phase !== await_player || 突发评估挂起", () => {
     const store = createSessionStore();
     store.dispatch(snapshotMsg("000001", 3)); // phase await_player、无流式
     assert.equal(selectBusy(store.getState()), false);
@@ -215,7 +215,14 @@ describe("session-store：selectBusy 语义锁", () => {
     // 步间/暂停点：phase 非 await_player（即使无流式）仍 busy —— 中段瞬闪按此收敛
     store.dispatch({
       ...transitionMsg("000001", 4, 5, {}),
-      pipeline: { seq: 5, phase: "await_gm", interrupted: false, kind: "gm" },
+      pipeline: { seq: 5, phase: "await_gm", interrupted: false, kind: "gm", pending_incident: false },
+    });
+    assert.equal(selectBusy(store.getState()), true);
+
+    // 突发评估挂起：phase await_player 是假相位（派生不含投骰），仍 busy —— 输入屏蔽、引导继续结算
+    store.dispatch({
+      ...transitionMsg("000001", 5, 6, {}),
+      pipeline: { seq: 6, phase: "await_player", interrupted: false, kind: "gm", pending_incident: true },
     });
     assert.equal(selectBusy(store.getState()), true);
   });

@@ -1,0 +1,39 @@
+{
+  "_说明": "突发事件公式配置（标定 v1）。公式结构（表达式）与参数的唯一出处均为本文件，调参/改公式只改这里；可用变量面见 src/scheduler/incident.ts 文件头（包作者与代码之间的契约），表达式语言能力见 src/shared/formula.ts。D = 错位度（地点 level 与组内 level 的错位），T = 剩余休眠分钟。",
+  "d": {
+    "method": "log_ratio",
+    "log_ratio": {
+      "_": "D = kappa·ln((L_loc+c)/(L_geo+c))：数量级比值算法。kappa=33 ≈ 10 倍比值（一个大境界）→ D≈76 近饱和；c=10 低层平滑。level 无上限，取决于世界观设计。",
+      "expr": "kappa * ln((L_loc + c) / (L_geo + c))",
+      "consts": { "kappa": 33, "c": 10 }
+    },
+    "absolute_diff": {
+      "_": "备用算法（当前禁用）：D = L_loc − L_avg（组内 level 算术平均的绝对差值，旧版设计区间 [-99,99]）。弃用原因：level 无上限世界观下数量级比值更自由。启用方式：method 改为 \"absolute_diff\"。",
+      "expr": "L_loc - L_avg"
+    }
+  },
+  "f": {
+    "_": "f(D) = (base+amp·tanh²((D−shift)/densityScale)) · (floor+(1−floor)·σ((D−shift)/compressScale))。底座 min≈20% @ D≈0（shift=3 校准极值点）；负 D（更安全）高原 40%，正 D（更危险）饱和 100%。",
+    "expr": "(base + amp * tanh((D - shift) / densityScale) ^ 2) * (floor + (1 - floor) * sigmoid((D - shift) / compressScale))",
+    "consts": { "base": 0.3, "amp": 0.7, "shift": 3, "densityScale": 24, "floor": 0.4, "compressScale": 8 }
+  },
+  "g": {
+    "_": "g(T) = σ(a·ln T − b)，T = 剩余休眠分钟（T ≤ 0 由代码短路为 0，ln 定义域保护）。锚点：12 小时 → 20%，1 年 → 80%，50% 中点 @约 13.5 天。改锚点即重解 a/b（a = (z80−z20)/ln(1年/12h)，b = a·ln(12h) − z20，z20=ln(0.25)、z80=ln(4)）。",
+    "expr": "sigmoid(a * ln(T) - b)",
+    "consts": { "a": 0.4205, "b": 4.1531 }
+  },
+  "p_hit": {
+    "_": "单次评估命中概率 = f·g；实际打断率 = 1−(1−p)^评估次数（复利）。",
+    "expr": "f * g"
+  },
+  "p_malign": {
+    "_": "p_恶性 = clamp(D + offset, 0, 100)：所有 GM 激活前投 d100 ≤ p 即恶性。",
+    "expr": "clamp(D + offset, 0, 100)",
+    "consts": { "offset": 50 }
+  },
+  "severity": {
+    "_": "程度 = f·scale + offset + (2d20−2) − (d20−1)，区间约 [1,98]：匹配最低（均值 29.5）、负 D 高原封顶约 68、正 D 可达 98。骰子项按表达式从左到右逐骰消费。",
+    "expr": "f * scale + offset + (2d20 - 2) - (d20 - 1)",
+    "consts": { "scale": 50, "offset": 10 }
+  }
+}

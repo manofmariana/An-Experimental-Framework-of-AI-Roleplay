@@ -30,6 +30,8 @@ const NO_PAUSE = { everyStep: false, beforeGm: false, afterGm: false, afterProse
 
 /**
  * 固定构图：C0（玩家）+ C1001 同地同刻 → 组 1；骰子 [5,20] → C1001 先攻高先行动。
+ * 之后 4×50 为 GM 步激活前的突发事件 fortune 骰（d100+2d20+d20，只进提示词）；
+ * GM 轮末评估无骰可消费——durations 覆盖 C0/C1001，唯一组整组跳过。
  * gmIntervalCycles=1：首个行动周期完成即周期末 GM。
  */
 function makeSession(tag: string, pause: typeof NO_PAUSE): GameSession {
@@ -39,7 +41,7 @@ function makeSession(tag: string, pause: typeof NO_PAUSE): GameSession {
     { id: "C1001", name: "甲", location: "loc_A", timer: 0 },
   ]);
   const runId = `run-${tag}-${process.pid}`;
-  const session = h.makeSession(runId, worldId, { dice: [5, 20], gmIntervalCycles: 1, gm: [gmFull()] });
+  const session = h.makeSession(runId, worldId, { dice: [5, 20, 50, 50, 50, 50], gmIntervalCycles: 1, gm: [gmFull()] });
   session.setPauseOptions(pause);
   return session;
 }

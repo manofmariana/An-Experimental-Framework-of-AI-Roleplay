@@ -1,7 +1,7 @@
 /**
  * GameSession 级测试 harness：收敛各 application 测试反复手写的装配——
  * 临时根（save/ + assets/，随套件结束自动清理）+ FakeChatScript + 确定性骰子队列
- * + 临时世界包构造（含包内 prompts/，从真实默认包拷贝三份模板）。
+ * + 临时世界包构造（含包内 prompts/ 四份模板 + incident.json，从真实默认包拷贝模板）。
  * GameSession 的注入点（SessionOptions.baseDir/assetsDir/chatPorts/rollDice）
  * 为既有生产端口，harness 只做组装，不改生产行为。
  */
@@ -22,9 +22,30 @@ export interface CharSpec {
   id: string;
   name: string;
   location?: string;
+  /** 地点 level（突发错位度输入；缺省 1） */
+  locationLevel?: number;
+  /** 角色 level（缺省 1） */
+  level?: number;
   timer?: number | null;
   isPlayer?: boolean;
 }
+
+/** 突发公式默认配置（与 baitan 标定 v1 同形状同值；测试世界包的 incident.json）。 */
+const DEFAULT_INCIDENT_CONFIG = {
+  d: {
+    method: "log_ratio",
+    log_ratio: { expr: "kappa * ln((L_loc + c) / (L_geo + c))", consts: { kappa: 33, c: 10 } },
+    absolute_diff: { expr: "L_loc - L_avg" },
+  },
+  f: {
+    expr: "(base + amp * tanh((D - shift) / densityScale) ^ 2) * (floor + (1 - floor) * sigmoid((D - shift) / compressScale))",
+    consts: { base: 0.3, amp: 0.7, shift: 3, densityScale: 24, floor: 0.4, compressScale: 8 },
+  },
+  g: { expr: "sigmoid(a * ln(T) - b)", consts: { a: 0.4205, b: 4.1531 } },
+  p_hit: { expr: "f * g" },
+  p_malign: { expr: "clamp(D + offset, 0, 100)", consts: { offset: 50 } },
+  severity: { expr: "f * scale + offset + (2d20 - 2) - (d20 - 1)", consts: { scale: 50, offset: 10 } },
+};
 
 const DUMMY_CFG: LLMConfig = { apiKey: "dummy", baseURL: "http://127.0.0.1:9", model: "m", jsonMode: false };
 
@@ -55,13 +76,16 @@ export class SessionHarness {
     fs.writeFileSync(path.join(dir, "setting.md"), "测试世界设定\n");
     fs.writeFileSync(path.join(dir, "tone-card.md"), "测试基调\n");
     fs.writeFileSync(path.join(dir, "lorebook.json"), "[]\n");
-    // 包内提示词三副本：从真实默认包拷贝（activation 热加载与装配启动校验都读包内 prompts/）
+    // 包内提示词四副本（三 activation + gm-incident 突发变体）：从真实默认包拷贝
+    // （activation 热加载与装配启动校验都读包内 prompts/）
     const from = packPromptsDir(resolveWorldDir());
     const to = packPromptsDir(dir);
     fs.mkdirSync(to, { recursive: true });
-    for (const agent of AGENT_KINDS) {
+    for (const agent of [...AGENT_KINDS, "gm-incident"]) {
       fs.copyFileSync(path.join(from, `${agent}.prompt.json`), path.join(to, `${agent}.prompt.json`));
     }
+    // 突发公式配置（装配启动校验必需）
+    fs.writeFileSync(path.join(dir, "incident.json"), JSON.stringify(DEFAULT_INCIDENT_CONFIG, null, 2) + "\n");
     fs.writeFileSync(
       path.join(dir, "time.json"),
       JSON.stringify({ start: { y: 0, m: 1, d: 1, h: 0, min: 0 }, periods: [{ key: "白天", from: 0, to: 24 }] }),
@@ -75,7 +99,8 @@ export class SessionHarness {
         name: spec.name,
         personality: `${spec.name}谨慎。`,
         initial_memories: [`${spec.name}的记忆`],
-        location: { name: spec.location ?? "loc_A", level: 1 },
+        location: { name: spec.location ?? "loc_A", level: spec.locationLevel ?? 1 },
+        level: spec.level ?? 1,
         timer: spec.timer === undefined ? 0 : spec.timer,
         isPlayer: spec.isPlayer === true,
       })));

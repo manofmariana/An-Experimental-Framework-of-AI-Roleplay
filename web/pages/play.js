@@ -16,10 +16,10 @@
  *    （runIdEl/sideOut/按钮等）——renderPlay 建立，不随会话 reset。
  *
  * busy 语义：
- * - 输入权限 = !selectBusy(store)（streaming 在途 || phase !== await_player 即禁用）；
+ * - 输入权限 = !selectBusy(store)（streaming 在途 || phase !== await_player || 突发评估挂起即禁用）；
  *   步间（agent_end → 下一 agent_start → transition）phase 仍非 await_player → 不再瞬闪；
  * - 按钮类闸按 streaming 槽单独判定（暂停点 busy=true 但必须可操作）：
- *   继续 = streaming===null && phase!==await_player && !interrupted；
+ *   继续 = streaming===null && !interrupted && (phase!==await_player || 突发评估挂起)；
  *   停止 = streaming!==null；直接编辑 = streaming===null 且有会话；
  *   重 roll / 编辑模态可点 = streaming===null 且 seq 匹配 pipeline 当前步。
  *
@@ -273,8 +273,13 @@ function updatePermission() {
   inputView.setEnabled(canInputNow);
   refreshSend();
   if (continueBtn) {
+    // 突发评估挂起时 phase 是盲的（await_player 为假相位）：同样显示「继续」先结算
     continueBtn.style.display =
-      !streaming && state.pipeline.phase !== "await_player" && !state.pipeline.interrupted ? "" : "none";
+      !streaming &&
+      !state.pipeline.interrupted &&
+      (state.pipeline.phase !== "await_player" || state.pipeline.pending_incident === true)
+        ? ""
+        : "none";
   }
   if (editStateBtn) {
     // 直接编辑空闲闸：LLM 在途（流式槽）或无会话禁用；暂停点可用
@@ -286,9 +291,11 @@ function updatePermission() {
       ? ""
       : state.pipeline.interrupted
         ? "当前步已被停止：编辑补全或回滚后继续"
-        : state.pipeline.phase !== "await_player"
-          ? "世界进行中，可继续或回滚"
-          : "";
+        : state.pipeline.pending_incident === true
+          ? "突发事件判定中：请继续"
+          : state.pipeline.phase !== "await_player"
+            ? "世界进行中，可继续或回滚"
+            : "";
   }
 }
 

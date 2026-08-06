@@ -15,7 +15,7 @@ import {
   CharacterManifestSchema,
   type CharacterManifest,
 } from "../agents/character.js";
-import { GM_PLACEHOLDERS, GmActivation } from "../agents/gm.js";
+import { GM_INCIDENT_PLACEHOLDERS, GM_PLACEHOLDERS, GmActivation } from "../agents/gm.js";
 import { PROSE_PLACEHOLDERS, ProseActivation } from "../agents/prose.js";
 import { loadTemplate } from "../compile/template.js";
 import {
@@ -38,6 +38,7 @@ import { OpenAIChatAdapter } from "../llm/openaiChatAdapter.js";
 import { defaultDice, type DicePort } from "../ports.js";
 import { resolveUserDirectories } from "../resources/userDirectories.js";
 import { packPromptsDir } from "../resources/worldRepository.js";
+import { compileIncidentConfig, type IncidentConfig } from "../scheduler/incident.js";
 import { safeSegment } from "../shared/safeSegment.js";
 import { ArchiveStore } from "../truth/archive.js";
 import { CharactersStore } from "../truth/charactersStore.js";
@@ -66,6 +67,13 @@ function loadPlayerInitial(worldDir: string): CharacterManifest {
   const file = path.join(worldDir, "player.json");
   if (!fs.existsSync(file)) throw new Error(`世界设定集缺少玩家开局配置: ${file}`);
   return CharacterManifestSchema.parse(JSON.parse(readText(file)));
+}
+
+/** 突发公式配置（世界包 incident.json；缺文件/损坏即拒装——公式结构与参数唯一出处，无代码内缺省）。 */
+function loadIncidentConfig(worldDir: string): IncidentConfig {
+  const file = path.join(worldDir, "incident.json");
+  if (!fs.existsSync(file)) throw new Error(`世界设定集缺少突发公式配置: ${file}`);
+  return compileIncidentConfig(JSON.parse(readText(file)));
 }
 
 function readWorldSet(runId: string, baseDir?: string): string {
@@ -149,15 +157,18 @@ export function createGameSession(
   writeWorldSet(runId, worldSet, dir);
 
   // 提示词模板：包内 prompts/（每世界包一份完整副本，续档与新会话同一口径——
-  // 都按本会话世界包解析）；装配时加载一次做启动校验，运行期每轮激活前热加载（见各 agent）
+  // 都按本会话世界包解析）；装配时加载一次做启动校验，运行期每轮激活前热加载（见各 agent）。
+  // 四份：三 activation + gm-incident 突发变体（同一 GM 身份的不同功能提示词组）。
   const promptsDir = packPromptsDir(worldDir);
   loadTemplate("character", Object.keys(CHARACTER_PLACEHOLDERS), promptsDir);
   loadTemplate("gm", Object.keys(GM_PLACEHOLDERS), promptsDir);
   loadTemplate("prose", Object.keys(PROSE_PLACEHOLDERS), promptsDir);
+  loadTemplate("gm-incident", Object.keys(GM_INCIDENT_PLACEHOLDERS), promptsDir);
 
   const setting = readText(path.join(worldDir, "setting.md"));
   const toneCard = readText(path.join(worldDir, "tone-card.md"));
   const worldLoreEntries = Lorebook.load(path.join(worldDir, "lorebook.json")).all();
+  const incidentConfig = loadIncidentConfig(worldDir);
   const playerInitial = loadPlayerInitial(worldDir);
   const charDir = path.join(worldDir, "characters");
   const manifests = fs
@@ -223,6 +234,7 @@ export function createGameSession(
     proseWindowTurns: options?.proseWindowTurns ?? DEFAULT_PROSE_WINDOW_TURNS,
     gmIntervalCycles: options?.gmIntervalCycles ?? DEFAULT_GM_INTERVAL_CYCLES,
     rollDice: options?.rollDice ?? defaultDice,
+    incidentConfig,
     repo,
     revision,
     adapters,

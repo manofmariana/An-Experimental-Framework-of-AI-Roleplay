@@ -8,7 +8,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { type AgentKind } from "../config.js";
 
 export const PromptModuleSchema = z.object({
   key: z.string().min(1),
@@ -55,7 +54,7 @@ export function validateTemplate(raw: unknown, registryKeys: readonly string[]):
 
 /** 加载模板（dir = 世界包内 prompts/ 目录，无全局默认——调用方必传），按注册表校验占位符。 */
 export function loadTemplate(
-  agent: AgentKind,
+  agent: string,
   registryKeys: readonly string[],
   dir: string,
 ): PromptTemplate {

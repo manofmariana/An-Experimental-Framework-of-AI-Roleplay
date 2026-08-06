@@ -1,9 +1,10 @@
 /**
  * 世界设定集仓储。
  *
- * data/assets/{setId}/ 世界包：三文件（setting.md / tone-card.md / lorebook.json）、角色 manifest
+ * data/assets/{setId}/ 世界包：三文件（setting.md / tone-card.md / lorebook.json）、突发公式配置
+ * （incident.json）、角色 manifest
  * （player.json + characters/*.json）、包内提示词模板（prompts/{agent}.prompt.json，每包一份
- * 完整副本，无全局默认）的读写，以及世界设定集列表/目录解析（canonical 实现——config.ts 的
+ * 完整副本，无全局默认；三 activation + gm-incident 突发变体）的读写，以及世界设定集列表/目录解析（canonical 实现——config.ts 的
  * listWorldSets/resolveWorldDir 委托到此处，消除两份实现的漂移）。
  *
  * 全部函数显式接收目录参数（组成根经 UserDirectories 注入），本模块不 import config。
@@ -137,7 +138,7 @@ export function writeCharacterManifest(worldDir: string, id: string, manifest: u
 // 提示词模板文件（{packDir}/prompts/{agent}.prompt.json；结构校验在 server 路由层）
 // ---------------------------------------------------------------------------
 
-/** 包内提示词目录：{worldDir}/prompts/（每包三份完整副本，无全局默认）。 */
+/** 包内提示词目录：{worldDir}/prompts/（每包完整副本：三 activation + gm-incident，无全局默认）。 */
 export function packPromptsDir(worldDir: string): string {
   return path.join(worldDir, "prompts");
 }

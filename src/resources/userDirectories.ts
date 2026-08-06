@@ -5,8 +5,8 @@
  * UserDirectories 集中提供，不在 endpoint/业务代码里散落硬编码。
  *
  * 布局（物理迁移已完成：旧 data/worlds、data/prompts、根 runs/ 已删除，无 legacy 回落）：
- * - data/assets/{世界包}/：世界设定集（setting/tone-card/lorebook/time/player/characters/）
- *   + 包内 prompts/（三份完整提示词副本，全局单例 prompts 目录已废）；
+ * - data/assets/{世界包}/：世界设定集（setting/tone-card/lorebook/time/incident.json/player/characters/）
+ *   + 包内 prompts/（完整提示词副本：三 activation + gm-incident 突发变体，全局单例 prompts 目录已废）；
  * - data/users/{username}/：secrets.json / api-presets/ / settings.json / save/
  *   （save/ = 存档家目录，原项目根 runs/ 改名迁入户内）。
  *

@@ -11,8 +11,9 @@
  * 不在本文件范围，由 SessionCoordinator 会话隔离负责（见 sessionCoordinator.ts 注释）。
  */
 import type { CharacterContext } from "../agents/character.js";
-import type { GmContext } from "../agents/gm.js";
+import type { GmContext, GmIncidentContext } from "../agents/gm.js";
 import type { ProseContext } from "../agents/prose.js";
+import type { IncidentHit } from "../scheduler/incident.js";
 import { groupLocation } from "../scheduler/simulator.js";
 import {
   renderForGm,
@@ -24,7 +25,7 @@ import {
 import { Lorebook } from "../truth/lorebook.js";
 import type { TruthStores } from "../truth/stores.js";
 import { renderScene } from "../truth/workingSet.js";
-import type { AdjudicationPackage } from "../types.js";
+import { minutesToText, type AdjudicationPackage } from "../types.js";
 import {
   lastProse,
   participantTags,
@@ -100,6 +101,17 @@ export interface GmContextInput {
   sceneText: string;
   /** 本轮行动者 → 行动时所在组（连续场景滑窗过滤输入） */
   roundScenes: Record<string, number>;
+  /** 良恶/程度判定（机械渲染；现投现算，由 session 内核注入） */
+  fortune: string;
+}
+
+/** 突发 GM activation 上下文输入。 */
+export interface GmIncidentContextInput {
+  truth: TruthStores;
+  /** 命中结果（目标组渲染的输入） */
+  hit: IncidentHit;
+  /** 良恶/程度判定（机械渲染；突发 GM 用命中组的 D 现投） */
+  fortune: string;
 }
 
 /** 正文 activation 上下文输入。 */
@@ -114,6 +126,52 @@ export interface ProseContextInput {
   participantCids: string[];
 }
 
+/**
+ * 未裁决突发派生：末个 gm 步（结算边界）之后的 incident 步中、目标涉及 cids 的突发文本。
+ * 突发内容不落 Event（未裁决素材，地位同工作集）；GM 结算覆盖该组时由 GM 转写为真正
+ * Event，本派生随边界前移自动消解。注入位置 = 目标组角色的 #当前场景 开头与
+ * 常规 GM 的 ##当前场景 开头（同一派生，两侧复用）。
+ */
+export function pendingIncidentText(truth: TruthStores, cids: readonly string[]): string {
+  const current = truth.world.pipeline.current;
+  const steps = [...truth.archive.readAll(), ...(current !== null ? [current] : [])];
+  let boundary = -1;
+  steps.forEach((s, i) => {
+    if (s.kind === "gm") boundary = i;
+  });
+  const texts: string[] = [];
+  for (const s of steps.slice(boundary + 1)) {
+    if (s.kind !== "incident") continue;
+    const result = s.result as { target?: { cids?: string[] }; incident?: { text?: string } } | null;
+    const text = result?.incident?.text;
+    if (typeof text === "string" && (result?.target?.cids ?? []).some((cid) => cids.includes(cid))) {
+      texts.push(text);
+    }
+  }
+  return texts.map((t) => `【突发事件】${t}`).join("\n");
+}
+
+/** 当前场景加突发前缀（无未裁决突发 = 原文）。 */
+function withIncidentPrefix(truth: TruthStores, cids: readonly string[], scene: string): string {
+  const prefix = pendingIncidentText(truth, cids);
+  if (prefix === "") return scene;
+  return scene === "" ? prefix : `${prefix}\n\n${scene}`;
+}
+
+/** 突发 GM 的目标组机械渲染（成员/地点/level/剩余休眠时长/错位度）。 */
+function renderIncidentTarget(truth: TruthStores, hit: IncidentHit): string {
+  const members = hit.group.cids
+    .map((cid) => {
+      const state = truth.characters.get(cid);
+      return `- @${cid}（${state.name}，level ${state.level}）`;
+    })
+    .join("\n");
+  return [
+    `地点：${hit.group.locationName}（level ${hit.group.locationLevel}）；错位度 D=${hit.D.toFixed(1)}；已休眠 ${minutesToText(hit.group.remainingMinutes)}`,
+    `成员：`,
+    members,
+  ].join("\n");
+}
 /**
  * activation 上下文构建器：持有世界集静态文本，其余全部逐调用现算。
  * 方法均为纯读取组装（不写真相、不做 IO）。
@@ -138,7 +196,7 @@ export class ActivationContextBuilder {
       proseWindow: proseWindowFor(truth.archive.readAll(), cid, state.group, input.proseWindowTurns).map((block) =>
         renderRefsForReader(block, relations),
       ),
-      currentScene: sceneForCid(truth, cid),
+      currentScene: withIncidentPrefix(truth, [cid], sceneForCid(truth, cid)),
       timeHeader: truth.timeStore.render(truth.world.world.time),
       clock: truth.world.clock,
       incomingContact: input.invitation ?? null,
@@ -160,11 +218,33 @@ export class ActivationContextBuilder {
       proseWindow: proseWindowForRound(truth.archive.readAll(), input.roundScenes, input.proseWindowTurns).map((block) =>
         renderRefsForGm(block),
       ),
-      currentScene: input.sceneText,
+      currentScene: withIncidentPrefix(truth, Object.keys(input.roundScenes), input.sceneText),
       worldSnapshot: JSON.stringify(truth.world.world),
       states: truth.characters.all(),
       clock: truth.world.clock,
       timeHeader: truth.timeStore.render(truth.world.world.time),
+      fortune: input.fortune,
+    };
+  }
+
+  /** 突发 GM 上下文：与常规 GM 同一全知视野（无滑窗/当前场景），另带目标组与良恶/程度判定。 */
+  gmIncident(input: GmIncidentContextInput): GmIncidentContext {
+    const { truth } = input;
+    return {
+      setting: this.statics.setting,
+      cast: buildCast(truth),
+      loreFull: truth.loreStore
+        .book()
+        .all()
+        .map((entry) => `[${entry.id}]（标签：${entry.tags.join("、")}）\n${entry.content}`)
+        .join("\n\n"),
+      events: truth.events.readAll().map((event) => event.payload),
+      worldSnapshot: JSON.stringify(truth.world.world),
+      states: truth.characters.all(),
+      clock: truth.world.clock,
+      timeHeader: truth.timeStore.render(truth.world.world.time),
+      targetGroup: renderIncidentTarget(truth, input.hit),
+      fortune: input.fortune,
     };
   }
 

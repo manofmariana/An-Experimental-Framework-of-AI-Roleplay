@@ -28,7 +28,7 @@ _Avoid_: 仅指 NPC；通用 `changes` 字段
 角色变量，标记该角色当前由玩家操控；`await_player` 一律按 isPlayer 判定，不硬编码 CID——为切换扮演对象、多人操控角色预留。
 
 **Level（等级）**:
-角色必备变量；地点（Location）也带 level。两者差值预留给突发鉴定（未接线，见 `ROADMAP.md`）。
+角色必备变量；地点（Location）也带 level。两者的错位（对数比，见 Incident）是突发事件命中评估与良恶/程度判定的自变量；level 无上限，取决于世界观设计。
 
 **Location（地点）**:
 结构化变量 `{name, level}`——name 是 GM 裁决时赋予的自由文本（以世界包为参考、提示词管理；GM 在全员行动完后推理，会主动让剧情上在一起的角色拿到相同 name），level 是地点等级。同步组的"同地"判定按 name。
@@ -66,6 +66,10 @@ _Avoid_: 对话轮（旧名）；普通轮
 - **确认标记**：被邀请者接受邀请（+ 首轮回复）；拒绝则输出理由、不立此标记，timer 自动还原。
 _Avoid_: 指令、命令、工具调用
 
+**GM**:
+全知裁决者 activation 身份：重裁决、次要 NPC 代演、世界反应、为行动者订立时长（Span）与 location、以 known_by 逐事件标记可见性、narrativity 包级权重；**克制红线**——不替主要角色行动/感受/思考，引导靠环境旁白与 NPC。同一身份可携带**多提示词组**（常规裁决 / 突发变体——"同一身份 × 不同功能 = 不同提示词组"）。每次激活前固定投良恶/程度判定（机械投骰、占位符注入，重跑自然重投）。
+_Avoid_: 主持人、旁白、DM
+
 **Action Cycle（行动周期）**:
 连续场景内**所有成员各行动一次**的计数单位；硬保险"GM 强制间隔"以行动周期计（N 个行动周期后强制激活 GM）。与"轮"（单次激活 seq）区分。**周期补完**：前台组不变 ⇒ 已行动/未行动状态不变，未行动者继续行动，直到原周期成员全部行动完，再进入下一周期或被并入新组——保证一个组只要不进入后台就一定能进行完整的周期活动（人少并入人多的组变动发生在补完之后；中途 GM 后未并组、组仍前台 → 未行动者继续，同属补完）。进度管理见 Action Order Table。
 _Avoid_: 圈、回合
@@ -90,6 +94,18 @@ _Avoid_: 输出、回复
 正文存储原文中指称演员表角色的占位语法 `[[称呼|@CID]]`——称呼 = 当时为人所知的名字/外号/特征称谓，@CID 绑身份；被引号包裹的直接引语豁免，照写原文。渲染看读者：玩家显示 → 称呼；角色注入 → 按读者 relations（name → impression → 保留 @CID）；GM 注入 → 称呼（@CID）；正文 agent 的上一轮正文注入保持原文（格式学习通道）。与 Event 的 @CID + 身份替换同一"存储用 CID、渲染看读者"体系（adr/0003）。
 _Avoid_: 正文裸名直存、正文裸 @CID 直存
 
+**Incident（突发事件）**:
+概率触发的休眠组激活机制（机制与公式见 `DESIGN.md` §4.8，参数唯一出处 = 世界包 `incident.json`，取舍见 adr/0006）：每次常规 GM 步（及其正文步）结束后评估——按组以**剩余休眠时长**（Timer − World Clock）与**错位度 D**（location 与组几何平均 level 的对数比）算命中概率，多组命中只激活概率最高者；命中即触发 Incident GM 生成突发内容，目标组全员 **Timer** 对齐 **World Clock** 立即到期。**不是 Event**——内容经 GM 结算转写后才进事件库。
+_Avoid_: 随机事件、遭遇
+
+**Incident GM（突发 GM）**:
+**GM** 身份的功能变体：同一 preset、同一全知视野，专用提示词组（`gm-incident`），slim 契约（突发内容文本 + 可选 deltas；不复用 durations 覆盖校验）；产出归档为 `incident` 步 kind（调度透明步）——kind 是管线语义轴、身份是模型预设轴，二者不对齐是设计（adr/0006）。
+_Avoid_: 第四 agent、独立突发身份
+
+**Incident Content（突发内容）**:
+Incident GM 的产出：**非 Event 的描述文本 + 可选变量变更（deltas）**——未裁决素材（地位同 **Working Set**），存于 incident 步 result；经派生注入目标组角色的 #当前场景 开头与常规 GM 的 ##当前场景 开头；GM 结算覆盖该组时由 GM 转写为 **Event**，注入自动消解。
+_Avoid_: 突发事件记录、突发 Event
+
 ## Relationships
 
 - **Sync Group** 是派生状态：程序按 **Character** 变量机械划分（timer+location 一致自动成组；**Invitation** 可跨地点并入）并指派保稳 id；**Group = {组编号， 组位置}**，组位置绑定先攻最高者 CID，组不持有任何变量
@@ -99,8 +115,12 @@ _Avoid_: 正文裸名直存、正文裸 @CID 直存
 - **Event** 的可见性 = `known_by` tags 唯一通道（GM 推理后标记）；location 字段只作叙事记录，不参与感知过滤
 - **Prose** 与 **Event** 同一"存储用 CID、渲染看读者"体系：事件身份替换走 relations（renderForReader），正文指称占位符按读者分视图（玩家=称呼 / 角色=relations 过滤 / GM=称呼（@CID））
 - **时间轴与轮状态全部派生，无独立存储**：调度 = 扫描角色 Timer 取最小；组 ← timer+location/邀请；行动顺序 ← Initiative 变量（{先攻值， 组编号}）；游标与 phase ← archive 的 seq 序列推断（archive 不存 pipeline 快照）
+- **Incident** 以剩余休眠时长（**Timer** − **World Clock**）× 地点安全等级按组评估命中，命中组全员 **Timer** 对齐时钟立即到期；评估只在常规 GM 步（及正文步）结束后发生，incident 步后不评估
+- **Incident GM** 是 **GM** 身份的功能变体：同 preset 同视野、不同提示词组、slim 契约，产出 **Incident Content** 归档为 incident 步
+- **Incident Content** 是未裁决素材（同 **Working Set** 地位），派生注入目标组与常规 GM，常规 GM 结算覆盖该组时转写为 **Event** 并消解
 
 ## Flagged ambiguities
 
 - "轮"易混用：总轮次 seq（一次激活）与行动周期（连续场景内全员各行动一次）——后者一律用 **Action Cycle** 指称。
 - "摘要"是 gm.prompt.json 对事件的提示词层叫法，目的是约束 GM 输出（摘要制写作）；领域术语与讨论基础仍是"事件"。
+- "突发事件" 不是 **Event**：Event 专指真相层已裁决记录单元；**Incident Content** 在 GM 转写前只是注入素材，名字相近但层级不同（adr/0006）。

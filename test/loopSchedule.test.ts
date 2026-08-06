@@ -52,8 +52,10 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
       { id: "C1002", name: "乙", location: "loc_B", timer: 30 },
     ]);
     // 骰子按 cid 升序消费：C0=5+5=10，C1001=20+5=25 → C1001 先动
+    // 之后依序：seq5 GM 激活前良恶/程度 4 骰（值只进提示词，统一 50）；seq6 正文后突发评估 1 骰
+    // （sC1002 休眠中——timer 30 > clock 0 且未被 durations 覆盖；给 100 = 恒不命中）
     const runId = `run-t1-${process.pid}`;
-    const session = makeSession(runId, worldId, [5, 20], 2, [
+    const session = makeSession(runId, worldId, [5, 20, 50, 50, 50, 50, 100], 2, [
       gmPkg({ // seq5：硬保险周期末 GM（X=2）
         narrativity: "full",
         durations: [
@@ -132,7 +134,9 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
       { id: "C1002", name: "乙", location: "loc_B", timer: 30 },
     ]);
     const runId = `run-t2-${process.pid}`;
-    const session = makeSession(runId, worldId, [5, 20], 5, [
+    // 开局 2 骰后：seq2 GM 激活前良恶/程度 4 骰（50×4）；GM 步后突发评估 1 骰
+    //（sC1002 休眠中——C0/C1001 所在组被 durations 覆盖整组跳过；给 100 = 恒不命中）
+    const session = makeSession(runId, worldId, [5, 20, 50, 50, 50, 50, 100], 5, [
       gmPkg({ // seq2：标记触发立即 GM——工作集仅 C1001，契约要求一并覆盖同组未行动的 C0（不设会撕裂组）
         durations: [{ cid: "C1001", span: { min: 5 } }, { cid: "C0", span: { min: 5 } }],
       }),
@@ -175,7 +179,8 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
       { id: "C1002", name: "乙", location: "loc_B", timer: 30 },
     ]);
     const runId = `run-t2b-${process.pid}`;
-    const session = makeSession(runId, worldId, [15, 15], 5, [
+    // 开局 2 骰后：seq3 GM 激活前良恶/程度 4 骰（50×4）；GM 步后突发评估 1 骰（sC1002 休眠中；100 = 恒不命中）
+    const session = makeSession(runId, worldId, [15, 15, 50, 50, 50, 50, 100], 5, [
       gmPkg({ // seq3：批完成后 GM（覆盖本轮全部行动者）
         durations: [
           { cid: "C0", span: { min: 5 } },
@@ -303,7 +308,8 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
     ]);
     const runId = `run-t3d-${process.pid}`;
     // 骰子按 cid 升序消费：C0=5+5=10，C1001=20+5=25 → C1001 先动
-    const session = makeSession(runId, worldId, [5, 20], 1, [
+    // 之后：seq3 GM 激活前良恶/程度 4 骰（50×4）；GM 步后无休眠组（全员被覆盖/离场无 timer）→ 评估不消费
+    const session = makeSession(runId, worldId, [5, 20, 50, 50, 50, 50], 1, [
       gmPkg({ // seq3：周期末 GM（X=1 达阈值），durations 覆盖行动者 C0 与未结算离开者 C1001
         durations: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }],
       }),
@@ -336,7 +342,8 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
     ]);
     const runId = `run-t3e-${process.pid}`;
     // gmIntervalCycles=5（远大于硬保险阈值 1）：GM 在 seq6 触发即证明独奏节奏从 leave 起计
-    const session = makeSession(runId, worldId, [5, 20], 5, [
+    // 开局 2 骰后：seq6 GM 激活前良恶/程度 4 骰（50×4）；GM 步后无休眠组（全员被覆盖）→ 评估不消费
+    const session = makeSession(runId, worldId, [5, 20, 50, 50, 50, 50], 5, [
       gmPkg({ durations: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }] }), // seq6：独奏周期末
     ]);
     session.setPauseOptions({ everyStep: false, beforeGm: false, afterGm: true, afterProse: false });
@@ -385,7 +392,10 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
       { id: "C1002", name: "乙", location: "loc_B", timer: 60 },
     ]);
     const runId = `run-t4-${process.pid}`;
-    const session = makeSession(runId, worldId, [5, 20, 8], 1, [
+    // 开局 3 骰（C0=5、C1001=20、C1002=8 开局未投——8 是 seq3 confirm 入组补投 d20，先攻 8+5-1=12）
+    // 之后依序：seq2 GM 激活前良恶/程度 4 骰（50×4）+ GM 步后突发评估 1 骰（sC1002 休眠中；100 = 恒不命中）；
+    // seq3 confirm 补投 8；seq6 GM 激活前良恶/程度 4 骰（GM 步后全员被覆盖 → 评估不消费）
+    const session = makeSession(runId, worldId, [5, 20, 50, 50, 50, 50, 100, 8, 50, 50, 50, 50], 1, [
       gmPkg({ durations: [{ cid: "C1001", span: { min: 5 } }, { cid: "C0", span: { min: 5 } }] }), // seq2：contact 触发 GM 立即结算（覆盖同组未行动的 C0）
       gmPkg({ // seq6：新组周期末（覆盖应答者与新组全部行动者）
         durations: [
@@ -465,7 +475,9 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
       { id: "C1002", name: "乙", location: "loc_B", timer: 60 },
     ]);
     const runId = `run-t5-${process.pid}`;
-    const session = makeSession(runId, worldId, [5, 20], 1, [
+    // 开局 2 骰后：seq2 GM 激活前良恶/程度 4 骰（50×4）+ GM 步后突发评估 1 骰（sC1002 休眠中；100 = 恒不命中）；
+    // 拒绝不补投；seq6 GM 激活前良恶/程度 4 骰（GM 步后全员被覆盖 → 评估不消费）
+    const session = makeSession(runId, worldId, [5, 20, 50, 50, 50, 50, 100, 50, 50, 50, 50], 1, [
       gmPkg({ durations: [{ cid: "C1001", span: { min: 5 } }, { cid: "C0", span: { min: 5 } }] }), // seq2（覆盖同组未行动的 C0）
       gmPkg({ // seq6：周期末（拒绝应答在工作集中，契约须覆盖）
         durations: [
@@ -518,7 +530,10 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
       gmPkg({ durations: [{ cid: "C1001", span: { min: 10 } }, { cid: "C1002", span: { min: 10 } }, { cid: "C0", span: { min: 10 } }] }), // seq6（新组完整周期末）
       gmPkg({ durations: [{ cid: "C1001", span: { min: 10 } }, { cid: "C1002", span: { min: 10 } }, { cid: "C0", span: { min: 10 } }] }), // seq10（回溯前继续）
     ];
-    const session = makeSession(runId, worldId, [5, 20, 8, 8], 1, gmScripts());
+    // 开局 2 骰后依序：seq2 GM 良恶/程度 4 骰（50×4）+ 评估 1 骰（sC1002 休眠中；100 = 恒不命中）；
+    // seq3 confirm 补投 8；seq6/seq10 GM 各良恶/程度 4 骰
+    //（seq6/seq10 GM 步后全员被覆盖 → 评估不消费；续档用固定骰 () => 8，不占队列）
+    const session = makeSession(runId, worldId, [5, 20, 50, 50, 50, 50, 100, 8, 50, 50, 50, 50, 50, 50, 50, 50], 1, gmScripts());
     llm.characterQueues["character:C1001"] = [
       decision({ markers: [{ type: "contact", channel: "电话", targets: ["C1002"] }] }),
       decision({ action: "接听后的行动" }),
@@ -566,10 +581,11 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
       { id: "C1001", name: "甲", location: "loc_A", timer: 0 },
     ]);
     const runId = `run-t7-${process.pid}`;
-    const session = makeSession(runId, worldId, [5, 20], 1, [
+    const session = makeSession(runId, worldId, [5, 20, 50, 50, 50, 50], 1, [
       gmPkg({ narrativity: "full", durations: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }] }), // seq3
       gmPkg({ durations: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }] }), // seq7（abort 后继续）
     ]);
+    // 开局 2 骰后：seq3 GM 激活前良恶/程度 4 骰（50×4）；正文后无休眠组（全员被覆盖）→ 评估不消费
     await session.continuePipeline(); // seq1 → 停等
     llm.abortAt = { agent: "character:C1001", seq: 5, partial: "半截" };
     await session.handlePlayerInput("推进"); // seq2 player → seq3 GM(full) → seq4 prose → seq5 abort
@@ -592,7 +608,9 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
       { id: "C1001", name: "甲", location: "loc_A", timer: 0 },
     ]);
     const runId = `run-t8-${process.pid}`;
-    const session = makeSession(runId, worldId, [5, 20], 1, []);
+    // 开局 2 骰后：seq3 GM 激活前良恶/程度 4 骰（50×4，abort 也照投——fortune 在 activation 前消费）；
+    // abort 的 GM 步不结算 → 不评估；editResult 编辑重放不跑 stepGm → 不重投 fortune
+    const session = makeSession(runId, worldId, [5, 20, 50, 50, 50, 50], 1, []);
     llm.abortAt = { agent: "gm", seq: 3, partial: "半截裁决" };
     await session.continuePipeline(); // seq1
     await session.handlePlayerInput("玩家行动"); // seq2 → seq3 GM abort
@@ -616,7 +634,9 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
       { id: "C1002", name: "乙", location: "loc_B", timer: 30 },
     ]);
     const runId = `run-t9-${process.pid}`;
-    const session = makeSession(runId, worldId, [5, 20], 1, [
+    // 开局 2 骰后：seq3 GM 激活前良恶/程度 4 骰（50×4）；seq4 正文首次 abort 不评估，回滚 + 编辑重跑
+    // 正文后评估 1 骰（sC1002 休眠中——timer 30 > clock 0 且未被覆盖；100 = 恒不命中）
+    const session = makeSession(runId, worldId, [5, 20, 50, 50, 50, 50, 100], 1, [
       gmPkg({ narrativity: "full", durations: [{ cid: "C0", span: { min: 5 } }, { cid: "C1001", span: { min: 5 } }] }), // seq3
     ]);
     llm.abortAt = { agent: "prose", seq: 4, partial: "停住" };
@@ -694,7 +714,7 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
     assert.strictEqual(CHARACTER_PLACEHOLDERS.contacts!.provide(invitedCtx), "", "待答邀请者不应看见联系人名单");
     const gmCtx: GmContext = {
       setting: "", cast: [], loreFull: "", events: [], proseWindow: [], currentScene: "",
-      worldSnapshot: "{}", states, clock: 10, timeHeader: "",
+      worldSnapshot: "{}", states, clock: 10, timeHeader: "", fortune: "",
     };
     const gmContacts = GM_PLACEHOLDERS.contacts!.provide(gmCtx);
     assert.ok(gmContacts.includes("C1002") && gmContacts.includes("C1004"));

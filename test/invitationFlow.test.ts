@@ -46,8 +46,10 @@ describe("多人邀请：多目标按序应答（先攻降序 + CID 升序），
     ]);
     const runId = `run-if1-${process.pid}`;
     // 开局先攻：C0=10，C1001=25（组 1）；C1002=13，C1003=20（组 2）；
-    // C1003 入组补投 10+5-1=14；seq7 GM 合组后 C1002 补投 12+5-1=16
-    const session = makeSession(runId, worldId, [5, 20, 8, 15, 10, 12], [
+    // seq2 GM 前良恶/程度 4 骰（50×4，仅进提示词）+ GM 后休眠组 g2（C1002/C1003，timer 60）评估 1 骰（100 恒不命中）；
+    // C1003 入组补投 10+5-1=14；seq7 GM 前良恶/程度 4 骰 + 合组后 C1002 补投 12+5-1=16
+    // （seq7 评估：durations 全覆盖，无休眠组，不投）
+    const session = makeSession(runId, worldId, [5, 20, 8, 15, 50, 50, 50, 50, 100, 10, 50, 50, 50, 50, 12], [
       gmPkg({ durations: [{ cid: "C1001", span: { min: 5 } }, { cid: "C0", span: { min: 5 } }] }), // seq2：contact 触发 GM
       gmPkg({ // seq7：周期末（邀请双方 + 拒绝者都在工作集，契约全覆盖）
         durations: [
@@ -113,8 +115,9 @@ describe("多人邀请：目标含玩家", () => {
       { id: "C1001", name: "甲", location: "loc_B", timer: 0 },
     ]);
     const runId = `run-if2-${process.pid}`;
-    // 全员单人组（开局无投掷）；confirm 配对补投：C1001=25，C0=10-1=9（异地 -1）
-    const session = makeSession(runId, worldId, [20, 5], [
+    // 全员单人组（开局无投掷）；seq2 GM 前良恶/程度 4 骰（50×4）+ GM 后休眠组 sC0（timer 10 在未来、未被 durations 覆盖）评估 1 骰（100 恒不命中）；
+    // confirm 配对补投：C1001=25，C0=10-1=9（异地 -1）；seq5 GM 前良恶/程度 4 骰（seq5 评估：durations 全覆盖，不投）
+    const session = makeSession(runId, worldId, [50, 50, 50, 50, 100, 20, 5, 50, 50, 50, 50], [
       gmPkg({ durations: [{ cid: "C1001", span: { min: 5 } }] }), // seq2：contact 触发 GM（工作集仅 C1001）
       gmPkg({ // seq5：周期末（配对组全体成员）
         durations: [{ cid: "C1001", span: { min: 10 } }, { cid: "C0", span: { min: 10 } }],
@@ -160,8 +163,10 @@ describe("多人邀请：回滚 / 读档 / 编辑后只继续未应答目标", (
       { id: "C1003", name: "丙", location: "loc_B", timer: 60 },
     ]);
     const runId = `run-if3-${process.pid}`;
-    // 开局 4 投 + C1003 入组补投（10）+ 编辑重放 confirm 再补投（11，反向后 initiative 组编号不符）
-    const session = makeSession(runId, worldId, [5, 20, 8, 15, 10, 11], [
+    // 开局 4 投 + seq2 GM 前良恶/程度 4 骰（50×4）+ GM 后休眠组 g2（C1002/C1003，timer 60）评估 1 骰（100 恒不命中）
+    // + C1003 入组补投（10）+ 编辑重放 confirm 再补投（11，反向后 initiative 组编号不符）；
+    // 编辑重放不跑 stepGm 不重投 fortune；回滚/读档后续跑只重放角色步，无 GM 步不投
+    const session = makeSession(runId, worldId, [5, 20, 8, 15, 50, 50, 50, 50, 100, 10, 11], [
       gmPkg({ durations: [{ cid: "C1001", span: { min: 5 } }, { cid: "C0", span: { min: 5 } }] }), // seq2
     ]);
     llm.characterQueues["character:C1001"] = [

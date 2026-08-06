@@ -43,8 +43,17 @@ import {
   type SchedulerCharacter,
   type SchedulerSnapshot,
 } from "../scheduler/derive.js";
+import {
+  evaluateIncident,
+  mismatchD,
+  renderFortune,
+  rollFortune,
+  type IncidentConfig,
+  type IncidentHit,
+  type SleepingGroup,
+} from "../scheduler/incident.js";
 import { InvitationProjection, type InvitationStepView } from "../scheduler/invitations.js";
-import type { SimChar } from "../scheduler/simulator.js";
+import { groupLocation, type SimChar } from "../scheduler/simulator.js";
 import { ArchiveStore, buildArchiveEntry, type ArchiveEntry } from "../truth/archive.js";
 import { CharactersStore, type CharacterState } from "../truth/charactersStore.js";
 import { CommitExecutor, type CommitReason } from "../truth/commitExecutor.js";
@@ -71,6 +80,7 @@ import {
 import {
   AdjudicationPackageSchema,
   DecisionPackageSchema,
+  IncidentPackageSchema,
   type AdjudicationPackage,
   type CacheStat,
   type DecisionPackage,
@@ -152,6 +162,8 @@ export interface GameSessionDeps {
   proseWindowTurns: number;
   gmIntervalCycles: number;
   rollDice: DicePort;
+  /** 突发公式配置（世界包 incident.json；装配层读取注入，会话级静态）。 */
+  incidentConfig: IncidentConfig;
   repo: GenerationRepository;
   revision: number;
   /** 各 agent kind 的 OpenAI adapter（注入 fake 的 kind 无此项）：applyResolvedConfig 热更新目标。 */
@@ -174,6 +186,7 @@ export class GameSession {
   private proseWindowTurns: number;
   private gmIntervalCycles: number;
   private readonly rollDice: DicePort;
+  private readonly incidentConfig: IncidentConfig;
   private readonly repo: GenerationRepository;
   private currentRevision: number;
   private readonly display: Display | undefined;
@@ -204,6 +217,7 @@ export class GameSession {
     this.proseWindowTurns = deps.proseWindowTurns;
     this.gmIntervalCycles = deps.gmIntervalCycles;
     this.rollDice = deps.rollDice;
+    this.incidentConfig = deps.incidentConfig;
     this.repo = deps.repo;
     this.currentRevision = deps.revision;
     this.display = deps.display;
@@ -235,6 +249,12 @@ export class GameSession {
   private activeActivationId: string | null = null;
   /** 已销毁旗标（强制切换兜底）：dispose 后任何提交/新步启动抛 DisposedSessionError。 */
   private disposedFlag = false;
+  /**
+   * 编辑 GM 步（narrativity=skip）或正文步挂起的突发命中评估（评估输入 = 该轮裁决 durations
+   * 覆盖的 cid）：编辑 = 该步的一次新输出，结算轮重置——但 editResult 是同步路径（不含 LLM
+   * 调用），评估推迟到下次续跑/玩家输入前结算；回溯/直编使真相偏离该轮，标记随之作废。
+   */
+  private pendingIncidentEval: string[] | null = null;
 
   /**
    * 热应用已解析配置（配置事务的唯一热更新入口；由 configService 事务在保存成功后
@@ -763,18 +783,23 @@ export class GameSession {
     const roundScenes = Object.fromEntries(
       roundCids.map((cid) => [cid, truth.characters.get(cid).group]),
     );
+    // 良恶/程度：所有 GM 激活前的固定判定（常规 GM 用前台组的 D；现投现注入，重跑自然重投）
+    const fortune = rollFortune(this.incidentConfig, this.adjudicatedD(truth, roundCids), this.rollDice);
     // 无状态 activation：GM 上下文逐调用现算（lore 档内副本逐调用渲染）
     const context = this.contexts.gm({
       truth,
       proseWindowTurns: this.proseWindowTurns,
       sceneText: renderScene(workingSet, undefined, remoteCidsOf(truth)),
       roundScenes,
+      fortune: renderFortune(fortune),
     });
     const gmActivationId = `${this.runId}:act:${++this.activationSeq}`;
     this.activeActivationId = gmActivationId;
     this.display?.agentStart(this.gm.agentName, `── GM 裁决 ──`, seq, gmActivationId);
     const controller = new AbortController();
     this.activationController = controller;
+    // GM 步正常完成（提交成功）才突发评估：中断/失败时不得在半状态上投骰
+    let settledDurations: string[] | null = null;
     try {
       const { raw, pkg } = await this.gm.adjudicate(
         context,
@@ -804,6 +829,8 @@ export class GameSession {
         this.gm.agentName,
         `narrativity ${pkg.narrativity} · 事件 ${pkg.events.length} 条 · delta ${pkg.deltas.length} 条`,
       );
+      // narrativity=skip（无正文步）→ 本步结束即突发命中评估；有正文则等正文步结束后评估
+      if (pkg.narrativity === "skip") settledDurations = pkg.durations.map((d) => d.cid);
     } catch (err) {
       this.handleStepError(seq, "gm", err, { result: { round_scenes: roundScenes } });
     } finally {
@@ -811,6 +838,7 @@ export class GameSession {
       this.activeActivationId = null;
       if (!this.disposedFlag) this.display?.agentEnd(this.gm.agentName);
     }
+    if (settledDurations !== null) await this.maybeTriggerIncident(settledDurations);
   }
 
   /** 正文轮。 */
@@ -834,11 +862,12 @@ export class GameSession {
     const gmStep = [...this.archive.readAll()].reverse().find((e) => e.kind === "gm");
     if (gmStep === undefined) throw new Error("正文轮找不到本轮 GM 场景元数据");
     const scenes = (gmStep.result as { round_scenes: Record<string, number> }).round_scenes;
+    const adjudication = this.currentAdjudication();
     // 无状态 activation：正文上下文（近期事件/触发 lore/上轮正文/演员表）逐调用现算
     const context = this.contexts.prose({
       truth,
       proseWindowTurns: this.proseWindowTurns,
-      adjudication: this.currentAdjudication(),
+      adjudication,
       currentScene: speech,
       participantCids: roundCids,
     });
@@ -847,8 +876,11 @@ export class GameSession {
     this.display?.agentStart(this.prose.agentName, `── 正文 ──`, seq, proseActivationId);
     const controller = new AbortController();
     this.activationController = controller;
+    let proseText = "";
+    // 正文步正常完成（提交成功）才突发评估：中断/失败时不得在半状态上投骰
+    let settledDurations: string[] | null = null;
     try {
-      const proseText = await this.prose.render(context, seq, controller.signal, this.display);
+      proseText = await this.prose.render(context, seq, controller.signal, this.display);
       const result: ArchivedProseResult = {
         raw: proseText,
         prose: proseText,
@@ -856,18 +888,20 @@ export class GameSession {
         scenes,
       };
       this.finishStep(seq, "prose", result, emptyStepChanges());
-      return proseText;
+      // 前序 GM 轮召唤了正文 → 突发等到正文结束后才激活（评估输入 = 该轮 durations）
+      settledDurations = adjudication.durations.map((d) => d.cid);
     } catch (err) {
       this.handleStepError(seq, "prose", err, {
         changes: emptyStepChanges(),
         result: { participants: roundCids, scenes },
       });
-      return "";
     } finally {
       this.activationController = null;
       this.activeActivationId = null;
       if (!this.disposedFlag) this.display?.agentEnd(this.prose.agentName);
     }
+    if (settledDurations !== null) await this.maybeTriggerIncident(settledDurations);
+    return proseText;
   }
 
   /** 本轮 GM 裁决包（正文轮输入；从工作集所在轮的 gm 步取——通常即 current）。 */
@@ -880,6 +914,158 @@ export class GameSession {
     const last = [...this.archive.readAll()].reverse().find((e) => e.kind === "gm");
     if (!last) throw new Error("正文轮找不到本轮 GM 裁决包");
     return (last.result as { adjudication: AdjudicationPackage }).adjudication;
+  }
+
+  // -------------------------------------------------------------------------
+  // 突发事件（Incident）：命中评估编排 + 突发步
+  // 评估 = 常规 GM 步（narrativity=skip）及其正文步结束后的标准动作，incident 步后不评估。
+  // -------------------------------------------------------------------------
+
+  /**
+   * 被裁决组的错位度 D（良恶/程度判定自变量；常规 GM = 前台组）：
+   * roundCids 所在首个非零组取组位置 level（成员 = 全组，无论本轮是否行动）；无非零组 = 单人自身。
+   */
+  private adjudicatedD(truth: TruthStores, roundCids: readonly string[]): number {
+    const chars = this.playable(truth);
+    const gids = [...new Set(roundCids.map((cid) => chars[cid]?.group ?? 0).filter((g) => g !== 0))].sort((a, b) => a - b);
+    if (gids.length === 0) {
+      const state = chars[roundCids[0]!]!;
+      return mismatchD(this.incidentConfig, state.location.level, [state.level]);
+    }
+    const gid = gids[0]!;
+    const members = Object.keys(chars).filter((cid) => chars[cid]!.group === gid).sort();
+    const gl = groupLocation(this.simChars(truth), gid);
+    const located = members.find((cid) => chars[cid]!.location.name === gl) ?? members[0]!;
+    return mismatchD(this.incidentConfig, chars[located]!.location.level, members.map((cid) => chars[cid]!.level));
+  }
+
+  /**
+   * 休眠组现组（命中评估输入）：timer 在未来的角色按组归并（非零组 = 整组，零组 = 单人），
+   * 跳过本次裁决 durations 覆盖的组（组内任一成员被覆盖即整组跳过——刚结算的组不评估）。
+   */
+  private sleepingGroups(truth: TruthStores, settledCids: readonly string[]): SleepingGroup[] {
+    const chars = this.playable(truth);
+    const clock = truth.world.clock;
+    const settled = new Set(settledCids);
+    const buckets = new Map<string, string[]>();
+    for (const [cid, s] of Object.entries(chars)) {
+      if (s.timer === null || s.timer <= clock) continue;
+      const key = s.group !== 0 ? `g${s.group}` : `s${cid}`;
+      const bucket = buckets.get(key);
+      if (bucket === undefined) buckets.set(key, [cid]);
+      else bucket.push(cid);
+    }
+    const sim = this.simChars(truth);
+    const groups: SleepingGroup[] = [];
+    for (const [key, cids] of buckets) {
+      const members = [...cids].sort();
+      if (members.some((cid) => settled.has(cid))) continue;
+      const first = chars[members[0]!]!;
+      const locationName = first.group !== 0 ? (groupLocation(sim, first.group) ?? first.location.name) : first.location.name;
+      const located = members.find((cid) => chars[cid]!.location.name === locationName) ?? members[0]!;
+      groups.push({
+        key,
+        cids: members,
+        locationName,
+        locationLevel: chars[located]!.location.level,
+        memberLevels: members.map((cid) => chars[cid]!.level),
+        remainingMinutes: Math.min(...members.map((cid) => chars[cid]!.timer!)) - clock,
+      });
+    }
+    return groups;
+  }
+
+  /**
+   * 突发命中评估（编排归本层——投骰不进 prepareNextCommand 确定性层）：
+   * 休眠组现组 → evaluateIncident（判定落 incident 步 result = 重跑不重投的凭据；
+   * 回溯过该步则沉睡组原样复活、续跑重评估重投骰）→ 命中即突发步。
+   */
+  private async maybeTriggerIncident(settledCids: readonly string[]): Promise<void> {
+    const truth = this.liveTruth();
+    const hit = evaluateIncident(this.sleepingGroups(truth, settledCids), this.incidentConfig, this.rollDice);
+    if (hit === null) return;
+    await this.stepIncident(hit);
+  }
+
+  /** 结算编辑 GM 步挂起的突发评估（一次性；公共入口在任何派生检查前调用）。 */
+  private async drainPendingIncidentEval(): Promise<void> {
+    const settled = this.pendingIncidentEval;
+    if (settled === null) return;
+    this.pendingIncidentEval = null;
+    await this.maybeTriggerIncident(settled);
+  }
+
+  /**
+   * 按当前步重挂突发命中评估（变量消费重算纪律的突发实例）：
+   * 命中评估自变量（地点 level / 角色 level / timer）被步外修改后——回溯落点、直编、编辑——
+   * 结算轮终点（skip GM 步 / 正文步）成为 current 时必须重挂，续跑/玩家输入前基于新变量重投；
+   * 执行钩子只随步运行触发，已完成的落点步不会重跑，不挂则评估永远丢失。
+   * 召唤正文的 GM 步不挂：正文步会重跑或已成为 current，由正文钩子/正文分支负责。
+   */
+  private armPendingIncidentEval(): void {
+    const current = this.world.pipeline.current;
+    const adjudication =
+      current?.kind === "gm"
+        ? (current.result as { adjudication?: AdjudicationPackage } | null)?.adjudication
+        : undefined;
+    if (adjudication !== undefined) {
+      this.pendingIncidentEval =
+        adjudication.narrativity === "skip" ? adjudication.durations.map((d) => d.cid) : null;
+    } else if (current?.kind === "prose") {
+      this.pendingIncidentEval = this.currentAdjudication().durations.map((d) => d.cid);
+    } else {
+      this.pendingIncidentEval = null;
+    }
+  }
+
+  /**
+   * 突发步（kind=incident，调度透明步）：突发 GM（slim 突发包）→ deltas 落库 +
+   * 目标组全员 timer 对齐世界时钟立即到期（可逆 VarChange）。
+   * 突发内容不落 Event——作为未裁决素材存于本步 result，经派生注入目标组角色与
+   * 后续常规 GM 的当前场景开头；GM 结算覆盖该组时转写为真正 Event，注入自动消解。
+   */
+  private async stepIncident(hit: IncidentHit): Promise<void> {
+    const truth = this.liveTruth();
+    const seq = this.startStep();
+    // 良恶/程度：所有 GM 激活前的固定判定（突发 GM 用命中组的 D，现投现注入）
+    const fortune = rollFortune(this.incidentConfig, hit.D, this.rollDice);
+    const context = this.contexts.gmIncident({ truth, hit, fortune: renderFortune(fortune) });
+    const activationId = `${this.runId}:act:${++this.activationSeq}`;
+    this.activeActivationId = activationId;
+    this.display?.agentStart(this.gm.agentName, `── 突发 GM ──`, seq, activationId);
+    const controller = new AbortController();
+    this.activationController = controller;
+    try {
+      const { raw, pkg } = await this.gm.adjudicateIncident(context, seq, controller.signal, this.display);
+      const effects = truth.world.apply(pkg.deltas);
+      for (const cid of hit.group.cids) {
+        effects.push(...truth.characters.setVars(cid, { timer: truth.world.clock }));
+      }
+      this.finishStep(
+        seq,
+        "incident",
+        {
+          raw,
+          incident: pkg,
+          target: { cids: hit.group.cids, location: hit.group.locationName },
+          roll: {
+            D: hit.D,
+            T: hit.group.remainingMinutes,
+            p: hit.p,
+            malignant: fortune.malignant,
+            severity: fortune.severity,
+          },
+        },
+        { setup: [], effects },
+      );
+      this.display?.summary(this.gm.agentName, `突发事件：${pkg.text}`);
+    } catch (err) {
+      this.handleStepError(seq, "incident", err);
+    } finally {
+      this.activationController = null;
+      this.activeActivationId = null;
+      if (!this.disposedFlag) this.display?.agentEnd(this.gm.agentName);
+    }
   }
 
   /**
@@ -922,6 +1108,7 @@ export class GameSession {
     if (this.world.pipeline.current?.interrupted === true) {
       throw new Error("当前步已被停止：请先回溯或编辑补全");
     }
+    await this.drainPendingIncidentEval();
     await this.runPipeline();
   }
 
@@ -930,6 +1117,7 @@ export class GameSession {
     if (this.world.pipeline.current?.interrupted === true) {
       throw new Error("当前步已被停止：请先回溯或编辑补全");
     }
+    await this.drainPendingIncidentEval();
     const cmd = this.prepareNextCommand().command; // 权限检查走统一入口
     if (cmd.type !== "player") {
       // 指明当前在等谁（直编调度变量后 phase 可能刚变，模糊措辞会误导玩家反复输入）
@@ -1014,6 +1202,9 @@ export class GameSession {
     // 5. 一次提交（回滚结果 = 新 Generation）→ adopt；commit 成功后才推进水位
     this.commitTruth(draft, "rollback", []);
     this.eventSeq = scanEventWatermark(this.events.readAll());
+    // 回溯落点是结算轮终点（skip GM 步/正文步）时重挂命中评估：执行钩子只随步运行触发，
+    // 已完成的落点步不会重跑——续跑/玩家输入前必须按回溯后的变量重投（变量消费重算纪律）
+    this.armPendingIncidentEval();
     // 邀请投影全量重建（commit 后 live == draft，统一走重建出口）
     this.invitations = this.rebuildInvitationProjection();
     // commit 后立即经统一入口刷新派生态（下一次权限检查必须立即得到新顺序；短路路径成本可忽略）
@@ -1039,6 +1230,8 @@ export class GameSession {
    * invitation 上下文保留在 result（重放输入，非下标）。
    * 已完成 GM 步（含回滚到 GM 步）可编辑：旧 effects 先整体反向（变量倒序+事件截断），
    * 再按编辑包重新裁决——事件替换提交（activation 无状态，无缓存需重建）。
+   * 突发步同语义可编辑：反转旧 effects（deltas + timer 对齐）后按编辑包重放，
+   * target/roll 命中快照是投骰凭据不随编辑改变。
    * **draft 机制**：解析在任何变异之前（失败抛错，draft 直接丢弃，内存零变化）；
    * 全部变异以 draft 为靶（GM 分支同样在 draft 上先反转旧效应、后 validateAdjudicationRound——
    * 校验失败 draft 丢弃，不再留下"已反转状态"），一次 commitTruth 提交后 adopt。
@@ -1129,6 +1322,33 @@ export class GameSession {
       draft.world.setPipeline({ current: edited });
       this.commitTruth(draft, "admin_edit", flatChanges(edited.changes));
       this.eventSeq = scanEventWatermark(this.events.readAll());
+      // 编辑 = 该步的一次新输出：结算轮重置——按当前步重挂突发命中评估，续跑/玩家输入前重投
+      this.armPendingIncidentEval();
+    } else if (current.kind === "incident") {
+      // 突发步编辑（同 GM 步语义 = 该步的一次新输出）：draft 上反转旧 effects
+      // （deltas + timer 对齐）后用编辑包重放——deltas 重落库 + 目标组全员 timer 重新对齐
+      // 时钟；target/roll 快照是命中投骰凭据，不随编辑改变。评估已发生，重挂助手归 null。
+      const pkg = this.parseJsonField(text, IncidentPackageSchema, "突发包");
+      const previous = current.result as {
+        target?: { cids: string[]; location: string };
+        roll?: { D: number; T: number; p: number; malignant: boolean; severity: number };
+      } | null;
+      if (previous?.target === undefined || previous.roll === undefined) {
+        throw new Error("突发步缺少 target/roll 快照（该步可能已被停止）：请回溯到该步之前重跑");
+      }
+      const target = previous.target;
+      const roll = previous.roll;
+      const draft = cloneTruth(this.liveTruth());
+      this.revertVarChanges(draft, current.changes?.effects ?? []);
+      const effects = draft.world.apply(pkg.deltas);
+      for (const cid of target.cids) {
+        effects.push(...draft.characters.setVars(cid, { timer: draft.world.clock }));
+      }
+      edited.result = { raw: text, incident: pkg, target, roll };
+      edited.changes = { setup: [], effects };
+      draft.world.setPipeline({ current: edited });
+      this.commitTruth(draft, "admin_edit", flatChanges(edited.changes));
+      this.armPendingIncidentEval();
     } else {
       // prose 编辑只替换正文文本，参与者与行动时场景必须原样保留（无真相变异，走统一出口）。
       const previous = current.result as Partial<ArchivedProseResult> | null;
@@ -1138,6 +1358,8 @@ export class GameSession {
       const draft = cloneTruth(this.liveTruth());
       draft.world.setPipeline({ current: edited });
       this.commitTruth(draft, "admin_edit", flatChanges(edited.changes));
+      // 正文编辑 = 该步的一次新输出：结算轮重置——按当前步重挂突发命中评估，续跑/玩家输入前重投
+      this.armPendingIncidentEval();
     }
 
     // 邀请投影全量重建（编辑可能改变 contact/confirm 语义；成本低，不判断影响面）
@@ -1220,14 +1442,23 @@ export class GameSession {
   }
 
   /** 流水线状态（WS 广播：输入权限/继续按钮/暂停态/当前步 kind）。
-   * phase 不落盘（v7）：协议字段名不变，值由 phaseOf(deriveCommand(...)) 现算（收窄为派生枚举）。 */
-  get pipelineInfo(): { seq: number; phase: DerivedPhase; interrupted: boolean; kind: string | null } {
+   * phase 不落盘（v7）：协议字段名不变，值由 phaseOf(deriveCommand(...)) 现算（收窄为派生枚举）。
+   * pending_incident：突发命中评估挂起中——派生是盲的（投骰不进派生层），
+   * await_player 可能是假相位，前端据此屏蔽输入并引导「继续」结算。 */
+  get pipelineInfo(): {
+    seq: number;
+    phase: DerivedPhase;
+    interrupted: boolean;
+    kind: string | null;
+    pending_incident: boolean;
+  } {
     const p: Pipeline = this.world.pipeline;
     return {
       seq: p.seq,
       phase: phaseOf(this.deriveCommand(this.liveTruth())),
       interrupted: p.current?.interrupted === true,
       kind: p.current?.kind ?? null,
+      pending_incident: this.pendingIncidentEval !== null,
     };
   }
 
@@ -1313,6 +1544,9 @@ export class GameSession {
 
     // commit 成功后才推进水位（cast 现建、activation 无状态，无其他重建动作）
     this.eventSeq = scanEventWatermark(this.events.readAll());
+    // 直编可改动命中评估自变量（地点 level/角色 level/timer）：变量消费重算纪律——
+    // 按当前步重挂命中评估，续跑/玩家输入前基于新变量重投
+    this.armPendingIncidentEval();
     // 邀请投影全量重建（直编可改 isPlayer/group 等投影过滤输入；成本低，统一重建）
     this.invitations = this.rebuildInvitationProjection();
     // commit 后立即经统一入口刷新派生态（直编改 initiative/timer 后旧 await_player 不得放行）

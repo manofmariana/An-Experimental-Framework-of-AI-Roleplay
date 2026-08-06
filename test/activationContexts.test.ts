@@ -106,7 +106,7 @@ describe("activationContexts", () => {
   it("lore 逐调用渲染：改 loreStore 后 GM ctx 的 loreFull 反映新内容", () => {
     const truth = makeTruth();
     const builder = new ActivationContextBuilder(STATICS);
-    const gmInput = { truth, proseWindowTurns: 5, sceneText: "", roundScenes: {} };
+    const gmInput = { truth, proseWindowTurns: 5, sceneText: "", roundScenes: {}, fortune: "良恶判定：良性；程度 30（1–100）" };
 
     const before = builder.gm(gmInput);
     assert.ok(before.loreFull.includes("[lore_a]（标签：旧闻）\n灯塔旧事A"), "GM loreFull 全量渲染档内副本");

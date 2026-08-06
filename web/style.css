@@ -204,6 +204,9 @@ th { color: #9aa3af; font-weight: 500; }
 /* 正文 = 亮白（正文本身保持亮白纪律） */
 .agent-panel.panel-prose { border-left-color: #8b93a0; }
 .agent-panel.panel-prose .panel-head { color: #c8cfd8; }
+/* 突发 = 暗红（良恶由卡内副信息行标注） */
+.agent-panel.panel-incident { border-left-color: #b05050; }
+.agent-panel.panel-incident .panel-head { color: #d08080; }
 /* 头部按钮（"..." 菜单按钮） */
 .head-btn {
   background: none;

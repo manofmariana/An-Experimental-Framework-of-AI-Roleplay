@@ -19,6 +19,8 @@ export interface PlayStreamView {
   clearStream: () => void;
   pinScroll: () => void;
   scrollToBottom: (force?: boolean) => void;
+  /** 重 roll 乐观清卡：移除 data-seq ≥ seq 的卡片（复合命令合并 Transition 到达前防双卡并存）。 */
+  dropCardsFrom: (seq: number) => void;
   playerCard: (text: string, seq?: number) => any;
   renderHistory: (history: any) => void;
   onStreaming: (msg: any) => void;

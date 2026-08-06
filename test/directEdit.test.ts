@@ -42,7 +42,11 @@ function makeSession(
 ): { session: GameSession; dir: string } {
   const runId = `run-edit-${tag}-${process.pid}`;
   const session = h.makeSession(runId, WORLD_ID, {
-    dice: [5, 20],
+    // 先攻 2 枚（C0=5、C1001=20）+ GM 步 fortune（每步 4 枚，良恶/程度判定只进提示词，
+    // 统一填 50）。GM 步最多的用例（watermark）走 3 次 GM = 12 枚，其余用例消费前缀、
+    // 富余无害（队列不校验剩余）。GM 轮后的突发命中评估在本文件用例中均无休眠组
+    // （gmFull 的 durations 覆盖全员），不消费骰子。
+    dice: [5, 20, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50],
     gmIntervalCycles: options?.gmIntervalCycles ?? 1,
     gm: [options?.gm ?? gmFull()],
   });

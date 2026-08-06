@@ -14,7 +14,7 @@
  *   characters: object          CID → 角色视图（transition 逐 CID 并集，null 值 = 删除）
  *   events: array               事件数组（append / 按 seq 截断）
  *   history: object|null        历史回显载荷（historyPatch v1 恒 replace）
- *   pipeline: {seq, phase, interrupted, kind}  流水线视图（snapshot/transition 携带）
+ *   pipeline: {seq, phase, interrupted, kind, pending_incident}  流水线视图（snapshot/transition 携带）
  *   streaming: null | {activationId, agent, turn, title}  当前接受的流式槽
  *   needsResync: boolean        跳号置位（protocol 据此自动补发 snapshot query；快照到达清）
  *
@@ -31,13 +31,18 @@ export const CONNECTION = { CONNECTING: "connecting", OPEN: "open", CLOSED: "clo
 
 /**
  * busy 推导（D4 锁语义的单一出口，单测钉死）：
- * busy = 流式在途（streaming 槽非空）|| 流水线不在玩家输入位（phase !== "await_player"）。
+ * busy = 流式在途（streaming 槽非空）|| 流水线不在玩家输入位（phase !== "await_player"）
+ *        || 突发评估挂起（pending_incident——phase 是盲的，await_player 为假相位）。
  * 用途 = 输入权限（canInputNow）；按钮类闸（继续/停止/直接编辑/重 roll/编辑模态）按
  * streaming 槽单独判定（暂停点 busy=true 但须可点，见 play.js 头注）。
  * 收敛效果：transition 到达即清 busy 的中段瞬闪消除——步间 phase 仍非 await_player。
  */
 export function selectBusy(state) {
-  return state.streaming !== null || state.pipeline.phase !== "await_player";
+  return (
+    state.streaming !== null ||
+    state.pipeline.phase !== "await_player" ||
+    state.pipeline.pending_incident === true
+  );
 }
 
 const STREAMING_TYPES = new Set([
@@ -59,7 +64,7 @@ function initialState() {
     characters: {},
     events: [],
     history: null,
-    pipeline: { seq: 0, phase: "await_player", interrupted: false, kind: null },
+    pipeline: { seq: 0, phase: "await_player", interrupted: false, kind: null, pending_incident: false },
     streaming: null,
     needsResync: false,
   };

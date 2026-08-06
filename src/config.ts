@@ -16,7 +16,7 @@ export const DATA_DIR = path.join(PROJECT_ROOT, "data");
 /** 默认用户资源目录（阶段 A4：路径常量唯一真相在 resources/userDirectories） */
 const DEFAULT_DIRS = resolveUserDirectories();
 
-/** 世界资产根目录：data/assets/{setId}/（世界包 = setting/tone-card/lorebook/time/player/characters/ + 包内 prompts/） */
+/** 世界资产根目录：data/assets/{setId}/（世界包 = setting/tone-card/lorebook/time/incident.json/player/characters/ + 包内 prompts/） */
 export const ASSETS_DIR = DEFAULT_DIRS.assetsDir;
 /** 存档根目录：data/users/{username}/save/{runId}/（原项目根 runs/ 改名迁入户内） */
 export const SAVE_DIR = DEFAULT_DIRS.saveDir;

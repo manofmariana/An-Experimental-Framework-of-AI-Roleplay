@@ -1,7 +1,7 @@
 /**
  * 游玩页流式区 view：
  * 流式卡片（三 agent 同构 panel + 思维链/原始返回/提示词模态 + 回滚/重 roll/编辑菜单）、
- * panels 卡片 Map、renderHistory 历史回显、钉底滚动。
+ * panels 卡片 Map、renderHistory 历史回显、dropCardsFrom 重 roll 乐观清卡、钉底滚动。
  *
  * 竞态 4 收口（会话绑定 modal 晚到）：showPrompts/showHistoryReasoning 打开时捕获 runId，
  * await 后经 isModalLive（捕获 runId === 当前 runId 且 overlay.isConnected）核验才填内容；
@@ -209,6 +209,59 @@ export function createPlayStream({ el, api, getState, sendCmd, sendCommand, trac
         el("div", "card-meta", `narrativity ${pkg.narrativity} · 事件 ${(pkg.events ?? []).length} 条`),
       ),
     );
+    return card;
+  }
+
+  /**
+   * 突发卡（历史回显）：seq+kind 寻址 + "..." 菜单（原始返回/编辑、回滚、重 roll）——
+   * 编辑仅最新步可点（openRawModal 统一判定）；重 roll/回滚走通用命令（命中评估随之重投）。
+   * 正文含 @CID 指称，过 renderRefs 身份渲染；副信息 = 目标地点 + 良恶 + 程度（取整）。
+   */
+  function incidentCard(inc) {
+    const card = el("div", "agent-panel panel-incident");
+    // seq+kind → 卡片寻址（transition.editedResult 原地重渲用）
+    card.dataset.kind = "incident";
+    card.dataset.seq = String(inc.seq);
+    const state = { raw: inc.raw ?? "", textEl: null };
+    card._cardState = state;
+    const head = el("div", "panel-head");
+    head.appendChild(el("span", "panel-title", "突发事件"));
+    const menuItems = [
+      { label: "原始返回", onclick: () => openRawModal("incident", inc.seq, "突发 GM", () => state.raw) },
+      {
+        label: "回滚",
+        onclick: () => {
+          if (confirm(`回到第 ${inc.seq} 步之后？其后的内容将全部丢弃。`)) {
+            sendCmd("rollback", { targetSeq: inc.seq });
+          }
+        },
+      },
+    ];
+    if (inc.seq > 1) {
+      menuItems.push({
+        label: "重 roll",
+        // 仅最新步可重 roll（动态判定：流水线 seq 会随回滚/续跑变化；流式在途不可点）
+        when: () => getState().streaming === null && inc.seq === getState().pipeline.seq,
+        onclick: () => {
+          if (confirm(`重 roll 第 ${inc.seq} 步？该步（最新步）的内容将被丢弃并重跑。`)) {
+            // 合并 Transition 到达前乐观清掉被重 roll 的旧卡（防新旧双卡并存）
+            dropCardsFrom(inc.seq);
+            sendCmd("rollback_and_continue", { targetSeq: inc.seq });
+          }
+        },
+      });
+    }
+    const { wrap } = makeMenu(menuItems);
+    head.appendChild(wrap);
+    card.appendChild(head);
+    const body = el("div", "panel-body");
+    state.textEl = el("div", "card-action", renderRefs(inc.text));
+    body.appendChild(state.textEl);
+    body.appendChild(
+      el("div", "card-meta", `${inc.location} · ${inc.malignant ? "恶性" : "良性"} · 程度 ${Math.round(inc.severity)}`),
+    );
+    card.appendChild(body);
+    card.appendChild(el("span", "seq-badge", `#${inc.seq}`));
     return card;
   }
 
@@ -463,7 +516,9 @@ export function createPlayStream({ el, api, getState, sendCmd, sendCommand, trac
           when: () => getState().streaming === null && seq === getState().pipeline.seq,
           onclick: () => {
             if (confirm(`重 roll 第 ${seq} 步？该步（最新步）的内容将被丢弃并重跑。`)) {
-              // 单条复合命令：服务端在同一队列任务内回滚到上一步并续跑（不可插队）
+              // 单条复合命令：服务端在同一队列任务内回滚到上一步并续跑（不可插队）；
+              // 合并 Transition 到达前乐观清掉被重 roll 的旧卡（防新旧双卡并存）
+              dropCardsFrom(seq);
               sendCmd("rollback_and_continue", { targetSeq: seq });
             }
           },
@@ -567,6 +622,17 @@ export function createPlayStream({ el, api, getState, sendCmd, sendCommand, trac
       scrollToBottom();
       return;
     }
+    if (edited.kind === "incident") {
+      // 突发卡：保留卡壳（菜单/#N 徽标/roll 副信息），只换事件文本与 raw 缓存
+      const rootEl = streamEl.querySelector(`[data-kind="incident"][data-seq="${edited.seq}"]`);
+      const state = rootEl?._cardState;
+      if (!state) return;
+      const r = edited.result ?? {};
+      if (r.incident && state.textEl) state.textEl.textContent = renderRefs(r.incident.text);
+      if (r.raw !== undefined) state.raw = r.raw;
+      scrollToBottom();
+      return;
+    }
     const kind = agentKind(edited.kind);
     const rootEl = streamEl.querySelector(`[data-kind="${kind}"][data-seq="${edited.seq}"]`);
     const state = rootEl?._cardState ?? panels.get(panelKey(edited.kind));
@@ -633,6 +699,10 @@ export function createPlayStream({ el, api, getState, sendCmd, sendCommand, trac
         proseState.proseBlock.textContent = renderRefs(t.prose);
         items.push({ seq: t.seqs.prose ?? t.turn, node: proseState.root });
       }
+      // 突发卡（一轮可多条，按 seq 参与排序）
+      for (const inc of t.incidents ?? []) {
+        items.push({ seq: inc.seq, node: incidentCard(inc) });
+      }
       items.sort((a, b) => a.seq - b.seq);
       for (const item of items) streamEl.appendChild(item.node);
     }
@@ -668,6 +738,19 @@ export function createPlayStream({ el, api, getState, sendCmd, sendCommand, trac
     scrollPinned = true;
   }
 
+  /**
+   * 重 roll 乐观清卡：移除 data-seq ≥ seq 的卡片。
+   * rollback_and_continue 是复合命令——服务端抑制中间广播、任务结束才发合并 Transition，
+   * 被重 roll 的旧卡若不清除会与新流式卡并存到暂停才替换；点击即清（乐观模式同
+   *  appendSelfCard：命令失败的罕见路径由下一次全量同步归位）。
+   */
+  function dropCardsFrom(seq) {
+    if (!streamEl) return;
+    for (const node of streamEl.querySelectorAll("[data-seq]")) {
+      if (Number(node.dataset.seq) >= seq) node.remove();
+    }
+  }
+
   /** 玩家发言即时上卡（发送方本地回显）并强制滚到底。
    *  寻址 seq = 当前已提交步 + 1（即将提交的玩家步 seq；提交后由 historyPatch 整段归位）。 */
   function appendSelfCard(text) {
@@ -684,6 +767,7 @@ export function createPlayStream({ el, api, getState, sendCmd, sendCommand, trac
     clearStream,
     pinScroll,
     scrollToBottom,
+    dropCardsFrom,
     playerCard,
     renderHistory,
     onStreaming,

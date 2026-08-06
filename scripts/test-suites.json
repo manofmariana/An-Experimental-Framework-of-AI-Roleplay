@@ -30,7 +30,9 @@
     "test/configResolver.test.ts",
     "test/secretMutation.test.ts",
     "test/webConfigForm.test.ts",
-    "test/accessControl.test.ts"
+    "test/accessControl.test.ts",
+    "test/incident.test.ts",
+    "test/formula.test.ts"
   ],
   "contract": [
     "test/template.test.ts",
@@ -70,7 +72,8 @@
     "test/abort.test.ts",
     "test/activationContexts.test.ts",
     "test/sessionCoordinator.test.ts",
-    "test/configService.test.ts"
+    "test/configService.test.ts",
+    "test/incidentFlow.test.ts"
   ],
   "integration": [
     "test/serverApi.test.ts",

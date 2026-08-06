@@ -44,7 +44,7 @@ function gmCtx(): GmContext {
   const store = CharactersStore.fromManifests([manifest], 0);
   return {
     setting: "设定", cast: [], loreFull: "", events: [], proseWindow: [], currentScene: "场景",
-    worldSnapshot: "{}", states: store.all(), clock: 0, timeHeader: "",
+    worldSnapshot: "{}", states: store.all(), clock: 0, timeHeader: "", fortune: "良恶判定：良性；程度 30（1–100）",
   };
 }
 

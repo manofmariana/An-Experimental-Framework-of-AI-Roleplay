@@ -9,6 +9,10 @@
  *  renderHistory 与 appendSelfCard 两条上卡路径均带寻址属性；
  * - onEditedResult 对 kind="player" 原地重渲：卡壳（"你"标签/菜单/#N 徽标）保留，
  *  内容区按编辑后决策包重渲（分节 + 标记 chips）。
+ * - renderHistory 突发卡（incident 步）：标题"突发事件"，正文过 renderRefs 身份渲染，
+ *  副信息 = 目标地点 + 良恶 + 程度取整；突发步同其他步可编辑/回滚/重 roll（菜单 + 寻址）。
+ * - dropCardsFrom 重 roll 乐观清卡：移除 data-seq ≥ seq 的卡片（复合命令的合并
+ *   Transition 到达前防新旧双卡并存）。
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -64,11 +68,24 @@ class FakeEl {
   }
   focus(): void {}
   addEventListener(): void {}
+  /** 从父节点摘除（view 的重 roll 乐观清卡用）。 */
+  remove(): void {
+    const p = this.parent;
+    if (!p) return;
+    const i = p.children.indexOf(this);
+    if (i >= 0) p.children.splice(i, 1);
+    this.parent = null;
+  }
   /** 仅支持本 view 使用的属性选择器形态：[data-kind="X"][data-seq="N"] */
   querySelector(selector: string): FakeEl | null {
     const m = /^\[data-kind="([^"]+)"\]\[data-seq="([^"]+)"\]$/.exec(selector);
     if (!m) return null;
     return walk(this).find((n) => n.dataset.kind === m[1] && n.dataset.seq === m[2]) ?? null;
+  }
+  /** 仅支持 [data-seq] 单属性选择器（view 的重 roll 乐观清卡用；返回静态副本同 DOM NodeList）。 */
+  querySelectorAll(selector: string): FakeEl[] {
+    if (selector !== "[data-seq]") return [];
+    return walk(this).filter((n) => n.dataset.seq !== undefined);
   }
 }
 
@@ -297,5 +314,108 @@ describe("play-stream onEditedResult 玩家步原地重渲", () => {
     view.onEditedResult({ seq: 99, kind: "player", result: { raw: editedRaw, decision: editedPkg } });
     const card = stream.querySelector('[data-kind="player"][data-seq="7"]')!;
     assert.deepEqual(sectionTexts(card, "行动"), ["走向门口"]); // 原内容未动
+  });
+});
+
+describe("play-stream renderHistory 突发卡（incident 步）", () => {
+  const incident = {
+    seq: 5,
+    text: "塔外传来巨响，[[守灯人|@C1001]] 被惊醒",
+    location: "灯塔外",
+    malignant: true,
+    severity: 3.6,
+  };
+
+  it("渲染突发卡：标题/正文（renderRefs 身份渲染）/副信息/#N 徽标 + 编辑回滚重 roll 菜单", () => {
+    const { view } = makeStream();
+    const stream = view.mount() as FakeEl;
+    view.renderHistory({
+      mode: "full",
+      turns: [{ turn: 5, characters: [], seqs: {}, incidents: [incident] }],
+    });
+    const card = walk(stream).find((n) => n.className === "agent-panel panel-incident");
+    assert.ok(card, "突发卡存在");
+    assert.ok(walk(card!).some((n) => n.className === "panel-title" && n.textContent === "突发事件"));
+    // 正文过 renderRefs：[[守灯人|@C1001]] → 守灯人
+    assert.ok(
+      walk(card!).some(
+        (n) => n.className === "card-action" && n.textContent === "塔外传来巨响，守灯人 被惊醒",
+      ),
+    );
+    // 副信息一行：目标地点 + 良恶 + 程度取整
+    assert.ok(
+      walk(card!).some(
+        (n) => n.className === "card-meta" && n.textContent === "灯塔外 · 恶性 · 程度 4",
+      ),
+    );
+    assert.ok(walk(card!).some((n) => n.className === "seq-badge" && n.textContent === "#5"));
+    // 突发步同其他步可编辑/回滚/重 roll：菜单齐全 + editedResult 寻址
+    assert.deepEqual(menuLabels(card!), ["原始返回", "回滚", "重 roll"]);
+    assert.equal(card!.dataset.kind, "incident");
+    assert.equal(card!.dataset.seq, "5");
+  });
+
+  it("editedResult 按 data-kind=incident 寻址原地重渲突发文本与 raw 缓存", () => {
+    const { view } = makeStream();
+    const stream = view.mount() as FakeEl;
+    view.renderHistory({
+      mode: "full",
+      turns: [{ turn: 5, characters: [], seqs: {}, incidents: [incident] }],
+    });
+    const before = stream.querySelector('[data-kind="incident"][data-seq="5"]')!;
+    assert.ok(before);
+
+    view.onEditedResult({
+      seq: 5,
+      kind: "incident",
+      result: { raw: "编辑后 raw", incident: { text: "改后的突发 [[守灯人|@C1001]]", deltas: [] } },
+    });
+
+    // 同一卡壳原地重渲：菜单/#N 徽标/副信息保留，事件文本替换（renderRefs 同渲染）
+    const after = stream.querySelector('[data-kind="incident"][data-seq="5"]')!;
+    assert.equal(after, before);
+    assert.ok(
+      walk(after).some((n) => n.className === "card-action" && n.textContent === "改后的突发 守灯人"),
+    );
+    assert.ok(walk(after).some((n) => n.className === "seq-badge" && n.textContent === "#5"));
+    assert.equal(after._cardState.raw, "编辑后 raw", "卡态 raw 同步为编辑后（再次打开编辑模态的种子）");
+  });
+
+  it("dropCardsFrom 乐观清卡：移除 data-seq ≥ seq 的卡片，其余保留", () => {
+    const { view } = makeStream();
+    const stream = view.mount() as FakeEl;
+    view.renderHistory({
+      mode: "full",
+      turns: [
+        { turn: 4, characters: [], seqs: {}, incidents: [{ ...incident, seq: 4 }] },
+        { turn: 5, characters: [], seqs: {}, incidents: [incident] },
+      ],
+    });
+    assert.equal(walk(stream).filter((n) => n.className === "agent-panel panel-incident").length, 2);
+
+    // 重 roll #5：被重 roll 的旧卡立即清除（合并 Transition 到达前不与新流式卡并存）
+    view.dropCardsFrom(5);
+    const remaining = walk(stream).filter((n) => n.className === "agent-panel panel-incident");
+    assert.equal(remaining.length, 1);
+    assert.equal(remaining[0]!.dataset.seq, "4", "seq < 5 的卡保留");
+  });
+
+  it("良性突发标注「良性」；无 incidents 的轮不渲染突发卡", () => {
+    const { view } = makeStream();
+    const stream = view.mount() as FakeEl;
+    view.renderHistory({
+      mode: "full",
+      turns: [
+        { turn: 1, playerInput: "看看四周", characters: [], seqs: { player: 1 } },
+        { turn: 5, characters: [], seqs: {}, incidents: [{ ...incident, malignant: false, severity: 1.2 }] },
+      ],
+    });
+    const cards = walk(stream).filter((n) => n.className === "agent-panel panel-incident");
+    assert.equal(cards.length, 1);
+    assert.ok(
+      walk(cards[0]!).some(
+        (n) => n.className === "card-meta" && n.textContent === "灯塔外 · 良性 · 程度 1",
+      ),
+    );
   });
 });

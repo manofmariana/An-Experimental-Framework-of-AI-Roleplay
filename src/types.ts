@@ -233,6 +233,19 @@ export const AdjudicationPackageSchema = z.object({
 export type AdjudicationPackage = z.infer<typeof AdjudicationPackageSchema>;
 
 // ---------------------------------------------------------------------------
+// 突发 GM 输出：突发包（slim 契约，独立轻校验，不复用裁决包的 durations 覆盖校验）
+// ---------------------------------------------------------------------------
+
+/** 突发包：突发 GM 的唯一输出——事件文本 + 可选世界变量变更。 */
+export const IncidentPackageSchema = z.object({
+  /** 突发事件正文（@ID 占位的中性事实陈述；未裁决素材，由后续常规 GM 结算转写为真正 Event） */
+  text: z.string().min(1),
+  /** 世界变量变更（口径同裁决包 deltas；无变更输出 []） */
+  deltas: z.array(StateDeltaSchema),
+});
+export type IncidentPackage = z.infer<typeof IncidentPackageSchema>;
+
+// ---------------------------------------------------------------------------
 // 缓存埋点
 // ---------------------------------------------------------------------------
 

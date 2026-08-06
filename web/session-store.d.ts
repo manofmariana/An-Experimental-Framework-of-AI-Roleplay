@@ -7,6 +7,8 @@ export interface PipelineViewState {
   phase: string;
   interrupted: boolean;
   kind: string | null;
+  /** 突发命中评估挂起中：phase 是盲的（await_player 可能是假相位），输入须屏蔽、引导继续结算。 */
+  pending_incident: boolean;
 }
 
 export interface StreamingSlot {
@@ -39,7 +41,7 @@ export interface DispatchMeta {
 
 export const CONNECTION: { CONNECTING: string; OPEN: string; CLOSED: string };
 
-/** busy 推导：streaming 槽非空 || pipeline.phase !== "await_player"（输入权限唯一数据源）。 */
+/** busy 推导：streaming 槽非空 || pipeline.phase !== "await_player" || pending_incident（输入权限唯一数据源）。 */
 export function selectBusy(state: SessionState): boolean;
 
 export function createSessionStore(): {
