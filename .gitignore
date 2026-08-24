@@ -4,6 +4,8 @@ runs/
 config.json
 server.json
 .agents/
+docs/归档/
+AGENTS.md
 data/users/
 skills-lock.json
 Kimi Code*.bat
