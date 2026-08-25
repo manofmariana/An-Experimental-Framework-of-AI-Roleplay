@@ -67,6 +67,13 @@
 | `invitations.ts` | 邀请历史解释：InvitationProjection（增量 applyStep / 全量 rebuild / nextPending 输出 PendingInvitationView）；派生缓存，不进 Generation/CommitPlan | 禁 IO/LLM/server/truth（审计守护） | → scheduler/derive（仅类型） |
 | `incident.ts` | 突发事件配置契约与求值编排：IncidentConfig schema + compileIncidentConfig（编译世界包表达式 + 变量闭包校验）+ mismatchD/hitF/hitG/hitProbability/malignPercent/rollFortune/evaluateIncident（按编译后公式求值，骰子经 DicePort 注入）；公式结构与参数唯一出处 = 世界包 incident.json | 禁 IO/LLM/server/truth（审计守护） | → ports/shared/formula |
 
+## src/tags/
+
+| 路径 | 职责 | IO | 依赖方向 |
+|---|---|---|---|
+| `registry.ts` | TAG 注册表契约与校验：条目 schema（名称即键；{name, description?, condition?, category?, system?}，category = 封闭枚举 {cid, channel, location}；condition = {path, op, value}）；system 条目与代码常量一致性校验（任何层不得占用同名） | 禁 IO/LLM/server/truth（审计守护） | 纯逻辑 |
+| `evaluate.ts` | 等级表达式求值器：T =（一级组 ∨）∧ … ∧（七级组 ∨），空等级组无约束、无 TAG 恒通过（等级 1-7 越界拒绝）；全知 = 全知权重（0-6，ReaderScope 注入、唯一语义来源）+ 虚拟挂载——权重 N 覆盖 ≤N 级非空组（虚拟"全知"），强制全知只覆盖七级组、仅 GM 持有；匹配扁平——matched = 双侧共同持有记号集（含虚拟挂载；cid/channel/location 命中归一化为类别记号）；condition 经注入 varReader 按读者变量树求真（被虚拟挂载覆盖的组跳过）；逐末端返回 {status, content, matched}；对象有效 TAG 集（落盘 ∪ 派生）由调用方注入，合并不在本层 | 禁 IO/LLM/server/truth（审计守护） | → tags/registry |
+
 ## src/truth/
 
 | 路径 | 职责 | IO | 依赖方向 |

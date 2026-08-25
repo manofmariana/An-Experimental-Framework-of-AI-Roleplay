@@ -23,11 +23,11 @@
 
 **TAG 注册表**：统一落盘 `world.json` 系统分支 `_sys.tagRegistry`——名称即键；条目 = {name, description?, condition?, category?, system?}，各字段均为外壳末端（name 冗余为末端使名称可被路径调用；condition = 容器，含 path/op/value 三原始值型末端）、tags 恒空（注册表分支恒不挂 TAG，可读性由抓取层控制：只有 GM/程序向占位符路由到此分支）；category = 封闭枚举 {cid, channel, location}，有类别按类别声明登记（实例合法性程序判定；实例值 GM 经变量注入可见，不重复登记）、无类别按名称登记；system 条目 = 程序化只读参考（真实挂载与求值逻辑由代码持有，加载校验与代码常量一致，任何层不得占用同名）；非程序化条目 = 求值真实数据源，GM 运行期增改走裁决包结构化字段、随 changes 落账。GM 经占位符路由一处读全。
 
-**TAG 逻辑代数**：见 adr/0007（等级表达式 T = ∧(∨)；等级 = 内容侧挂载属性，对象侧纯名称集合；虚拟全知按非空等级组注入；无 TAG = 恒通过；matched 开放类别归一化；condition 存续；ID 体系废除）。
+**TAG 逻辑代数**：见 adr/0007（等级表达式 T =（一级∨）∧ … ∧（七级∨），level ∈ {1..7}；等级 = 内容侧挂载属性，对象侧纯名称集合；全知 = 全知权重（0-6，唯一语义来源）+ 虚拟挂载——权重 N 覆盖 ≤N 级组，强制全知只覆盖七级组、仅 GM 持有；无 TAG = 恒通过；matched 扁平交集 + 开放类别归一化；condition 存续；ID 体系废除）。
 
-**求值契约**：逐末端返回 {status, content, matched}——status = pass/fail 显式枚举；matched = 双侧共同持有记号集（含虚拟挂载；cid/channel/location 命中归一化为类别记号）。对象有效 TAG 集 = 落盘 ∪ 派生（纯名称集合），合并在组装层，求值器只收有效集；condition 求值经注入的 varReader，对全知读者跳过。
+**求值契约**：逐末端返回 {status, content, matched}——status = pass/fail 显式枚举；matched = 双侧共同持有记号集（含虚拟挂载；cid/channel/location 命中归一化为类别记号）。对象有效 TAG 集 = 落盘 ∪ 派生（纯名称集合），合并在组装层，求值器只收有效集；全知权重（0-6，默认 0）经 ReaderScope 注入；condition 求值经注入的 varReader，被虚拟挂载覆盖的组跳过。
 
-出口：等级表达式全组合单测（∧/∨ 组合、空组恒过、虚拟全知按组注入、归一化记号、condition 求值与全知跳过、status/matched 契约）。
+出口：等级表达式全组合单测（同级∨/跨级∧ 组合、多级与运算、空组恒过、无 TAG 恒通过、全知权重覆盖与 N+1 打破、GM 全集配置、归一化记号、condition 求值与覆盖跳过、status/matched 契约、等级/权重越界拒绝）。
 
 ### P2-2 设计定案：变量树
 

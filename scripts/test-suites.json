@@ -32,7 +32,8 @@
     "test/webConfigForm.test.ts",
     "test/accessControl.test.ts",
     "test/incident.test.ts",
-    "test/formula.test.ts"
+    "test/formula.test.ts",
+    "test/tags.test.ts"
   ],
   "contract": [
     "test/template.test.ts",
