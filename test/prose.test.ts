@@ -20,6 +20,6 @@ describe("prose 输入", () => {
   it("provider 保持纯数据", () => assert.equal(PROSE_PLACEHOLDERS.gm_event!.provide(context), "{}"));
   it("参与者标签并集触发 lore", () => {
     const book = new Lorebook([{ id: "x", tags: ["秘密"], content: "S" }]);
-    assert.deepEqual(book.getByTags(participantTags([{ tags: ["秘密"] }])).map((entry) => entry.id), ["x"]);
+    assert.deepEqual(book.getByTags(participantTags([["秘密"]])).map((entry) => entry.id), ["x"]);
   });
 });

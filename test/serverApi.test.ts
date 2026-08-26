@@ -31,6 +31,7 @@ import { Lorebook } from "../src/truth/lorebook.js";
 import { CharacterManifestSchema } from "../src/agents/character.js";
 import { SAVE_SCHEMA_VERSION } from "../src/truth/saveSchema.js";
 import type { SessionCoordinator } from "../src/application/sessionCoordinator.js";
+import { RevisionConflictError } from "../src/truth/validation/errors.js";
 import { tempDir } from "./harness/tempDir.js";
 
 /** 出厂模板目录 = 默认世界包内 prompts/（data/assets/baitan/prompts/）。 */
@@ -280,9 +281,9 @@ describe("角色 manifest API/前端往返契约", () => {
     const worldDir = tempDir("airp-character-api-");
     fs.mkdirSync(path.join(worldDir, "characters"));
     const base = {
-      name: "玩家", gender: "未设定", age: "未设定", personality: "谨慎。", tags: [], reaction: 0,
+      name: "玩家", gender: "未设定", age: "未设定", personality: "谨慎。", reaction: 0,
       location: { name: "起点", level: 1 }, timer: 0, group: 0, initiative: null, channel: null, acted: false,
-      level: 1, relations: {}, initial_memories: [], vars: {},
+      level: 1, omniscience: 0, relations: {}, initial_memories: [], vars: {},
     };
     fs.writeFileSync(path.join(worldDir, "player.json"), JSON.stringify({ ...base, id: "C0", isPlayer: true }));
     fs.writeFileSync(path.join(worldDir, "characters", "C1001.json"), JSON.stringify({ ...base, id: "C1001", name: "甲", isPlayer: false }));
@@ -292,9 +293,9 @@ describe("角色 manifest API/前端往返契约", () => {
 
   it("characters PUT 路径校验拒绝 id/isPlayer 不一致并允许 C0 roundtrip", () => {
     const player = {
-      id: "C0", name: "玩家", gender: "未设定", age: "未设定", personality: "谨慎。", tags: [], reaction: 0,
+      id: "C0", name: "玩家", gender: "未设定", age: "未设定", personality: "谨慎。", reaction: 0,
       location: { name: "起点", level: 1 }, timer: 0, group: 0, initiative: null, channel: null, acted: false,
-      level: 1, isPlayer: true, relations: {}, initial_memories: [], vars: {},
+      level: 1, omniscience: 0, isPlayer: true, relations: {}, initial_memories: [], vars: {},
     };
     assert.deepEqual(validateCharacterManifestForPath("C0", JSON.parse(JSON.stringify(player))), player);
     assert.throws(() => validateCharacterManifestForPath("C1001", player), /路径 id/);
@@ -304,9 +305,11 @@ describe("角色 manifest API/前端往返契约", () => {
 
   it("统一字段 parse→JSON→parse 不丢失，前端表单包含结构化 location 与保留字段", () => {
     const manifest = CharacterManifestSchema.parse({
-      id: "C1001", name: "林雾", gender: "女", age: "26", personality: "谨慎。", tags: ["灯塔"], reaction: 5,
+      id: "C1001", name: "林雾", gender: "女", age: "26", personality: "谨慎。", reaction: 5,
       location: { name: "塔顶", level: 2 }, timer: 30, group: 0, initiative: null, channel: null, acted: false, level: 1,
-      isPlayer: false, relations: {}, initial_memories: ["记忆"], vars: { hp: 10 },
+      omniscience: 0, isPlayer: false, relations: {}, initial_memories: ["记忆"],
+      // 固有 TAG 写在 vars.attachtags（string_list 纯名集合；简写：数组即末端值）
+      vars: { attachtags: ["灯塔"] },
     });
     assert.deepEqual(CharacterManifestSchema.parse(JSON.parse(JSON.stringify(manifest))), manifest);
     const frontend = fs.readFileSync(path.join(process.cwd(), "web/pages/characters.js"), "utf8");
@@ -364,7 +367,10 @@ function mockRes(): { res: ServerResponse; out: { status: number; text: string }
   return { res, out };
 }
 
-function stubDeps(applyDirectEdit: (payload: unknown) => void): ApiDeps {
+function stubDeps(
+  applyDirectEdit: (payload: unknown) => void,
+  opts?: { activeWorld?: Record<string, unknown> | null; revision?: number },
+): ApiDeps {
   const root = tempDir("airp-cfg-");
   const dirs = {
     ...resolveUserDirectories(),
@@ -373,7 +379,11 @@ function stubDeps(applyDirectEdit: (payload: unknown) => void): ApiDeps {
     settingsFile: path.join(root, "settings.json"),
   };
   return {
-    coordinator: { applyDirectEdit } as unknown as SessionCoordinator,
+    coordinator: {
+      applyDirectEdit,
+      activeWorld: () => opts?.activeWorld ?? null,
+      currentRevision: opts?.revision ?? 8,
+    } as unknown as SessionCoordinator,
     dirs,
     config: { dirs, env: {}, legacyConfigFile: path.join(root, "config.json") },
   };
@@ -390,7 +400,7 @@ describe("PUT /api/session/state（直接编辑端点，envelope）", () => {
     assert.equal(await handleApi(mockReq("PUT", "/api/session/state", body), res), true);
     assert.equal(out.status, 200);
     assert.deepEqual(captured, body);
-    assert.deepEqual(JSON.parse(out.text), { ok: true, data: { note: "已保存，立即生效" } });
+    assert.deepEqual(JSON.parse(out.text), { ok: true, data: { note: "已保存，立即生效", revision: 8 } });
   });
 
   it("忙碌失败：applyDirectEdit 抛「LLM 运行中」→ 409 SESSION_BUSY", async () => {
@@ -418,5 +428,132 @@ describe("PUT /api/session/state（直接编辑端点，envelope）", () => {
     await handleApi(mockReq("PUT", "/api/session/state", { characters: {} }), res);
     assert.equal(out.status, 400);
     assert.equal((JSON.parse(out.text) as { error: { code: string } }).error.code, "VALIDATION_ERROR");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 结构编辑档内模式（世界页「变量结构」双模式的会话侧）：
+// GET /api/session/state/sys = 档内取数（_sys 三键 + baseRevision；无会话 404 NO_ACTIVE_SESSION）；
+// PUT /api/session/state 带 sys = 服务端取当前 world 替换 _sys 对应键后走同一直编通道
+// （形状闸 400；sys 与 world 互斥；无会话 404；409 REVISION_CONFLICT 透传）。
+// ---------------------------------------------------------------------------
+
+const STUB_WORLD = {
+  time: { y: 0, m: 1, d: 1, h: 0, min: 0 },
+  hp: { value: 1, tags: [] },
+  _sys: {
+    tagRegistry: { sys_tag: { name: "sys_tag", system: true } },
+    varsTemplate: { world: { children: { hp: "number" } }, character: { children: {} } },
+    varsTags: { world: {}, character: {} },
+    cycles_since_gm: 0,
+    gm_trigger: false,
+    gm_trigger_batch: null,
+  },
+};
+
+describe("GET /api/session/state/sys（结构编辑档内模式取数）", () => {
+  it("有活跃会话：返回 _sys 的 varsTemplate/varsTags/tagRegistry + baseRevision", async () => {
+    const handleApi = createApiHandler(stubDeps(() => {}, { activeWorld: STUB_WORLD, revision: 12 }));
+    const { res, out } = mockRes();
+    assert.equal(await handleApi(mockReq("GET", "/api/session/state/sys"), res), true);
+    assert.equal(out.status, 200);
+    const body = JSON.parse(out.text) as {
+      ok: true;
+      data: { varsTemplate: unknown; varsTags: unknown; tagRegistry: unknown; baseRevision: number };
+    };
+    assert.equal(body.ok, true);
+    assert.deepEqual(body.data.varsTemplate, STUB_WORLD._sys.varsTemplate);
+    assert.deepEqual(body.data.varsTags, STUB_WORLD._sys.varsTags);
+    assert.deepEqual(body.data.tagRegistry, STUB_WORLD._sys.tagRegistry);
+    assert.equal(body.data.baseRevision, 12);
+  });
+
+  it("无活跃会话：404 NO_ACTIVE_SESSION（前端据此判包基线模式）", async () => {
+    const handleApi = createApiHandler(stubDeps(() => {}, { activeWorld: null }));
+    const { res, out } = mockRes();
+    await handleApi(mockReq("GET", "/api/session/state/sys"), res);
+    assert.equal(out.status, 404);
+    const body = JSON.parse(out.text) as { ok: false; error: { code: string } };
+    assert.equal(body.ok, false);
+    assert.equal(body.error.code, "NO_ACTIVE_SESSION");
+  });
+});
+
+describe("PUT /api/session/state sys 载荷（结构编辑档内副本）", () => {
+  it("sys 替换 _sys 对应键后走直编通道：其余程序分支保留，应答附 revision", async () => {
+    let captured: { world?: Record<string, unknown> } = {};
+    const handleApi = createApiHandler(
+      stubDeps(
+        (payload) => {
+          captured = payload as typeof captured;
+        },
+        { activeWorld: STUB_WORLD, revision: 13 },
+      ),
+    );
+    const newTemplate = { world: { children: { hp: "number", mana: "number" } }, character: { children: {} } };
+    const { res, out } = mockRes();
+    const reqBody = { sys: { varsTemplate: newTemplate }, baseRevision: 12 };
+    await handleApi(mockReq("PUT", "/api/session/state", reqBody), res);
+    assert.equal(out.status, 200);
+    // 转发的 world = 当前 world 深拷贝 + _sys.varsTemplate 替换（varsTags/计数键原样保留）
+    const world = captured.world!;
+    const sys = world["_sys"] as Record<string, unknown>;
+    assert.deepEqual(sys["varsTemplate"], newTemplate);
+    assert.deepEqual(sys["varsTags"], STUB_WORLD._sys.varsTags);
+    assert.equal(sys["cycles_since_gm"], 0);
+    assert.equal(sys["gm_trigger"], false);
+    assert.deepEqual(world["time"], STUB_WORLD.time);
+    assert.deepEqual(world["hp"], STUB_WORLD.hp);
+    // 应答附保存后 revision（前端保存不关窗时刷新闸值）
+    assert.equal((JSON.parse(out.text) as { data: { revision: number } }).data.revision, 13);
+  });
+
+  it("sys 形状非法（非对象/空对象/未知字段/与 world 同携）→ 400，不触达协调器", async () => {
+    let called = 0;
+    const handleApi = createApiHandler(
+      stubDeps(
+        () => {
+          called += 1;
+        },
+        { activeWorld: STUB_WORLD },
+      ),
+    );
+    for (const body of [
+      { sys: "不是对象" },
+      { sys: {} },
+      { sys: { tagRegistry: {} } },
+      { sys: { varsTags: { world: {}, character: {} } }, world: { time: {} } },
+    ]) {
+      const { res, out } = mockRes();
+      await handleApi(mockReq("PUT", "/api/session/state", body), res);
+      assert.equal(out.status, 400, JSON.stringify(body));
+      assert.equal((JSON.parse(out.text) as { error: { code: string } }).error.code, "VALIDATION_ERROR");
+    }
+    assert.equal(called, 0);
+  });
+
+  it("无活跃会话：sys 载荷 → 404 NO_ACTIVE_SESSION", async () => {
+    const handleApi = createApiHandler(stubDeps(() => {}, { activeWorld: null }));
+    const { res, out } = mockRes();
+    await handleApi(mockReq("PUT", "/api/session/state", { sys: { varsTags: { world: {}, character: {} } } }), res);
+    assert.equal(out.status, 404);
+    assert.equal((JSON.parse(out.text) as { error: { code: string } }).error.code, "NO_ACTIVE_SESSION");
+  });
+
+  it("409 REVISION_CONFLICT 原样透传（details 附 baseRevision/currentRevision）", async () => {
+    const handleApi = createApiHandler(
+      stubDeps(
+        () => {
+          throw new RevisionConflictError(12, 15);
+        },
+        { activeWorld: STUB_WORLD },
+      ),
+    );
+    const { res, out } = mockRes();
+    await handleApi(mockReq("PUT", "/api/session/state", { sys: { varsTags: { world: {}, character: {} } }, baseRevision: 12 }), res);
+    assert.equal(out.status, 409);
+    const body = JSON.parse(out.text) as { error: { code: string; details: { baseRevision: number; currentRevision: number } } };
+    assert.equal(body.error.code, "REVISION_CONFLICT");
+    assert.deepEqual(body.error.details, { baseRevision: 12, currentRevision: 15 });
   });
 });

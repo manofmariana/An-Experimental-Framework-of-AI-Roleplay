@@ -51,10 +51,10 @@ export interface StepEffects {
 /** 立 GM 立即激活触发（gm_request/contact 共用）：记录触发批（角色先攻值；批完成判定见 deriveNext）。 */
 function setGmTrigger(truth: TruthStores, cid: string): VarChange[] {
   const batch = truth.characters.get(cid).initiative?.value ?? NO_INITIATIVE_BATCH;
-  return truth.world.apply([
-    { path: "gm_trigger", op: "=", value: true },
-    { path: "gm_trigger_batch", op: "=", value: batch },
-  ]);
+  return [
+    truth.world.writeRaw("_sys.gm_trigger", true),
+    truth.world.writeRaw("_sys.gm_trigger_batch", batch),
+  ];
 }
 
 /**
@@ -84,7 +84,7 @@ function applyMarkers(truth: TruthStores, cid: string, markers: Marker[], rollDi
               changes.push(...truth.characters.setVars(survivor, { acted: false }));
             }
             if (cycleCountOf(truth) !== 0) {
-              changes.push(...truth.world.apply([{ path: "cycles_since_gm", op: "=", value: 0 }]));
+              changes.push(truth.world.writeRaw("_sys.cycles_since_gm", 0));
             }
           }
         }

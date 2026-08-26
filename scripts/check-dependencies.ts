@@ -38,6 +38,21 @@ const RULES: Rule[] = [
     reason: "tags 必须保持纯逻辑（无 IO/LLM/server/truth/application 依赖，含传递依赖）；变量值一律由调用方 scope 注入",
   },
   {
+    from: "src/vars/",
+    forbid: [
+      "node:",
+      "openai",
+      "ws",
+      "src/llm/",
+      "src/server/",
+      "src/truth/",
+      "src/application/",
+      "src/agents/",
+      "src/scheduler/",
+    ],
+    reason: "vars 必须保持纯逻辑（无 IO/LLM/server/truth/application/agents/scheduler 依赖，含传递依赖）；变量值与注册名集合一律由调用方注入",
+  },
+  {
     from: "src/compile/",
     forbid: ["src/server/", "src/truth/", "src/llm/", "src/application/"],
     reason: "compiler 是纯渲染器，不依赖 server / truth Store 实现 / llm client / application",

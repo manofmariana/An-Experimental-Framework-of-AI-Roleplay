@@ -1,5 +1,4 @@
 import { z } from "zod";
-import type { StateDelta } from "../types.js";
 import { WorkingSetEntrySchema, type WorkingSetEntry } from "./workingSet.js";
 import { SAVE_SCHEMA_VERSION } from "./saveSchema.js";
 import { TimeAnchorSchema, minutesToWorldTime, worldTimeToMinutes, type TimeAnchor } from "./timeStore.js";
@@ -7,36 +6,9 @@ import { VarChangeSchema, deleteByPath, getByPath, makeVarChange, setByPath, typ
 
 export type StateTree = Record<string, unknown>;
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-export function applyDeltas(state: StateTree, deltas: StateDelta[]): StateTree {
-  const next = JSON.parse(JSON.stringify(state)) as StateTree;
-  for (const delta of deltas) {
-    const segments = delta.path.split(".");
-    if (segments.length === 0 || segments.some((s) => s === "")) throw new Error(`invalid delta path: ${delta.path}`);
-    const key = segments[segments.length - 1]!;
-    let node: Record<string, unknown> = next;
-    for (const segment of segments.slice(0, -1)) {
-      const child = node[segment];
-      if (child === undefined) {
-        const fresh: Record<string, unknown> = {};
-        node[segment] = fresh;
-        node = fresh;
-      } else if (isRecord(child)) node = child;
-      else throw new Error(`delta path ${delta.path} 穿过非对象节点: ${segment}`);
-    }
-    const current = node[key];
-    if (delta.op === "=") node[key] = delta.value;
-    else if (typeof current === "number" && typeof delta.value === "number") {
-      node[key] = delta.op === "+=" ? current + delta.value : current - delta.value;
-    } else if (current === undefined && typeof delta.value === "number") {
-      node[key] = delta.op === "+=" ? delta.value : -delta.value;
-    } else throw new Error(`${delta.op} 需要数值: ${delta.path} (当前 ${JSON.stringify(current)})`);
-  }
-  return next;
-}
+/** `_sys` 程序分支的文件 codec 形状（必需存在的对象；严格解析在装配层/写入层做）。 */
+export const WorldSysSchema = z.record(z.string(), z.unknown());
+export type WorldSys = z.infer<typeof WorldSysSchema>;
 
 /**
  * 步骤变化分段（存档 v7）：
@@ -74,7 +46,8 @@ export const PipelineSchema = z.object({
 });
 export type Pipeline = z.infer<typeof PipelineSchema>;
 
-export const WorldStateSchema = z.object({ time: TimeAnchorSchema }).catchall(z.unknown());
+export const WorldStateSchema = z.object({ time: TimeAnchorSchema, _sys: WorldSysSchema }).catchall(z.unknown());
+export type WorldState = z.infer<typeof WorldStateSchema>;
 export const WorldFileSchema = z.object({
   schema_version: z.literal(SAVE_SCHEMA_VERSION),
   world: WorldStateSchema,
@@ -95,11 +68,11 @@ export class WorldStore {
     this.data = JSON.parse(JSON.stringify(data)) as WorldFile;
   }
 
-  /** 新档初始容器：world 变量树 + 空流水线。 */
-  static initial(world: StateTree & { time: TimeAnchor }): WorldStore {
+  /** 新档初始容器：world 变量树（time 锚 + _sys 程序分支）+ 空流水线。 */
+  static initial(world: StateTree & { time: TimeAnchor }, sys: WorldSys): WorldStore {
     return new WorldStore({
       schema_version: SAVE_SCHEMA_VERSION,
-      world,
+      world: { ...world, _sys: sys },
       pipeline: { ...INITIAL_PIPELINE, working_set: [] },
     });
   }
@@ -114,23 +87,20 @@ export class WorldStore {
     this.data = JSON.parse(JSON.stringify(data)) as WorldFile;
   }
 
-  get world(): StateTree & { time: TimeAnchor } { return this.data.world; }
+  get world(): WorldState & StateTree { return this.data.world; }
   get clock(): number { return worldTimeToMinutes(this.data.world.time); }
   get pipeline(): Pipeline { return this.data.pipeline; }
 
-  apply(deltas: StateDelta[]): VarChange[] {
-    for (const delta of deltas) {
-      if (delta.path === "time" || delta.path.startsWith("time.")) throw new Error("GM deltas 不得修改 world.time；时间只能由调度器推进");
-    }
-    let nextWorld = JSON.parse(JSON.stringify(this.data.world)) as StateTree & { time: TimeAnchor };
-    const changes: VarChange[] = [];
-    for (const delta of deltas) {
-      const before = getByPath(nextWorld, delta.path);
-      nextWorld = applyDeltas(nextWorld, [delta]) as StateTree & { time: TimeAnchor };
-      changes.push(makeVarChange(`world.${delta.path}`, before, getByPath(nextWorld, delta.path)));
-    }
-    this.data = { ...this.data, world: nextWorld };
-    return changes;
+  /**
+   * 低层写入口（程序分支/varWrite 专用：调用方负责校验；path = world 树内点路径，
+   * 值 = 该路径的整体新值）。产出真相根路径 VarChange（`world.…`）。
+   */
+  writeRaw(path: string, value: unknown): VarChange {
+    const world = JSON.parse(JSON.stringify(this.data.world)) as WorldState & StateTree;
+    const before = getByPath(world, path);
+    setByPath(world, path, value);
+    this.data = { ...this.data, world };
+    return makeVarChange(`world.${path}`, before, value);
   }
 
   setClock(to: number): VarChange {
@@ -143,7 +113,7 @@ export class WorldStore {
 
   revertChange(change: VarChange): void {
     if (!change.path.startsWith("world.")) throw new Error(`worldStore 无法反向的路径: ${change.path}`);
-    const world = JSON.parse(JSON.stringify(this.data.world)) as StateTree & { time: TimeAnchor };
+    const world = JSON.parse(JSON.stringify(this.data.world)) as WorldState;
     const dotted = change.path.slice("world.".length);
     if (change.before_exists === false) deleteByPath(world, dotted);
     else setByPath(world, dotted, change.before);
@@ -154,15 +124,15 @@ export class WorldStore {
     this.data = { ...this.data, pipeline: { ...this.data.pipeline, ...patch } };
   }
 
-  snapshot(): { world: StateTree & { time: TimeAnchor } } {
-    return JSON.parse(JSON.stringify({ world: this.data.world })) as { world: StateTree & { time: TimeAnchor } };
+  snapshot(): { world: WorldState } {
+    return JSON.parse(JSON.stringify({ world: this.data.world })) as { world: WorldState };
   }
 
-  restoreSnapshot(snapshot: { world: StateTree & { time: TimeAnchor } }): void {
-    this.data = { ...this.data, world: JSON.parse(JSON.stringify(snapshot.world)) as StateTree & { time: TimeAnchor } };
+  restoreSnapshot(snapshot: { world: WorldState }): void {
+    this.data = { ...this.data, world: JSON.parse(JSON.stringify(snapshot.world)) as WorldState };
   }
 
-  /** 整体替换世界变量树（状态栏直接编辑用）：先校验（time 锚必须保留），失败抛错不变更。 */
+  /** 整体替换世界变量树（状态栏直接编辑用）：先校验（time 锚与 _sys 必须保留），失败抛错不变更。 */
   replaceWorld(world: unknown): void {
     const parsed = WorldStateSchema.parse(world);
     this.data = { ...this.data, world: parsed };

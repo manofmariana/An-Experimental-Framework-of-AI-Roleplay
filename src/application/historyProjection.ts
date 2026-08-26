@@ -224,7 +224,7 @@ export function lastProse(archive: ArchiveEntry[]): string {
   return proseWindow(archive, 1)[0] ?? "";
 }
 
-/** 参与角色的固定标签并集（去重；正文 lore 触发制的输入）。 */
-export function participantTags(list: readonly { tags: string[] }[]): string[] {
-  return [...new Set(list.flatMap((m) => m.tags))];
+/** 参与角色的有效 TAG 名并集（去重；正文 lore 触发制的输入）。 */
+export function participantTags(lists: ReadonlyArray<readonly string[]>): string[] {
+  return [...new Set(lists.flatMap((names) => names))];
 }

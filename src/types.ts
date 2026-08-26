@@ -189,11 +189,15 @@ export type DecisionPackage = z.infer<typeof DecisionPackageSchema>;
 // ---------------------------------------------------------------------------
 
 export const StateDeltaSchema = z.object({
-  /** 变量路径，如 "npcs.guard.hp" */
-  path: z.string(),
+  /** 变量路径（双根语法：`world.…` 或 `characters.{cid}.…`；语义校验在写入层按模板判定） */
+  path: z.string().refine((p) => p.startsWith("world.") || p.startsWith("characters."), {
+    message:
+      '变量路径必须使用双根语法：以 "world." 开头（如 world.region.fog）或 "characters.{cid}." 开头（如 characters.C1001.vars.attachtags）',
+  }),
   /** 赋值/加法/减法 */
   op: z.enum(["=", "+=", "-="]),
-  value: z.union([z.number(), z.string(), z.boolean()]),
+  /** 写入值（形状不限；写入层按模板 valueType 校验） */
+  value: z.custom<unknown>((v) => v !== undefined, "value 为必填字段"),
 });
 export type StateDelta = z.infer<typeof StateDeltaSchema>;
 

@@ -7,14 +7,17 @@ import { LLMAbortedError } from "../src/llm/chatPort.js";
 import { OpenAIChatAdapter } from "../src/llm/openaiChatAdapter.js";
 import { packPromptsDir } from "../src/resources/worldRepository.js";
 import { CharactersStore } from "../src/truth/charactersStore.js";
+import { buildVarsTemplate } from "./builders/index.js";
+
+const DECL = buildVarsTemplate().characterVars;
 
 /** 出厂模板目录 = 默认世界包内 prompts/（activation 构造注入，热加载即读它）。 */
 const FACTORY_PROMPTS_DIR = packPromptsDir(resolveWorldDir());
 
 const manifest: CharacterManifest = {
   id: "C1001", name: "林雾", gender: "女", age: "26", personality: "谨慎。",
-  initial_memories: ["记忆一"], location: { name: "loc_lighthouse", level: 1 }, tags: [], reaction: 5,
-  timer: null, group: 0, initiative: null, channel: null, acted: false, level: 1, isPlayer: false,
+  initial_memories: ["记忆一"], location: { name: "loc_lighthouse", level: 1 }, reaction: 5,
+  timer: null, group: 0, initiative: null, channel: null, acted: false, level: 1, omniscience: 0, isPlayer: false,
   relations: {}, vars: {},
 };
 
@@ -32,7 +35,7 @@ function failingLlm(err: Error) {
 
 /** 最小角色上下文（无状态 activation：上下文逐调用传入，测试就地构造）。 */
 function characterCtx(): CharacterContext {
-  const store = CharactersStore.fromManifests([manifest], 0);
+  const store = CharactersStore.fromManifests([manifest], 0, DECL);
   return {
     selfCid: "C1001", states: store.all(), cast: [], worldSnapshot: "{}", activatedLore: "",
     recentEvents: [], proseWindow: [], currentScene: "", timeHeader: "", clock: 0,
@@ -41,7 +44,7 @@ function characterCtx(): CharacterContext {
 
 /** 最小 GM 上下文。 */
 function gmCtx(): GmContext {
-  const store = CharactersStore.fromManifests([manifest], 0);
+  const store = CharactersStore.fromManifests([manifest], 0, DECL);
   return {
     setting: "设定", cast: [], loreFull: "", events: [], proseWindow: [], currentScene: "场景",
     worldSnapshot: "{}", states: store.all(), clock: 0, timeHeader: "", fortune: "良恶判定：良性；程度 30（1–100）",

@@ -263,6 +263,7 @@ th { color: #9aa3af; font-weight: 500; }
 .raw-editor[readonly] { opacity: 0.85; }
 .raw-footer { display: flex; gap: 8px; align-items: center; }
 .raw-error { color: #e06c75; font-size: 12px; }
+.raw-ok { color: #98c379; font-size: 12px; }
 
 /* 卡片右下角 seq 徽标 */
 .agent-panel { position: relative; }
@@ -357,6 +358,16 @@ th { color: #9aa3af; font-weight: 500; }
   line-height: 1.6;
 }
 .state-editor-content { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.state-editor-tabs { display: flex; gap: 6px; }
+.state-editor-tab {
+  background: #161a20;
+  border: 1px solid #232a34;
+  border-radius: 6px;
+  color: #9aa3af;
+  padding: 6px 16px;
+  cursor: pointer;
+}
+.state-editor-tab.active { color: #f2f4f8; border-color: #5b9dd9; }
 .state-editor-section { display: flex; flex-direction: column; gap: 4px; flex: 1; min-height: 0; }
 .state-editor-textarea {
   flex: 1;
@@ -365,6 +376,135 @@ th { color: #9aa3af; font-weight: 500; }
   font-family: Consolas, monospace;
   font-size: 12px;
 }
+
+/* ---- 树状变量编辑器（直编 modal 变量区） ---- */
+.vte { display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 0; }
+.vte-head { display: flex; gap: 8px; align-items: center; font-size: 12.5px; }
+.vte-head select { width: auto; min-width: 140px; }
+.vte-hint { color: #8fa3b8; font-size: 12px; }
+.vte-tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid #262c36;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12.5px;
+}
+/* 区块头（世界变量/类型/角色字段/变量） */
+.vte-sec-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-weight: 600;
+  color: #dbe2ea;
+  padding: 4px 2px 2px;
+  cursor: default;
+  user-select: none;
+}
+/* 树形缩进：子级左移 + 左侧参考线 */
+.vte-kids {
+  margin-left: 7px;
+  padding-left: 11px;
+  border-left: 1px solid #262c36;
+  display: flex;
+  flex-direction: column;
+}
+.vte-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 1px 4px 1px 0;
+  border-radius: 4px;
+  min-height: 22px;
+}
+.vte-row:hover { background: #1b222c; }
+.vte-fold { width: 14px; flex: none; text-align: center; cursor: pointer; color: #9aa3af; user-select: none; }
+.vte-key { color: #c8cfd8; }
+.vte-key-dir { font-weight: 600; color: #dbe2ea; }
+.vte-count { color: #6b7684; font-size: 11px; }
+/* 徽记 = 胶囊小字（系统/tag_list/从动/类型名/未声明/null） */
+.vte-badge {
+  border: 1px solid #334155;
+  border-radius: 9px;
+  padding: 0 6px;
+  font-size: 10.5px;
+  line-height: 15px;
+  color: #9aa3af;
+}
+.vte-badge.vte-derived { color: #d8a657; border-color: #6b5322; }
+.vte-badge.vte-type { color: #8fb8dd; border-color: #2f4a63; }
+/* 行尾操作按钮：hover 才浮现，平时干净 */
+.vte-actions { display: inline-flex; gap: 4px; opacity: 0; transition: opacity 0.12s; }
+.vte-row:hover .vte-actions, .vte-sec-head:hover .vte-actions { opacity: 1; }
+.vte-icon {
+  background: transparent;
+  color: #9aa3af;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.vte-icon:hover { background: #2c3b4b; color: #e2e8ee; }
+/* TAG chip 胶囊（名称 + 等级小字 + ×） */
+.vte-chips { display: inline-flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+.vte-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #1d2632;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  padding: 0 3px 0 8px;
+  font-size: 11.5px;
+  color: #cfd6de;
+}
+.vte-chip-level { color: #7d8b9b; font-size: 10px; }
+/* 附加来源 chip（vars-tags 读取期合并，只读不落实例值） */
+.vte-chip-attach { border-style: dashed; color: #9fb0c0; }
+.vte-chip-x {
+  background: none;
+  border: none;
+  color: #7d8b9b;
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 12px;
+  line-height: 1;
+}
+.vte-chip-x:hover { color: #e06c75; }
+.vte-chips input[type="text"] { width: 110px; min-width: 0; padding: 1px 6px; font-size: 11.5px; }
+.vte-chips input[type="number"] { width: 48px; min-width: 0; padding: 1px 4px; font-size: 11.5px; }
+/* 从动只读值与 formula 可读文本 */
+.vte-readonly { color: #9aa3af; }
+.vte-formula { color: #b7a17a; font-family: Consolas, monospace; font-size: 11.5px; }
+.vte-btn {
+  background: #24303d;
+  color: #d7dce2;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  padding: 0 7px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.vte-btn:hover { background: #2c3b4b; }
+.vte-row input[type="text"], .vte-row input[type="number"], .vte-form input, .vte-form select {
+  width: auto;
+  min-width: 90px;
+  padding: 2px 6px;
+  font-size: 12px;
+}
+.vte-row textarea.vte-list, .vte-form textarea.vte-list, .vte-form-col textarea.vte-list {
+  width: 260px;
+  font-size: 12px;
+}
+.vte-form { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 2px 0; }
+.vte-form-col { display: flex; flex-direction: column; gap: 4px; padding: 2px 0; align-items: flex-start; }
+.vte-error { color: #e06c75; font-size: 12px; min-height: 14px; }
 .prompt-role { color: #8fb8dd; font-size: 12px; margin: 10px 0 4px; }
 .prompt-body {
   font-family: Consolas, monospace;

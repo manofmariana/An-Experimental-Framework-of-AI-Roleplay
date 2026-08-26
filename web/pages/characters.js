@@ -68,15 +68,25 @@ async function renderSetCharacters(host, ctx) {
     add("locationName", "初始地点名"); fields.locationName.value = source.location?.name ?? "";
     add("locationLevel", "地点等级"); fields.locationLevel.value = String(source.location?.level ?? 1);
     add("timer", "初始 timer 偏移（分钟；留空为 null）"); add("reaction", "反应"); add("level", "角色等级");
-    add("tags", "固定标签（每行一个）", true); add("initial_memories", "初始记忆（每行一条）", true);
+    add("attachtags", "固定标签（每行：名称 或 名称,等级）", true); add("initial_memories", "初始记忆（每行一条）", true);
+    // 固有 TAG 读写 vars.attachtags（数组即末端值简写）；level 缺省/非法一律归 1
+    fields.attachtags.value = (source.vars?.attachtags ?? []).map((t) => (t.level === 1 ? t.name : `${t.name},${t.level}`)).join("\n");
     const save = el("button", "act", "保存"); const status = el("span", "muted");
     save.onclick = async () => {
       const lines = (key) => fields[key].value.split("\n").map((value) => value.trim()).filter(Boolean);
+      const attachtags = lines("attachtags").flatMap((line) => {
+        const [name, lv] = line.split(",").map((s) => s.trim());
+        if (!name) return [];
+        const level = Number(lv);
+        return [{ name, level: Number.isInteger(level) && level >= 1 && level <= 7 ? level : 1 }];
+      });
+      const { tags: _legacyTags, ...base } = source; // 顶层 tags 已废除，不进 payload
       const manifest = {
-        ...source, id, name: fields.name.value.trim(), gender: fields.gender.value.trim(), age: fields.age.value.trim(),
+        ...base, id, name: fields.name.value.trim(), gender: fields.gender.value.trim(), age: fields.age.value.trim(),
         personality: fields.personality.value.trim(), location: { name: fields.locationName.value.trim(), level: Number(fields.locationLevel.value) || 1 },
         timer: fields.timer.value.trim() === "" ? null : Number(fields.timer.value), reaction: Number(fields.reaction.value) || 0,
-        level: Number(fields.level.value) || 1, tags: lines("tags"), initial_memories: lines("initial_memories"), relations: source.relations ?? {}, vars: source.vars ?? {},
+        level: Number(fields.level.value) || 1, initial_memories: lines("initial_memories"), relations: source.relations ?? {},
+        vars: { ...(source.vars ?? {}), attachtags },
       };
       try { const response = await api(ctx.characterUrl(id), "PUT", manifest); status.textContent = ` ${response.note}`; }
       catch (error) { status.textContent = ` 保存失败：${error.message}`; }

@@ -1,9 +1,16 @@
-/** 世界页：世界包选择器 + setting / tone-card 编辑器 + lorebook 条目表格（增删改、enabled 开关）。
+/** 世界页：世界包选择器 + setting / tone-card 编辑器 + lorebook 条目表格（增删改、enabled 开关）
+ *  + 变量结构区（变量模板声明树编辑 + TAG 附加编辑，双模式：有活跃会话 = 档内副本
+ *  （GET /api/session/state/sys 取数，PUT /api/session/state 带 sys 保存，立即生效），
+ *  无 = 包基线（PUT 包文件，新会话生效）；模式指示行常显）。
  *  ResourceContext：打开即捕获不可变 ctx
  *  （GET/PUT 全程携带 ?set=——修复「无法编辑非默认包」）；切换包 = 重新捕获 ctx + 重载表单
  *  （旧表单不存活）；保存写打开时捕获的同一 ctx，不重读 picker；界面上持续显示「正在编辑」的包名。 */
 import { api, el } from "../app.js";
 import { createResourceContext } from "../resource-context.js";
+import { createVarDeclEditor, createVarsTagsEditor } from "../views/var-decl-editor.js";
+import { createVarDeclModel } from "../views/var-decl-model.js";
+import { createVarsTagsModel } from "../views/vars-tags-model.js";
+import { STRUCT_MODE_HINT, buildSysSaveBody, isNoActiveSession, savedRevision } from "../views/var-struct-source.js";
 
 export async function renderWorld(root) {
   root.appendChild(el("h2", null, "世界"));
@@ -128,4 +135,82 @@ async function renderWorldForm(host, ctx) {
     }
   };
   host.append(el("div"), addBtn, saveBtn, status);
+
+  // ---- 变量结构（双模式：有活跃会话 = 档内副本立即生效；无 = 包基线新会话生效） ----
+  host.appendChild(el("h3", null, "变量结构"));
+  // 模式探测：GET sys 端点成功 = 档内模式；404 NO_ACTIVE_SESSION = 包基线模式（其余错误上抛）
+  let mode = "pack";
+  let varsTemplate;
+  let varsTags;
+  let tagNames;
+  let baseRevision = 0; // 档内模式乐观并发闸值（保存成功随应答推进）
+  try {
+    const sysData = await api("/api/session/state/sys");
+    mode = "session";
+    varsTemplate = sysData.varsTemplate;
+    varsTags = sysData.varsTags;
+    tagNames = Object.keys(sysData.tagRegistry ?? {}); // 档内模式注册表 = 会话 _sys.tagRegistry
+    baseRevision = sysData.baseRevision;
+  } catch (err) {
+    if (!isNoActiveSession(err)) throw err;
+    [varsTemplate, varsTags] = await Promise.all([
+      api(ctx.worldFileUrl("vars-template")),
+      api(ctx.worldFileUrl("vars-tags")),
+    ]);
+    const tagRegistry = await api(ctx.worldFileUrl("tags")); // 包基线模式注册表 = 包 tags.json
+    tagNames = Object.keys(tagRegistry ?? {});
+  }
+  // 模式指示行（常显）
+  host.appendChild(el("div", "muted", STRUCT_MODE_HINT[mode]));
+
+  /** 统一保存出口：档内 = PUT 直编通道带 sys（两份整体上送 + 乐观闸）；包基线 = PUT 包文件。 */
+  const saveStruct = async (fileName, payload, status) => {
+    status.textContent = "";
+    try {
+      if (mode === "session") {
+        const resp = await api(
+          "/api/session/state",
+          "PUT",
+          buildSysSaveBody({
+            varsTemplate: declModel.getTemplate(),
+            varsTags: tagsModel.getPayload(),
+            baseRevision,
+          }),
+        );
+        baseRevision = savedRevision(resp, baseRevision);
+        status.textContent = ` ${resp.note}`;
+      } else {
+        const resp = await api(ctx.worldFileUrl(fileName), "PUT", payload);
+        status.textContent = ` ${resp.note}`;
+      }
+    } catch (err) {
+      // 档内模式 409 = 会话 revision 已前进：提示重取，不静默覆盖
+      status.textContent =
+        err.code === "REVISION_CONFLICT"
+          ? " 保存失败：会话状态已前进，请重新加载本区后再编辑"
+          : ` 保存失败：${err.message}`; // 400 校验错误原样展示
+    }
+  };
+
+  // 变量模板：world / character / types 三根的声明树结构编辑（无实例列、无值编辑）
+  host.appendChild(el("h4", null, "变量模板"));
+  const declModel = createVarDeclModel({ template: JSON.parse(JSON.stringify(varsTemplate)) });
+  host.appendChild(createVarDeclEditor({ el, model: declModel }).root);
+  const tplSave = el("button", "act", "保存变量模板");
+  const tplStatus = el("span", "muted");
+  tplSave.onclick = () => saveStruct("vars-template", declModel.getTemplate(), tplStatus);
+  host.append(el("div"), tplSave, tplStatus);
+
+  // TAG 附加：按打开时加载的模板对拍（与服务端保存校验同一基准）；改过模板先保存再切包重载
+  host.appendChild(el("h4", null, "TAG 附加"));
+  host.appendChild(el("div", "muted", "节点上挂附加 TAG（按打开时加载的变量模板对拍；改过模板请先保存并切换包重载）。"));
+  const tagsModel = createVarsTagsModel({
+    template: JSON.parse(JSON.stringify(varsTemplate)),
+    varsTags: JSON.parse(JSON.stringify(varsTags)),
+  });
+  host.appendChild(createVarsTagsEditor({ el, model: tagsModel, tagNames }).root);
+  const tagsSave = el("button", "act", "保存 TAG 附加");
+  const tagsStatus = el("span", "muted");
+  tagsSave.onclick = () => saveStruct("vars-tags", tagsModel.getPayload(), tagsStatus);
+  host.append(el("div"), tagsSave, tagsStatus);
 }

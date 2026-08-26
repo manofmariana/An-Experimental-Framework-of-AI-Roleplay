@@ -40,7 +40,7 @@ import { deepFreeze } from "./snapshot.js";
 import { TimeFileSchema, type TimeAnchor, type TimeFile } from "./timeStore.js";
 import { RevisionConflictError, SaveLoadError } from "./validation/errors.js";
 import { validateSaveSet } from "./validation/saveSet.js";
-import { WorldFileSchema, type Pipeline, type StateTree } from "./worldStore.js";
+import { WorldFileSchema, type Pipeline, type StateTree, type WorldState } from "./worldStore.js";
 
 /** 六真相文件名（Generation 目录内）。 */
 export const TRUTH_FILES = ["world.json", "characters.json", "events.json", "archive.json", "lore.json", "time.json"] as const;
@@ -57,8 +57,8 @@ export function formatRevision(revision: number): string {
 
 /** 一代存档的完整数据（六文件载荷；信封 {schema_version, ...} 由本类组装/解析）。 */
 export interface SaveSet {
-  /** world 变量树（含 time 锚） */
-  world: StateTree & { time: TimeAnchor };
+  /** world 变量树（含 time 锚与 _sys 程序分支） */
+  world: WorldState & StateTree;
   pipeline: Pipeline;
   characters: Record<string, CharacterState>;
   events: Event[];

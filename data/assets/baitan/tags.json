@@ -1,0 +1,50 @@
+{
+  "aud": {
+    "name": "aud",
+    "description": "听觉通道（言行可被听见）",
+    "system": true
+  },
+  "vis": {
+    "name": "vis",
+    "description": "视觉通道（言行可被看见）",
+    "system": true
+  },
+  "A": {
+    "name": "A",
+    "description": "音频媒介（电话等声音工具）",
+    "system": true
+  },
+  "V": {
+    "name": "V",
+    "description": "视频媒介（视频通话等音像工具）",
+    "system": true
+  },
+  "全知": {
+    "name": "全知",
+    "description": "虚拟全知挂载记号（按全知权重覆盖对应等级组，不落盘）",
+    "system": true
+  },
+  "强制全知": {
+    "name": "强制全知",
+    "description": "强制全知挂载记号（只覆盖七级组，仅 GM 持有）",
+    "system": true
+  },
+  "cid": {
+    "name": "cid",
+    "description": "角色 CID 开放类别（实例 = 现存角色 CID，实例合法性程序判定、不登记实例值）",
+    "category": "cid",
+    "system": true
+  },
+  "channel": {
+    "name": "channel",
+    "description": "频道开放类别（实例集运行期派生，写值时类别已声明即放行）",
+    "category": "channel",
+    "system": true
+  },
+  "location": {
+    "name": "location",
+    "description": "地点开放类别（实例集运行期派生，写值时类别已声明即放行）",
+    "category": "location",
+    "system": true
+  }
+}

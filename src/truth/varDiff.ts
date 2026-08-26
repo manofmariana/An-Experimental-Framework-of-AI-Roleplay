@@ -4,6 +4,8 @@ import { makeVarChange, type VarChange } from "./varChanges.js";
  * 状态树叶级 diff（状态直编并入当前步 StepChanges.effects 用）：对比替换前后的两棵变量树，
  * 产出与 StepChanges 相同路径约定的变更记录（characters 域 `characters.C1001.timer`、
  * world 域 `world.region.harbor.fog`；数组按索引，如 `long_term_memory.3`）。
+ * 末端外壳（{value, tags?, formula?}）= 原子叶——与 varWrite 的末端级 VarChange 同粒度，
+ * 直编差异才能与 GM deltas 记录按同路径净额合并。
  *
  * 三类差异：
  * - 值变化：{path, before, after}；
@@ -27,6 +29,13 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+const SHELL_KEYS = new Set(["value", "tags", "formula"]);
+
+/** 末端外壳判定：键集 ⊆ {value, tags, formula} 且含 value（树模型容器子键禁用这三个保留名，无二义）。 */
+function isShell(v: unknown): boolean {
+  return isRecord(v) && "value" in v && Object.keys(v).every((k) => SHELL_KEYS.has(k));
+}
+
 /** 叶值相等（JSON 树只含可序列化值；undefined 防御性归一到 null）。 */
 function leafEqual(a: unknown, b: unknown): boolean {
   return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
@@ -47,6 +56,11 @@ function deleteChange(path: string, value: unknown): VarChange {
 }
 
 function walk(oldNode: unknown, newNode: unknown, path: string, out: VarChange[]): void {
+  // 末端外壳 = 原子叶（任一侧是外壳即整体比较，不下钻 value/tags 字段）
+  if (isShell(oldNode) || isShell(newNode)) {
+    if (!leafEqual(oldNode, newNode)) out.push(makeVarChange(path, oldNode, newNode));
+    return;
+  }
   if (isRecord(oldNode) && isRecord(newNode)) {
     for (const key of Object.keys(oldNode)) {
       const childPath = joinPath(path, key);

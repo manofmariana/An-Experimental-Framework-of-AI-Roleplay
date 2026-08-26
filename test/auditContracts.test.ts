@@ -15,7 +15,10 @@ import { SAVE_SCHEMA_VERSION } from "../src/truth/saveSchema.js";
 import { SaveLoadError, type SaveLoadErrorKind } from "../src/truth/validation/errors.js";
 import { WorldStore } from "../src/truth/worldStore.js";
 import { DecisionPackageSchema, SpanSchema, type LoreEntry } from "../src/types.js";
+import { buildVarsTemplate, buildWorldSysRaw } from "./builders/index.js";
 import { tempDir } from "./harness/tempDir.js";
+
+const DECL = buildVarsTemplate().characterVars;
 
 
 const start = { y: 0, m: 1, d: 1, h: 0, min: 0 };
@@ -26,7 +29,6 @@ const manifest = (id: string, isPlayer = false, timer: number | null = 0): Chara
   gender: "未设定",
   age: "未设定",
   personality: "谨慎。",
-  tags: [],
   reaction: 0,
   location: { name: "测试地", level: 1 },
   timer,
@@ -35,6 +37,7 @@ const manifest = (id: string, isPlayer = false, timer: number | null = 0): Chara
   channel: null,
   acted: false,
   level: 1,
+  omniscience: 0,
   isPlayer,
   relations: {},
   initial_memories: [],
@@ -50,38 +53,24 @@ function decision(relations: unknown) {
 }
 
 describe("WorldStore 原子性与回滚路径契约", () => {
-  it("批量 delta 中途失败时内存保持原状", () => {
-    const store = WorldStore.initial({ time: start, hp: 10, blocked: 1 });
-    const before = JSON.stringify(store.saveData());
-    assert.throws(() => store.apply([
-      { path: "hp", op: "-=", value: 2 },
-      { path: "blocked.value", op: "=", value: 3 },
-    ]), /穿过非对象节点/);
-    assert.equal(store.world.hp, 10);
-    assert.equal(JSON.stringify(store.saveData()), before);
-  });
-
   it("setClock 拒绝 NaN、Infinity 与小数分钟且不改时钟", () => {
-    const store = WorldStore.initial({ time: start });
+    const store = WorldStore.initial({ time: start }, buildWorldSysRaw());
     for (const value of [Number.NaN, Number.POSITIVE_INFINITY, 1.5]) {
       assert.throws(() => store.setClock(value), /有限整数分钟/);
     }
     assert.equal(store.clock, 0);
   });
 
-  it("同一路径连续 delta 生成逐步 before 并可倒序恢复", () => {
-    const store = WorldStore.initial({ time: start, hp: 10 });
-    const changes = store.apply([
-      { path: "hp", op: "-=", value: 2 },
-      { path: "hp", op: "+=", value: 5 },
-    ]);
+  it("同一路径连续 writeRaw 生成逐步 before 并可倒序恢复", () => {
+    const store = WorldStore.initial({ time: start, hp: 10 }, buildWorldSysRaw());
+    const changes = [store.writeRaw("hp", 8), store.writeRaw("hp", 13)];
     assert.deepEqual(changes.map((change) => [change.before, change.after]), [[10, 8], [8, 13]]);
     for (const change of [...changes].reverse()) store.revertChange(change);
-    assert.equal(store.world.hp, 10);
+    assert.equal(store.world["hp"], 10);
   });
 
   it("WorldStore 只接受精确 world. 前缀的回滚路径", () => {
-    const store = WorldStore.initial({ time: start });
+    const store = WorldStore.initial({ time: start }, buildWorldSysRaw());
     assert.throws(() => store.revertChange({ path: "worldly.hp", before: 1, after: 2 }), /无法反向的路径/);
   });
 });
@@ -126,7 +115,7 @@ describe("整数分钟与 simulator 分桶契约", () => {
   it("角色 manifest 与存档状态都拒绝非整数绝对 timer", () => {
     assert.throws(() => CharacterManifestSchema.parse({ ...manifest("C1001"), timer: 1.5 }));
     const state = {
-      name: "甲", gender: "", age: "", personality: "谨慎", tags: [], reaction: 0,
+      name: "甲", gender: "", age: "", personality: "谨慎", reaction: 0,
       location: { name: "测试地", level: 1 }, timer: 1.5, group: 0,
       initiative: null, channel: null, acted: false, level: 1, isPlayer: false, relations: {}, long_term_memory: [], vars: {},
     };
@@ -186,12 +175,12 @@ describe("Decision relations 与 CharactersStore 初始化不变量", () => {
   });
 
   it("CharactersStore.fromManifests 拒绝重复角色 ID", () => {
-    assert.throws(() => CharactersStore.fromManifests([manifest("C1001"), manifest("C1001")], 0), /重复角色 CID/);
+    assert.throws(() => CharactersStore.fromManifests([manifest("C1001"), manifest("C1001")], 0, DECL), /重复角色 CID/);
   });
 
   it("CharactersStore.fromManifests 强制 C0 与 isPlayer 双向一致", () => {
-    assert.throws(() => CharactersStore.fromManifests([manifest("C0", false)], 0), /必须标记为玩家/);
-    assert.throws(() => CharactersStore.fromManifests([manifest("C1001", true)], 0), /只有 C0/);
+    assert.throws(() => CharactersStore.fromManifests([manifest("C0", false)], 0, DECL), /必须标记为玩家/);
+    assert.throws(() => CharactersStore.fromManifests([manifest("C1001", true)], 0, DECL), /只有 C0/);
   });
 });
 

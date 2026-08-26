@@ -25,6 +25,10 @@
     "test/webResourceContext.test.ts",
     "test/webAsyncGuards.test.ts",
     "test/webStateEditor.test.ts",
+    "test/webVarStructSource.test.ts",
+    "test/varTreeModel.test.ts",
+    "test/varDeclModel.test.ts",
+    "test/varsTagsModel.test.ts",
     "test/webPlayInput.test.ts",
     "test/webPlayStream.test.ts",
     "test/configResolver.test.ts",
@@ -33,7 +37,9 @@
     "test/accessControl.test.ts",
     "test/incident.test.ts",
     "test/formula.test.ts",
-    "test/tags.test.ts"
+    "test/tags.test.ts",
+    "test/vars.test.ts",
+    "test/systemChar.test.ts"
   ],
   "contract": [
     "test/template.test.ts",
@@ -74,7 +80,8 @@
     "test/activationContexts.test.ts",
     "test/sessionCoordinator.test.ts",
     "test/configService.test.ts",
-    "test/incidentFlow.test.ts"
+    "test/incidentFlow.test.ts",
+    "test/derivedCascade.test.ts"
   ],
   "integration": [
     "test/serverApi.test.ts",

@@ -1,0 +1,52 @@
+{
+  "world": {
+    "children": {}
+  },
+  "character": {
+    "children": {
+      "attachtags": "string_list",
+      "tags": {
+        "valueType": "string_list",
+        "formula": {
+          "op": "union_attach",
+          "paths": []
+        }
+      },
+      "items": {
+        "type": "item"
+      },
+      "stats": {
+        "children": {
+          "HP": {
+            "children": {
+              "HP_max": "number",
+              "HP_current": "number",
+              "HP_origin": "number"
+            }
+          }
+        }
+      },
+      "A": "string_list"
+    }
+  },
+  "types": {
+    "item": {
+      "children": {
+        "count": "number",
+        "name": "string",
+        "attachtags": "string_list",
+        "buffs": {
+          "type": "buffs"
+        }
+      }
+    },
+    "buffs": {
+      "children": {
+        "hpbuffs": "number",
+        "mpbuffs": "number",
+        "atkbuffs": "number",
+        "defbuffs": "number"
+      }
+    }
+  }
+}

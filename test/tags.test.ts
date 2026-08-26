@@ -17,7 +17,14 @@ import {
 // 测试基建
 // ---------------------------------------------------------------------------
 
-/** 最小注册表：纯名称条目 + condition 条目 + 类别声明。 */
+/** 三个开放类别的同名 system 类别条目（加载时要求齐备；system + category 同现）。 */
+const CATEGORY_ENTRIES = {
+  cid: { name: "cid", system: true, category: "cid" },
+  channel: { name: "channel", system: true, category: "channel" },
+  location: { name: "location", system: true, category: "location" },
+} as const;
+
+/** 最小注册表：system 条目（含三类别条目）+ 纯名称条目 + condition 条目。 */
 const REGISTRY: TagRegistry = parseTagRegistry({
   aud: { name: "aud", system: true },
   vis: { name: "vis", system: true },
@@ -25,6 +32,7 @@ const REGISTRY: TagRegistry = parseTagRegistry({
   V: { name: "V", system: true },
   全知: { name: "全知", system: true },
   强制全知: { name: "强制全知", system: true },
+  ...CATEGORY_ENTRIES,
   魔法师: { name: "魔法师" },
   暗语: { name: "暗语" },
   密探: { name: "密探" },
@@ -32,9 +40,6 @@ const REGISTRY: TagRegistry = parseTagRegistry({
   感知门槛: { name: "感知门槛", condition: { path: "characters.self.感知", op: "ge", value: 5 } },
   感知区间: { name: "感知区间", condition: { path: "characters.self.感知", op: "between", value: [3, 7] } },
   中毒状态: { name: "中毒状态", condition: { path: "characters.self.状态", op: "contains", value: "中毒" } },
-  类别cid: { name: "类别cid", category: "cid" },
-  类别channel: { name: "类别channel", category: "channel" },
-  类别location: { name: "类别location", category: "location" },
 });
 
 function reader(tags: string[], extra?: Partial<ReaderScope>): ReaderScope {
@@ -71,10 +76,30 @@ describe("parseTagRegistry", () => {
     assert.throws(
       () =>
         parseTagRegistry({
+          ...CATEGORY_ENTRIES,
           a: { name: "a", category: "cid" },
-          b: { name: "b", category: "cid" },
         }),
       /重复声明/,
+    );
+  });
+
+  it("三个开放类别的同名 system 类别条目必须齐备（缺一条即拒装）", () => {
+    for (const missing of ["cid", "channel", "location"] as const) {
+      const partial = Object.fromEntries(
+        Object.entries(CATEGORY_ENTRIES).filter(([k]) => k !== missing),
+      );
+      assert.throws(() => parseTagRegistry(partial), new RegExp(`缺 system 类别条目.*${missing}`));
+    }
+  });
+
+  it("system 与 category 同现 = 类别条目合法形态（非 system 占用类别名拒绝）", () => {
+    const reg = parseTagRegistry({ ...CATEGORY_ENTRIES, x: { name: "x" } });
+    assert.equal(reg["cid"]?.system, true);
+    assert.equal(reg["cid"]?.category, "cid");
+    // 类别名为代码常量：非 system 条目占用即拒
+    assert.throws(
+      () => parseTagRegistry({ cid: { name: "cid", category: "cid" }, channel: CATEGORY_ENTRIES.channel, location: CATEGORY_ENTRIES.location }),
+      /占用/,
     );
   });
 
@@ -86,7 +111,10 @@ describe("parseTagRegistry", () => {
       parseTagRegistry({ x: { name: "x", condition: { path: "p", op: "eq", value: [1, 2] } } }),
     );
     assert.doesNotThrow(() =>
-      parseTagRegistry({ x: { name: "x", condition: { path: "p", op: "between", value: [1, 2] } } }),
+      parseTagRegistry({
+        ...CATEGORY_ENTRIES,
+        x: { name: "x", condition: { path: "p", op: "between", value: [1, 2] } },
+      }),
     );
   });
 });

@@ -1,0 +1,11 @@
+{
+  "world": {},
+  "character": {
+    "tags": [
+      {
+        "category": "cid",
+        "level": 1
+      }
+    ]
+  }
+}

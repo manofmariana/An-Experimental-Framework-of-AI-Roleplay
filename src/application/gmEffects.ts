@@ -16,6 +16,7 @@
 import type { DicePort } from "../ports.js";
 import type { TruthStores } from "../truth/stores.js";
 import type { VarChange } from "../truth/varChanges.js";
+import { applyVarDeltas, parseWorldSys, varWriteDepsOf } from "../truth/varWrite.js";
 import { knownByTag, spanToMinutes, type AdjudicationPackage, type Event } from "../types.js";
 import { cleanupChannels, playableCharacters, rederiveGroups } from "./scheduleEffects.js";
 
@@ -39,8 +40,12 @@ export interface GmStepEffects {
 
 export function planGmAdjudication(draft: TruthStores, ctx: GmAdjudicationContext): GmStepEffects {
   const { seq, pkg, roundCids } = ctx;
-  const changes = draft.world.apply(pkg.deltas);
   const known = draft.characters.all();
+  const changes = applyVarDeltas(
+    draft,
+    pkg.deltas,
+    varWriteDepsOf(parseWorldSys(draft.world.world._sys), new Set(Object.keys(known))),
+  );
   // durations：时长 → 到期时刻（timer = 世界时钟 + spanToMinutes(span)，契约保证非 0）
   for (const t of pkg.durations) {
     if (!(t.cid in known)) {
@@ -59,10 +64,8 @@ export function planGmAdjudication(draft: TruthStores, ctx: GmAdjudicationContex
   }
   // 任何 GM 激活后：周期计数 X 清零 + 立即触发标记复位
   changes.push(
-    ...draft.world.apply([
-      { path: "cycles_since_gm", op: "=", value: 0 },
-      { path: "gm_trigger", op: "=", value: false },
-    ]),
+    draft.world.writeRaw("_sys.cycles_since_gm", 0),
+    draft.world.writeRaw("_sys.gm_trigger", false),
   );
   // 本轮被结算的成员转入后台：acted 清零（先攻值不重投，回前台时行动状态已重置）
   for (const t of pkg.durations) {

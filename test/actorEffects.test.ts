@@ -10,7 +10,7 @@ import type { TruthStores } from "../src/truth/stores.js";
 import { TimeStore } from "../src/truth/timeStore.js";
 import type { VarChange } from "../src/truth/varChanges.js";
 import { WorldStore } from "../src/truth/worldStore.js";
-import { buildManifest } from "./builders/index.js";
+import { buildManifest, buildVarsTemplate, buildWorldSysRaw } from "./builders/index.js";
 import { DecisionPackageSchema, type DecisionPackage } from "../src/types.js";
 
 // ---------------------------------------------------------------------------
@@ -19,11 +19,12 @@ import { DecisionPackageSchema, type DecisionPackage } from "../src/types.js";
 // ---------------------------------------------------------------------------
 
 const START = { y: 0, m: 1, d: 1, h: 0, min: 0 };
+const DECL = buildVarsTemplate().characterVars;
 
 function makeTruth(specs: (Parameters<typeof buildManifest>[0])[]): TruthStores {
   return {
-    world: WorldStore.initial({ time: START }),
-    characters: CharactersStore.fromManifests(specs.map(buildManifest), 0),
+    world: WorldStore.initial({ time: START }, buildWorldSysRaw()),
+    characters: CharactersStore.fromManifests(specs.map(buildManifest), 0, DECL),
     events: new EventsStore(),
     archive: new ArchiveStore(),
     loreStore: LoreStore.initFrom([]),
@@ -112,9 +113,9 @@ describe("planActorDecision（标记谱系：程序即时执行，全走 VarChan
       pkg: decision({ markers: [{ type: "gm_request" }] }),
       rollDice: diceQueue([]),
     });
-    assert.equal(withInit.world.world["gm_trigger"], true);
-    assert.equal(withInit.world.world["gm_trigger_batch"], 12);
-    assert.ok(r1.changes.some((c) => c.path === "world.gm_trigger" && c.after === true));
+    assert.equal(withInit.world.world._sys["gm_trigger"], true);
+    assert.equal(withInit.world.world._sys["gm_trigger_batch"], 12);
+    assert.ok(r1.changes.some((c) => c.path === "world._sys.gm_trigger" && c.after === true));
 
     const noInit = makeTruth([{ id: "C1001" }]);
     planActorDecision(noInit, {
@@ -122,7 +123,7 @@ describe("planActorDecision（标记谱系：程序即时执行，全走 VarChan
       pkg: decision({ markers: [{ type: "gm_request" }] }),
       rollDice: diceQueue([]),
     });
-    assert.equal(noInit.world.world["gm_trigger_batch"], -Number.MAX_SAFE_INTEGER);
+    assert.equal(noInit.world.world._sys["gm_trigger_batch"], -Number.MAX_SAFE_INTEGER);
   });
 
   it("leave：组归 0 + timer 置 null + 清频道，不触发 GM", () => {
@@ -136,7 +137,7 @@ describe("planActorDecision（标记谱系：程序即时执行，全走 VarChan
     assert.equal(s.group, 0);
     assert.equal(s.timer, null);
     assert.equal(s.channel, null);
-    assert.notEqual(truth.world.world["gm_trigger"], true);
+    assert.notEqual(truth.world.world._sys["gm_trigger"], true);
   });
 
   it("contact：邀请双方分配同一新频道 + 立 GM 触发；未知目标忽略", () => {
@@ -150,7 +151,7 @@ describe("planActorDecision（标记谱系：程序即时执行，全走 VarChan
     assert.equal(truth.characters.get("C1001").channel, 8, "邀请者入新频道（max+1）");
     assert.equal(truth.characters.get("C0").channel, 8, "@ 前缀目标归一化后入同一频道");
     assert.equal(truth.characters.get("C1002").channel, 7, "非目标不受影响");
-    assert.equal(truth.world.world["gm_trigger"], true, "contact 触发 GM 立即激活");
+    assert.equal(truth.world.world._sys["gm_trigger"], true, "contact 触发 GM 立即激活");
     assert.ok(!changes.some((c) => c.path.includes("C9999")), "未知目标不产生变更");
   });
 

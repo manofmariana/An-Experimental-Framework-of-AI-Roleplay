@@ -55,7 +55,7 @@ import {
 import { InvitationProjection, type InvitationStepView } from "../scheduler/invitations.js";
 import { groupLocation, type SimChar } from "../scheduler/simulator.js";
 import { ArchiveStore, buildArchiveEntry, type ArchiveEntry } from "../truth/archive.js";
-import { CharactersStore, type CharacterState } from "../truth/charactersStore.js";
+import { CharactersStore, CharacterStateSchema, type CharacterState } from "../truth/charactersStore.js";
 import { CommitExecutor, type CommitReason } from "../truth/commitExecutor.js";
 import { EventsStore, scanEventWatermark } from "../truth/events.js";
 import type { GenerationRepository, SaveSet } from "../truth/generationRepository.js";
@@ -67,11 +67,14 @@ import { adoptTruth, cloneTruth, collectSave, type TruthStores } from "../truth/
 import { TimeStore } from "../truth/timeStore.js";
 import type { VarChange } from "../truth/varChanges.js";
 import { diffStateTrees } from "../truth/varDiff.js";
+import { applyVarDeltas, cascadeDerived, parseWorldSys, varWriteDepsOf } from "../truth/varWrite.js";
+import { normalizeInstance, validateSystemTags } from "../vars/tree.js";
 import { DisposedSessionError } from "../truth/validation/errors.js";
 import { renderScene, renderSpeech, type WorkingSetEntry } from "../truth/workingSet.js";
 import {
   emptyStepChanges,
   flatChanges,
+  WorldStateSchema,
   WorldStore,
   type Pipeline,
   type PipelineCurrent,
@@ -496,7 +499,8 @@ export class GameSession {
     const archive = truth.archive.readAll();
     const last = current ?? archive[archive.length - 1];
     const sel = selectFront(chars, clock);
-    const gmBatch: unknown = truth.world.world["gm_trigger_batch"];
+    const sys: Record<string, unknown> = truth.world.world._sys;
+    const gmBatch: unknown = sys["gm_trigger_batch"];
     const lastGmPkg =
       last?.kind === "gm"
         ? (last.result as { adjudication?: AdjudicationPackage } | undefined)?.adjudication
@@ -506,7 +510,7 @@ export class GameSession {
       clock,
       cycleCount: this.cycleCount(truth),
       gmIntervalCycles: this.gmIntervalCycles,
-      gmTrigger: truth.world.world["gm_trigger"] === true,
+      gmTrigger: sys["gm_trigger"] === true,
       gmTriggerBatch: typeof gmBatch === "number" ? gmBatch : null,
       lastStepKind: last?.kind ?? null,
       lastGmNarrativity: lastGmPkg?.narrativity ?? null,
@@ -1037,7 +1041,11 @@ export class GameSession {
     this.activationController = controller;
     try {
       const { raw, pkg } = await this.gm.adjudicateIncident(context, seq, controller.signal, this.display);
-      const effects = truth.world.apply(pkg.deltas);
+      const effects = applyVarDeltas(
+        truth,
+        pkg.deltas,
+        varWriteDepsOf(parseWorldSys(truth.world.world._sys), new Set(Object.keys(truth.characters.all()))),
+      );
       for (const cid of hit.group.cids) {
         effects.push(...truth.characters.setVars(cid, { timer: truth.world.clock }));
       }
@@ -1340,7 +1348,11 @@ export class GameSession {
       const roll = previous.roll;
       const draft = cloneTruth(this.liveTruth());
       this.revertVarChanges(draft, current.changes?.effects ?? []);
-      const effects = draft.world.apply(pkg.deltas);
+      const effects = applyVarDeltas(
+        draft,
+        pkg.deltas,
+        varWriteDepsOf(parseWorldSys(draft.world.world._sys), new Set(Object.keys(draft.characters.all()))),
+      );
       for (const cid of target.cids) {
         effects.push(...draft.characters.setVars(cid, { timer: draft.world.clock }));
       }
@@ -1518,14 +1530,43 @@ export class GameSession {
 
     // draft 上整体替换（各 store 先校验后落地；任一失败 draft 丢弃，live 零变化）
     const draft = cloneTruth(this.liveTruth());
-    if (payload.world !== undefined) draft.world.replaceWorld(payload.world);
+    // world 先过文件 codec（time 锚/_sys 必需），`_sys` 再三套严格解析（注册表/模板/附加
+    // 文件）：payload.world 携带时以新 `_sys` 为准（直编是 `_sys` 的管理特权通道），否则按
+    // 档内现状；两份 normalize 统一用这份模板
+    const parsedWorld = payload.world !== undefined ? WorldStateSchema.parse(payload.world) : undefined;
+    const sys = parseWorldSys(parsedWorld !== undefined ? parsedWorld._sys : this.world.world._sys);
+    // TAG 名称校验上下文（与 GM deltas 同口径：注册名集合 + 开放类别声明；
+    // cid 类别实例集 = 当前角色表键集——角色集合一致性预检保证载荷不增删角色）
+    const editDeps = varWriteDepsOf(sys, new Set(Object.keys(this.characters.all())));
+    if (parsedWorld !== undefined) {
+      const { time, _sys, ...vars } = parsedWorld;
+      // world 变量树按（新）模板 normalize（time 锚与 _sys 程序分支豁免；外壳 tags 同口径名称校验）
+      const normalized = normalizeInstance(vars, sys.template.world, "world", editDeps) as Record<string, unknown>;
+      draft.world.replaceWorld({ ...normalized, time, _sys });
+    }
     if (payload.characters !== undefined) {
+      const parsed = z.record(z.string(), CharacterStateSchema).parse(payload.characters);
+      const normalized: Record<string, CharacterState> = {};
+      for (const [cid, state] of Object.entries(parsed)) {
+        normalized[cid] = {
+          ...state,
+          // 系统末端 tags 侧车校验（系统分支末端路径 + level 1-7 + 名称校验同口径）
+          systemTags: validateSystemTags(state.systemTags, sys.template.character, editDeps),
+          vars: normalizeInstance(state.vars, sys.template.characterVars, cid, editDeps) as Record<string, unknown>,
+        };
+      }
       draft.characters.restoreSnapshot({
         schema_version: SAVE_SCHEMA_VERSION,
-        characters: payload.characters as Record<string, CharacterState>,
+        characters: normalized,
       });
     }
     if (payload.events !== undefined) draft.events.replaceAll(payload.events);
+    // 替换后两域全量从动级联（world 根 + 全角色；被直编的从动值回归计算值，
+    // 级联结果随下方 diff 净额并入当前步 changes）
+    cascadeDerived(draft, { kind: "world" }, editDeps);
+    for (const cid of Object.keys(draft.characters.all())) {
+      cascadeDerived(draft, { kind: "character", cid }, editDeps);
+    }
 
     // 变量域差异（live vs draft）并入当前步 effects 段（以替换后的落盘状态为 newTree——
     // 被 schema 剥离的键不产生幻觉差异；world.time 锚强制保留由 replaceWorld 校验）

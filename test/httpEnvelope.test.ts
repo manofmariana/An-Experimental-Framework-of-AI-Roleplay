@@ -318,6 +318,82 @@ describe("world / characters 域", () => {
     failCode(await callApi(h.port, "PUT", "/api/world/bogus?set=w", { content: "x" }), 404, "UNKNOWN_ENDPOINT");
   });
 
+  it("变量体系端点：GET 缺省空结构 / PUT 校验失败 400 零落盘 / 成功写盘 note / tags 只读", async (t) => {
+    const h = await serverHarness(t);
+    const packDir = path.join(h.dirs.assetsDir, "w");
+
+    // 包内三文件齐备：GET 原样返回（harness 模板含 character 根保留名）
+    const tpl = okData<{ character: { children: Record<string, unknown> } }>(
+      await callApi(h.port, "GET", "/api/world/vars-template?set=w"),
+    );
+    assert.ok("attachtags" in tpl.character.children);
+    const registry = okData<Record<string, unknown>>(await callApi(h.port, "GET", "/api/world/tags?set=w"));
+    assert.ok("aud" in registry); // harness 注册表 = 六 system 条目
+    assert.deepEqual(await callApi(h.port, "GET", "/api/world/vars-tags?set=w").then(okData), {
+      world: {},
+      character: {},
+    });
+
+    // 缺文件：GET 回缺省空结构（模板 = 最小保留名 / 附加 = 空双根 / 注册表 = 空对象）
+    fs.rmSync(path.join(packDir, "vars-template.json"));
+    fs.rmSync(path.join(packDir, "vars-tags.json"));
+    fs.rmSync(path.join(packDir, "tags.json"));
+    const emptyTpl = okData<{ world: unknown; character: { children: Record<string, unknown> }; types: unknown }>(
+      await callApi(h.port, "GET", "/api/world/vars-template?set=w"),
+    );
+    assert.deepEqual(emptyTpl.world, { children: {} });
+    assert.ok("attachtags" in emptyTpl.character.children && "tags" in emptyTpl.character.children);
+    assert.deepEqual(emptyTpl.types, {});
+    assert.deepEqual(await callApi(h.port, "GET", "/api/world/vars-tags?set=w").then(okData), {
+      world: {},
+      character: {},
+    });
+    assert.deepEqual(await callApi(h.port, "GET", "/api/world/tags?set=w").then(okData), {});
+
+    // PUT vars-template：character 根缺保留名 → 400 VALIDATION_ERROR 零落盘
+    failCode(
+      await callApi(h.port, "PUT", "/api/world/vars-template?set=w", { world: { children: {} }, character: { children: {} } }),
+      400,
+      "VALIDATION_ERROR",
+    );
+    assert.ok(!fs.existsSync(path.join(packDir, "vars-template.json")), "校验失败不得落盘");
+
+    // PUT vars-template：合法（缺省空结构原样回写）→ note + 创建文件 + GET 可读
+    const savedTpl = okData<{ note: string }>(
+      await callApi(h.port, "PUT", "/api/world/vars-template?set=w", emptyTpl),
+    );
+    assert.equal(savedTpl.note, "已保存，修改在新会话生效");
+    assert.ok(fs.existsSync(path.join(packDir, "vars-template.json")), "PUT 创建缺文件");
+
+    // PUT vars-tags：路径不在模板中 → 400 零落盘
+    failCode(
+      await callApi(h.port, "PUT", "/api/world/vars-tags?set=w", {
+        world: { children: { nosuch: { tags: [{ name: "x", level: 1 }] } } },
+        character: {},
+      }),
+      400,
+      "VALIDATION_ERROR",
+    );
+    assert.ok(!fs.existsSync(path.join(packDir, "vars-tags.json")), "校验失败不得落盘");
+
+    // PUT vars-tags：合法（character 根 attachtags 整型条目）→ note + 写盘
+    const savedTags = okData<{ note: string }>(
+      await callApi(h.port, "PUT", "/api/world/vars-tags?set=w", {
+        world: {},
+        character: { children: { attachtags: { tags: [{ name: "aud", level: 2 }] } } },
+      }),
+    );
+    assert.equal(savedTags.note, "已保存，修改在新会话生效");
+    const roundTrip = okData<{ character: { children: Record<string, unknown> } }>(
+      await callApi(h.port, "GET", "/api/world/vars-tags?set=w"),
+    );
+    assert.deepEqual(roundTrip.character.children.attachtags, { tags: [{ name: "aud", level: 2 }] });
+
+    // tags.json 只读：PUT → 404；旧三文件名不走新 GET
+    failCode(await callApi(h.port, "PUT", "/api/world/tags?set=w", {}), 404, "UNKNOWN_ENDPOINT");
+    failCode(await callApi(h.port, "GET", "/api/world/setting?set=w"), 404, "UNKNOWN_ENDPOINT");
+  });
+
   it("characters 列表/单读/CHARACTER_NOT_FOUND/PUT 校验", async (t) => {
     const h = await serverHarness(t);
     const list = okData<{ id: string; manifest: unknown }[]>(await callApi(h.port, "GET", "/api/characters?set=w"));
@@ -421,7 +497,8 @@ describe("HTTP mutation 与 WS transition 广播（边界联证）", () => {
     assert.equal(ok.status, 200);
     assert.equal(okData<{ note: string }>(ok).note, "已保存，立即生效");
     const transition = await ws.waitFor((m) => m.type === "transition" && m.reason === "admin_edit");
-    assert.equal((transition.changed as { world: { hp: number } }).world.hp, 42);
+    // 直编世界变量经模板 normalize 落为末端外壳 {value, tags}
+    assert.deepEqual((transition.changed as { world: { hp: unknown } }).world.hp, { value: 42, tags: [] });
     const transitionsAfter = ws.messages.filter((m) => m.type === "transition").length;
     assert.equal(transitionsAfter - transitionsBefore, 1, "成功直编应恰广播一条 transition");
 

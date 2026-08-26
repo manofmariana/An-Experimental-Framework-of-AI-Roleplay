@@ -4,9 +4,6 @@
   "gender": "男",
   "age": "52",
   "personality": "幻想一夜暴富的油腻男。",
-  "tags": [
-    "白滩镇：常识"
-  ],
   "reaction": 5,
   "location": {
     "name": "雾灯酒馆",
@@ -18,10 +15,15 @@
   "channel": null,
   "acted": false,
   "level": 1,
+  "omniscience": 0,
   "isPlayer": false,
   "relations": {},
   "initial_memories": [
     "我五十二岁，经营白滩镇酒馆“雾灯”，左臂留有旧伤。"
   ],
-  "vars": {}
+  "vars": {
+    "attachtags": [
+      "白滩镇：常识"
+    ]
+  }
 }

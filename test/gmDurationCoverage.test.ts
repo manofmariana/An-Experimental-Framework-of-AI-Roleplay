@@ -102,7 +102,7 @@ describe("中途 GM 的 durations 覆盖契约（同步组全体成员必须一�
     assert.equal(charState(session, "C1001").acted, false, "未行动成员保持 acted=false");
     assert.equal(charState(session, "C0").acted, false, "组结算进后台：全员 acted 重置");
     assert.equal(
-      (session.getState().world as Record<string, unknown>)["cycles_since_gm"],
+      ((session.getState().world as Record<string, unknown>)["_sys"] as Record<string, unknown>)["cycles_since_gm"],
       0,
       "组结算进后台：周期计数 X 归 0",
     );

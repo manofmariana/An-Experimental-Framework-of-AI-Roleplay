@@ -241,7 +241,7 @@ describe("proseWindow / lastProse（从 archive.json 现取）", () => {
 describe("participantTags（lore 触发制输入）", () => {
   it("并集去重", () => {
     assert.deepEqual(
-      participantTags([{ tags: ["a", "b"] }, { tags: ["b", "c"] }]).sort(),
+      participantTags([["a", "b"], ["b", "c"]]).sort(),
       ["a", "b", "c"],
     );
   });

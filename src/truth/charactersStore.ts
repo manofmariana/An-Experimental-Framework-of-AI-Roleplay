@@ -1,13 +1,16 @@
 import { z } from "zod";
 import type { CharacterManifest } from "../agents/character.js";
 import { InitiativeSchema, LocationSchema, PLAYER_CID, type RelationUpdate } from "../types.js";
+import { evalTagsPool } from "../vars/derived.js";
+import type { ContainerDecl } from "../vars/template.js";
+import { normalizeInstance, TagMountSchema, type InstanceNode, type TerminalInstance } from "../vars/tree.js";
 import { RelationsDataSchema, normalizeCid, type RelationEntry, type RelationsData } from "./identity.js";
-import { deleteByPath, makeVarChange, setByPath, type VarChange } from "./varChanges.js";
+import { deleteByPath, getByPath, makeVarChange, setByPath, type VarChange } from "./varChanges.js";
 import { SAVE_SCHEMA_VERSION } from "./saveSchema.js";
 
 export const CharacterStateSchema = z.object({
   name: z.string().min(1), gender: z.string(), age: z.string(), personality: z.string().min(1),
-  tags: z.array(z.string()), reaction: z.number(), location: LocationSchema,
+  reaction: z.number(), location: LocationSchema,
   timer: z.number().int().finite().nonnegative().nullable(),
   /** 组编号（0 = 单人组；组位置不落盘，由 simulator 按组内先攻最高者派生） */
   group: z.number(),
@@ -17,9 +20,15 @@ export const CharacterStateSchema = z.object({
   channel: z.number().nullable(),
   /** 已行动位（行动顺序表：行动置位、周期完成/后台重置清零） */
   acted: z.boolean(),
-  level: z.number(), isPlayer: z.boolean(), relations: RelationsDataSchema,
+  level: z.number(),
+  /** 全知权重（0-6；恒定系统字段，不开放白名单写通道） */
+  omniscience: z.number().int().min(0).max(6).default(0),
+  isPlayer: z.boolean(), relations: RelationsDataSchema,
   long_term_memory: z.array(z.string()),
-  vars: z.record(z.string(), z.union([z.number(), z.string(), z.boolean()])),
+  /** 系统末端内容侧 TAG 侧车（系统分支末端路径 → {name, level}[]；只经直编修改，装配/直编时校验） */
+  systemTags: z.record(z.string(), z.array(TagMountSchema)).default({}),
+  /** 变量树（按 character 模板 normalize 后的形态：末端 = {value, tags, formula?} 外壳） */
+  vars: z.record(z.string(), z.unknown()),
 });
 export type CharacterState = z.infer<typeof CharacterStateSchema>;
 export const CharactersFileSchema = z.object({
@@ -31,14 +40,20 @@ export type CharactersFile = z.infer<typeof CharactersFileSchema>;
 const CHARACTER_VAR_KEYS = ["timer", "group", "initiative", "channel", "acted", "level", "location"] as const;
 export type CharacterVarPatch = Partial<Pick<CharacterState, (typeof CHARACTER_VAR_KEYS)[number]>>;
 
-function fromManifest(manifest: CharacterManifest, startMinutes: number): CharacterState {
+/**
+ * manifest → 初始角色状态：vars 按 character 模板 normalize（简写展开）后
+ * 物化 tags 池末端（union_attach 初值）。
+ */
+function fromManifest(manifest: CharacterManifest, startMinutes: number, characterDecl: ContainerDecl): CharacterState {
+  const vars = normalizeInstance(manifest.vars, characterDecl, manifest.id) as Record<string, unknown>;
+  vars["tags"] = { value: evalTagsPool(vars as InstanceNode, characterDecl), tags: [] } satisfies TerminalInstance;
   return {
     name: manifest.name, gender: manifest.gender, age: manifest.age, personality: manifest.personality,
-    tags: manifest.tags, reaction: manifest.reaction, location: manifest.location,
+    reaction: manifest.reaction, location: manifest.location,
     timer: manifest.timer === null ? null : startMinutes + manifest.timer,
     group: manifest.group, initiative: manifest.initiative, channel: manifest.channel, acted: manifest.acted,
-    level: manifest.level, isPlayer: manifest.isPlayer, relations: manifest.relations,
-    long_term_memory: [...manifest.initial_memories], vars: manifest.vars,
+    level: manifest.level, omniscience: manifest.omniscience, isPlayer: manifest.isPlayer, relations: manifest.relations,
+    long_term_memory: [...manifest.initial_memories], systemTags: {}, vars,
   };
 }
 
@@ -57,13 +72,13 @@ export class CharactersStore {
   }
 
   /** 纯工厂：manifests → 初始角色表（建档校验：CID 不重复、C0 与 isPlayer 双向一致）。 */
-  static fromManifests(manifests: CharacterManifest[], startMinutes: number): CharactersStore {
+  static fromManifests(manifests: CharacterManifest[], startMinutes: number, characterDecl: ContainerDecl): CharactersStore {
     const characters: Record<string, CharacterState> = {};
     for (const manifest of manifests) {
       if (characters[manifest.id] !== undefined) throw new Error(`重复角色 CID: ${manifest.id}`);
       if (manifest.id === PLAYER_CID && !manifest.isPlayer) throw new Error(`${PLAYER_CID} 必须标记为玩家`);
       if (manifest.id !== PLAYER_CID && manifest.isPlayer) throw new Error(`只有 ${PLAYER_CID} 可以标记为玩家: ${manifest.id}`);
-      characters[manifest.id] = fromManifest(manifest, startMinutes);
+      characters[manifest.id] = fromManifest(manifest, startMinutes, characterDecl);
     }
     return new CharactersStore(characters);
   }
@@ -80,6 +95,28 @@ export class CharactersStore {
   }
   all(): Readonly<Record<string, CharacterState>> { return this.data.characters; }
   renderLongTerm(cid: string): string { return this.get(cid).long_term_memory.join("\n"); }
+
+  /** 角色有效 TAG 名集（vars.tags 池末端 value = string[] 纯名集合；池缺失/形状异常返回 []）。 */
+  tagNames(cid: string): string[] {
+    const pool: unknown = this.get(cid).vars["tags"];
+    if (typeof pool !== "object" || pool === null || Array.isArray(pool)) return [];
+    const value: unknown = (pool as Record<string, unknown>)["value"];
+    if (!Array.isArray(value)) return [];
+    return value.filter((item): item is string => typeof item === "string");
+  }
+
+  /**
+   * 低层写入口（varWrite 专用：调用方负责校验；rest = CID 内点路径，
+   * 值 = 该路径的整体新值）。产出真相根路径 VarChange（`characters.{cid}.…`）。
+   */
+  writeRaw(cid: string, rest: string, value: unknown): VarChange {
+    const state = this.get(cid);
+    const copy = JSON.parse(JSON.stringify(state)) as Record<string, unknown>;
+    const before = getByPath(copy, rest);
+    setByPath(copy, rest, value);
+    this.data = { ...this.data, characters: { ...this.data.characters, [cid]: copy as CharacterState } };
+    return makeVarChange(`characters.${cid}.${rest}`, before, value);
+  }
 
   updateRelations(cid: string, updates: RelationUpdate[]): VarChange[] {
     if (updates.length === 0) return [];
@@ -118,7 +155,7 @@ export class CharactersStore {
     return changes;
   }
 
-  ensurePlayer(manifest: CharacterManifest, startMinutes: number): void {
+  ensurePlayer(manifest: CharacterManifest, startMinutes: number, characterDecl: ContainerDecl): void {
     const existing = this.data.characters[PLAYER_CID];
     if (existing !== undefined) {
       if (!existing.isPlayer) {
@@ -126,7 +163,7 @@ export class CharactersStore {
       }
       return;
     }
-    this.data = { ...this.data, characters: { ...this.data.characters, [PLAYER_CID]: fromManifest({ ...manifest, id: PLAYER_CID, isPlayer: true }, startMinutes) } };
+    this.data = { ...this.data, characters: { ...this.data.characters, [PLAYER_CID]: fromManifest({ ...manifest, id: PLAYER_CID, isPlayer: true }, startMinutes, characterDecl) } };
   }
 
   revertChange(change: VarChange): void {

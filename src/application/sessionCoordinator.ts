@@ -113,6 +113,11 @@ export class SessionCoordinator {
     return this.epoch;
   }
 
+  /** 活跃会话当前 world 冻结视图（含 `_sys`；HTTP 结构编辑档内模式取数用）。无会话 = null。 */
+  activeWorld(): ReturnType<GameSession["getState"]>["world"] | null {
+    return this.session?.getState().world ?? null;
+  }
+
   /** 是否有待生效的资源修改（前端提示用）。 */
   get needsReset(): boolean {
     return this.stale && this.session !== null;

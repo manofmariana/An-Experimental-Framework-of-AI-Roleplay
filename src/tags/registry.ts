@@ -5,7 +5,8 @@
  * {name, description?, condition?, category?, system?}。category = 封闭枚举
  * {cid, channel, location}——带 category 的条目 = 该类别的声明（实例合法性由
  * 程序判定、实例值不重复登记），无类别按名称登记。system 条目 = 程序化 TAG 的
- * 只读参考，与下方代码常量双向一致（任何层不得占用同名）。
+ * 只读参考，与下方代码常量双向一致（任何层不得占用同名）；三个开放类别各有一条
+ * 同名 system 类别条目（system + category 同现），加载时要求三条齐备。
  */
 import { z } from "zod";
 
@@ -13,8 +14,8 @@ import { z } from "zod";
 export const TAG_CATEGORIES = ["cid", "channel", "location"] as const;
 export type TagCategory = (typeof TAG_CATEGORIES)[number];
 
-/** 程序化 TAG 代码常量（注册表 system 条目的校验基准）。 */
-export const SYSTEM_TAG_NAMES = ["aud", "vis", "A", "V", "全知", "强制全知"] as const;
+/** 程序化 TAG 代码常量（注册表 system 条目的校验基准；末三条 = 开放类别同名条目）。 */
+export const SYSTEM_TAG_NAMES = ["aud", "vis", "A", "V", "全知", "强制全知", ...TAG_CATEGORIES] as const;
 
 /** 虚拟全知挂载记号（求值时按非空等级组追加，不落盘）。 */
 export const OMNISCIENT_TAG = "全知";
@@ -57,7 +58,8 @@ export type TagRegistry = Record<string, TagRegistryEntry>;
 
 /**
  * 解析并校验注册表：键名 = 条目名、system 条目与代码常量双向一致
- * （system: true 必须在常量内；常量名不得被非 system 条目占用）、类别声明唯一。
+ * （system: true 必须在常量内；常量名不得被非 system 条目占用）、类别声明唯一、
+ * 三个开放类别的同名 system 类别条目齐备（cid/channel/location 各一，缺一则拒装）。
  */
 export function parseTagRegistry(data: unknown): TagRegistry {
   const raw = TagRegistrySchema.parse(data);
@@ -79,6 +81,12 @@ export function parseTagRegistry(data: unknown): TagRegistry {
         throw new Error(`TAG 类别重复声明："${entry.category}"`);
       }
       seenCategories.add(entry.category);
+    }
+  }
+  for (const category of TAG_CATEGORIES) {
+    const entry = raw[category];
+    if (entry === undefined || entry.system !== true || entry.category !== category) {
+      throw new Error(`TAG 注册表缺 system 类别条目："${category}"`);
     }
   }
   return raw;

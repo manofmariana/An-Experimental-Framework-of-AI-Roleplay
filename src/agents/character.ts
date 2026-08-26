@@ -12,13 +12,18 @@ import { runStructuredActivation } from "./structuredActivation.js";
 
 export const CharacterManifestSchema = z.object({
   id: z.string(), name: z.string().min(1), gender: z.string(), age: z.string(), personality: z.string().min(1),
-  tags: z.array(z.string()), reaction: z.number(), location: LocationSchema,
+  reaction: z.number(), location: LocationSchema,
   timer: z.number().int().finite().nonnegative().nullable(),
   group: z.number().default(0), initiative: InitiativeSchema.nullable().default(null),
   channel: z.number().nullable().default(null), acted: z.boolean().default(false),
-  level: z.number(), isPlayer: z.boolean(),
+  level: z.number(),
+  /** 全知权重（0-6；恒定系统字段，不开放写通道） */
+  omniscience: z.number().int().min(0).max(6).default(0),
+  isPlayer: z.boolean(),
   relations: z.record(z.string(), z.object({ name: z.string().optional(), impression: z.string().optional() })),
-  initial_memories: z.array(z.string()), vars: z.record(z.string(), z.union([z.number(), z.string(), z.boolean()])),
+  initial_memories: z.array(z.string()),
+  /** 变量树初值（允许末端简写；形状校验在装配层按 character 模板 normalize 时做） */
+  vars: z.record(z.string(), z.unknown()).default({}),
 });
 export type CharacterManifest = z.infer<typeof CharacterManifestSchema>;
 

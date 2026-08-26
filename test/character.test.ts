@@ -10,7 +10,7 @@ import type { CharacterState } from "../src/truth/charactersStore.js";
 /** 出厂模板目录 = 默认世界包内 prompts/。 */
 const FACTORY_PROMPTS_DIR = packPromptsDir(resolveWorldDir());
 
-function state(name: string): CharacterState { return { name, gender: "女", age: "26", personality: `${name}性格`, tags: [], reaction: 5, location: { name: "灯塔", level: 1 }, timer: 10, group: 1, initiative: null, channel: null, acted: false, level: 1, isPlayer: false, relations: {}, long_term_memory: [`${name}记忆`], vars: { hp: 10 } }; }
+function state(name: string): CharacterState { return { name, gender: "女", age: "26", personality: `${name}性格`, reaction: 5, location: { name: "灯塔", level: 1 }, timer: 10, group: 1, initiative: null, channel: null, acted: false, level: 1, omniscience: 0, isPlayer: false, relations: {}, long_term_memory: [`${name}记忆`], systemTags: {}, vars: { hp: 10 } }; }
 const states = { C1001: state("林雾"), C1002: state("周砚") };
 const ctx = (selfCid: string): CharacterContext => ({ selfCid, states, cast: [], worldSnapshot: '{"time":{"y":3}}', activatedLore: "lore", recentEvents: [], proseWindow: [], currentScene: "##@C0", timeHeader: "3年1月1日", clock: 0 });
 

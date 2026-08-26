@@ -15,7 +15,7 @@ import { cloneTruth, type TruthStores } from "../src/truth/stores.js";
 import { TimeStore } from "../src/truth/timeStore.js";
 import type { VarChange } from "../src/truth/varChanges.js";
 import { WorldStore } from "../src/truth/worldStore.js";
-import { buildManifest } from "./builders/index.js";
+import { buildManifest, buildVarsTemplate, buildWorldSysRaw } from "./builders/index.js";
 
 // ---------------------------------------------------------------------------
 // prepareNextCommand（unit：纯内存 draft + 注入回调，零 IO）——
@@ -23,13 +23,15 @@ import { buildManifest } from "./builders/index.js";
 // ---------------------------------------------------------------------------
 
 const START = { y: 0, m: 1, d: 1, h: 0, min: 0 };
+const DECL = buildVarsTemplate().characterVars;
 
 function makeTruth(): TruthStores {
   return {
-    world: WorldStore.initial({ time: START }),
+    world: WorldStore.initial({ time: START }, buildWorldSysRaw()),
     characters: CharactersStore.fromManifests(
       [buildManifest({ id: "C0", name: "玩家", isPlayer: true, timer: 0 })],
       0,
+      DECL,
     ),
     events: new EventsStore(),
     archive: new ArchiveStore(),
@@ -94,7 +96,7 @@ function counterRule(id: string): DeterministicRulePort {
     id,
     runPass(draft) {
       const before = typeof draft.world.world["counter"] === "number" ? (draft.world.world["counter"] as number) : 0;
-      return draft.world.apply([{ path: "counter", op: "=", value: before + 1 }]);
+      return [draft.world.writeRaw("counter", before + 1)];
     },
   };
 }
@@ -119,7 +121,7 @@ describe("prepareNextCommand（固定点收敛）", () => {
       runPass(draft) {
         passes += 1;
         if (passes > 2) return []; // 第三轮起已达固定点
-        return draft.world.apply([{ path: "counter", op: "=", value: passes }]);
+        return [draft.world.writeRaw("counter", passes)];
       },
     };
     const h = makeDeps([rule]);
@@ -166,7 +168,7 @@ describe("prepareNextCommand（收敛保护：禁止无限循环）", () => {
       id: "oscillate",
       runPass(draft) {
         const cur = draft.world.world["flag"];
-        return draft.world.apply([{ path: "flag", op: "=", value: cur === 1 ? 2 : 1 }]);
+        return [draft.world.writeRaw("flag", cur === 1 ? 2 : 1)];
       },
     };
     const h = makeDeps([oscillate]);
@@ -188,7 +190,7 @@ describe("prepareNextCommand（收敛保护：禁止无限循环）", () => {
       runPass(draft) {
         const cur = typeof draft.world.world["counter"] === "number" ? (draft.world.world["counter"] as number) : 0;
         if (cur >= 3) return [];
-        return draft.world.apply([{ path: "counter", op: "=", value: cur + 1 }]);
+        return [draft.world.writeRaw("counter", cur + 1)];
       },
     };
     const h = makeDeps([rule], 3);

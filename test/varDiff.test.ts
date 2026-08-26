@@ -93,6 +93,16 @@ describe("diffStateTrees（状态树叶级 diff）", () => {
     ]);
   });
 
+  it("末端外壳 = 原子叶：与 varWrite 的末端级 VarChange 同粒度（不下钻 value/tags）", () => {
+    const oldTree = { A: { value: 0, tags: [] }, inv: { value: 12, group: 1 } };
+    const newTree = { A: { value: 50, tags: [] }, inv: { value: 13, group: 1 } };
+    assert.deepEqual(diffStateTrees(oldTree, newTree, "world"), [
+      { path: "world.A", before: { value: 0, tags: [] }, after: { value: 50, tags: [] } },
+      // initiative 等含外壳保留名之外键的普通记录仍下钻
+      { path: "world.inv.value", before: 12, after: 13 },
+    ]);
+  });
+
   it("纯函数：不改入参", () => {
     const oldTree = { a: { b: [1, 2] } };
     const newTree = { a: { b: [1, 3], c: true } };

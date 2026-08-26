@@ -29,8 +29,25 @@ describe("SpanSchema 仅供 GM durations", () => {
 
 describe("AdjudicationPackageSchema", () => {
   it("durations span 与 world delta 合法", () => {
-    const pkg = AdjudicationPackageSchema.parse({ events: [{ text: "@C0 下山", tags: ["known_by:C0"] }], narrativity: "full", deltas: [{ path: "weather", op: "=", value: "fog" }], durations: [{ cid: "C0", span: { min: 5 } }], location: [] });
+    const pkg = AdjudicationPackageSchema.parse({ events: [{ text: "@C0 下山", tags: ["known_by:C0"] }], narrativity: "full", deltas: [{ path: "world.weather", op: "=", value: "fog" }], durations: [{ cid: "C0", span: { min: 5 } }], location: [] });
     assert.equal(pkg.durations[0]!.span.min, 5);
+  });
+
+  it("StateDelta：path 必须双根（world. / characters.{cid}.），value 形状不限", () => {
+    for (const path of ["weather", "npcs.guard.hp", "world", "characters"]) {
+      assert.throws(
+        () => AdjudicationPackageSchema.parse({ events: [], narrativity: "skip", deltas: [{ path, op: "=", value: 1 }], durations: [], location: [] }),
+        /双根语法/,
+        path,
+      );
+    }
+    // value 放开（数组/对象等语义校验在写入层按模板判定）
+    const pkg = AdjudicationPackageSchema.parse({
+      events: [], narrativity: "skip",
+      deltas: [{ path: "characters.C1001.vars.attachtags", op: "=", value: ["aud"] }],
+      durations: [], location: [],
+    });
+    assert.equal(pkg.deltas.length, 1);
   });
 });
 

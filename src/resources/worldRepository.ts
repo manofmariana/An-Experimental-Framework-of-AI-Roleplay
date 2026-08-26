@@ -2,7 +2,8 @@
  * 世界设定集仓储。
  *
  * data/assets/{setId}/ 世界包：三文件（setting.md / tone-card.md / lorebook.json）、突发公式配置
- * （incident.json）、角色 manifest
+ * （incident.json）、变量体系文件（tags.json 注册表只读 + vars-template.json / vars-tags.json 可写，
+ * 缺文件读 → null 由路由层给缺省空结构）、角色 manifest
  * （player.json + characters/*.json）、包内提示词模板（prompts/{agent}.prompt.json，每包一份
  * 完整副本，无全局默认；三 activation + gm-incident 突发变体）的读写，以及世界设定集列表/目录解析（canonical 实现——config.ts 的
  * listWorldSets/resolveWorldDir 委托到此处，消除两份实现的漂移）。
@@ -97,6 +98,33 @@ export function validateLorebookPayload(raw: unknown): LoreEntry[] {
     seen.add(e.id);
   }
   return entries;
+}
+
+// ---------------------------------------------------------------------------
+// 变量体系文件（tags.json 注册表只读；vars-template.json / vars-tags.json 可写）
+// ---------------------------------------------------------------------------
+
+export const WORLD_VARS_FILES = {
+  "vars-template": "vars-template.json",
+  "vars-tags": "vars-tags.json",
+  tags: "tags.json",
+} as const;
+export type WorldVarsFileName = keyof typeof WORLD_VARS_FILES;
+
+export function isWorldVarsFileName(name: string): name is WorldVarsFileName {
+  return name in WORLD_VARS_FILES;
+}
+
+/** 读变量体系 JSON（缺文件 → null，路由层给缺省空结构；JSON 损坏 → 原生解析错误，HTTP 层 500）。 */
+export function readWorldVarsFile(worldDir: string, name: WorldVarsFileName): unknown | null {
+  const file = path.join(worldDir, WORLD_VARS_FILES[name]);
+  if (!fs.existsSync(file)) return null;
+  return JSON.parse(fs.readFileSync(file, "utf8")) as unknown;
+}
+
+/** 写变量体系 JSON（缺文件即创建；调用方已完成结构校验）。 */
+export function writeWorldVarsFile(worldDir: string, name: WorldVarsFileName, content: unknown): void {
+  fs.writeFileSync(path.join(worldDir, WORLD_VARS_FILES[name]), JSON.stringify(content, null, 2) + "\n", "utf8");
 }
 
 // ---------------------------------------------------------------------------

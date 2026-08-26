@@ -248,10 +248,10 @@ describe("突发事件管线", () => {
 
     // 编辑突发步：deltas 按编辑包重落库、timer 仍对齐时钟；target/roll 命中快照是投骰凭据不变
     session.editResult(
-      JSON.stringify({ text: "改后的突发文本", deltas: [{ path: "omen", op: "=", value: 3 }] }),
+      JSON.stringify({ text: "改后的突发文本", deltas: [{ path: "world.omen", op: "=", value: 3 }] }),
     );
     assert.equal(charState(session, "C1001").timer, 0, "编辑后 timer 仍对齐时钟");
-    assert.equal(worldVars(session).omen, 3, "编辑包 deltas 重落库");
+    assert.equal((worldVars(session)["omen"] as { value: unknown }).value, 3, "编辑包 deltas 重落库");
     const editedIncident = session.getPipelineCurrent()!.result as {
       incident: { text: string };
       roll: { D: number };

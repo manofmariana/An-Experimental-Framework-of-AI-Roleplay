@@ -382,6 +382,7 @@ export function renderPlay() {
       trackModal,
       mountModal: (overlay) => document.body.appendChild(overlay),
       notifyError: (text) => streamView.appendLine("line-error", text),
+      confirm: (msg) => window.confirm(msg),
     });
   btns.appendChild(editStateBtn);
   sideOut = el("pre", null, "（事件数据未到——等待服务端推送）");

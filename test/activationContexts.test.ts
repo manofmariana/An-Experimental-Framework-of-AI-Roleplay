@@ -12,7 +12,9 @@ import { SAVE_SCHEMA_VERSION } from "../src/truth/saveSchema.js";
 import type { TruthStores } from "../src/truth/stores.js";
 import { TimeStore, worldTimeToMinutes } from "../src/truth/timeStore.js";
 import { WorldStore } from "../src/truth/worldStore.js";
-import { buildManifest } from "./builders/index.js";
+import { buildManifest, buildVarsTemplate, buildWorldSysRaw } from "./builders/index.js";
+
+const DECL = buildVarsTemplate().characterVars;
 import { ScriptedChatPort } from "./fakes/chatPort.js";
 
 // ---------------------------------------------------------------------------
@@ -32,12 +34,14 @@ const FACTORY_PROMPTS_DIR = packPromptsDir(resolveWorldDir());
 /** 全内存六真相 Store（与 sessionFactory 新档装配同序：NPC manifests → ensurePlayer）。 */
 function makeTruth(options?: { visibleEvent?: string }): TruthStores {
   const start = worldTimeToMinutes(START);
-  const world = WorldStore.initial({ time: START });
+  const world = WorldStore.initial({ time: START }, buildWorldSysRaw());
   const characters = CharactersStore.fromManifests(
-    [buildManifest({ id: "C1001", name: "林雾", tags: ["旧闻"] })],
+    // 固有 TAG「旧闻」写在 vars.attachtags（角色根保留名末端，string_list 纯名集合；tags 池由 fromManifest 物化）
+    [buildManifest({ id: "C1001", name: "林雾", vars: { attachtags: ["旧闻"] } })],
     start,
+    DECL,
   );
-  characters.ensurePlayer(buildManifest({ id: "C0", name: "玩家", isPlayer: true }), start);
+  characters.ensurePlayer(buildManifest({ id: "C0", name: "玩家", isPlayer: true }), start, DECL);
   const events = new EventsStore();
   if (options?.visibleEvent !== undefined) {
     events.append({ id: "evt_0001", t: start, seq: 1, kind: "world", tags: ["known_by:C1001"], payload: options.visibleEvent });

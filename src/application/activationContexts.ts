@@ -189,7 +189,7 @@ export class ActivationContextBuilder {
       states: truth.characters.all(),
       cast: buildCast(truth),
       worldSnapshot: JSON.stringify(truth.world.world),
-      activatedLore: Lorebook.render(truth.loreStore.book().getByTags(state.tags)),
+      activatedLore: Lorebook.render(truth.loreStore.book().getByTags(truth.characters.tagNames(cid))),
       recentEvents: truth.events
         .readVisibleTo(cid, truth.world.clock)
         .map((event) => renderForReader(event.payload, cid, relations)),
@@ -260,7 +260,7 @@ export class ActivationContextBuilder {
         .map((event) => renderForGm(event.payload, cast)),
       cast,
       triggeredLore: Lorebook.render(
-        truth.loreStore.book().getByTags(participantTags(input.participantCids.map((cid) => truth.characters.get(cid)))),
+        truth.loreStore.book().getByTags(participantTags(input.participantCids.map((cid) => truth.characters.tagNames(cid)))),
       ),
       lastProse: lastProse(truth.archive.readAll()),
       gmEvent: JSON.stringify({ events: input.adjudication.events, narrativity: input.adjudication.narrativity }),

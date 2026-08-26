@@ -86,7 +86,7 @@ ST 的本质是**单上下文、单人格、全知视角的文本拼接器**：
               "tags": ["known_by:C1002", "known_by:C1003"],
               "location": "灯塔顶层"}],
   "narrativity": "full",
-  "deltas": [{"path": "vars.chars.C1003.hp", "op": "-=", "value": 17}],
+  "deltas": [{"path": "world.region.harbor.fog", "op": "=", "value": true}],
   "durations": [{"cid": "C1002", "span": {"min": 30}}],
   "location": [{"cid": "C1003", "location": "灯塔顶层"}]
 }
@@ -110,7 +110,20 @@ ST 的本质是**单上下文、单人格、全知视角的文本拼接器**：
 ### 3.4 变量体系
 
 - **变量应用 = 确定性代码**：GM 输出的 deltas 直接落库，零 LLM、可审计、可回滚——全部变量变更带 `{path, before, after}` 记录。
+- **变量树存储**：全部变量存为变量树（容器/末端两类节点，末端 = `{value, tags, formula?}` 外壳；树内身份由变量模板声明）。`world.json` 的 world 分支 = `{time, _sys, ...世界变量树}`——`_sys` 是程序分支（模板校验豁免）：档内 TAG 注册表/变量模板/TAG 附加文件三副本 + 程序计数键（cycles_since_gm/gm_trigger 等）；角色 `vars` 同理为变量树；角色顶层字段（name 等与五调度字段 acted/group/channel/timer/isPlayer）物理布局不变（调度器继续消费类型化字段、白名单专用通道），经**系统声明分支投影**呈现为同一棵树的标准末端——系统声明子树为代码持有常量（不进世界包模板文件），模板解析时并入 character 根（与世界作者声明同名 = 拒装），投影值从类型化字段读出（timer/channel null 原样、initiative null = 容器无实例）；所有末端（含系统字段）可挂内容侧 tags，系统末端的外壳 tags 存 CharacterState 的 `systemTags` 侧车（只经直编修改，装配/直编时校验 level 1-7 + 注册名集合；GM deltas 拒写系统分支）。
+- **双根 deltas 写入**：deltas 的 path 必须 `world.…` 或 `characters.{cid}.…` 开头（角色域只可写 vars 作者子树——vars 下首段命中系统声明分支键即拒，系统字段走白名单专用通道），统一经 varWrite 编排：模板可解析校验（无声明拒绝该条）、valueType/注册名校验（attachtags 纯名集合与 tag_list 挂载表各走各的写值校验）、从动末端拒写（带 formula，由程序维护）。
+- **变量模板与 TAG 附加**：变量模板（世界包 `vars-template.json`，档内副本 `_sys.varsTemplate`）= `{world, character, types}` 三棵声明树——容器（`{children}` / `{type}` 类型引用；子键 = 人类可读名称，无数组节点，禁保留子键 value/tags/formula）/ 末端（`{valueType, formula?}` 或 valueType 字符串简写；valueType = number/string/boolean/string_list/tag_list）；结构编辑与实例写值解耦（只加声明不写值合法；无声明有实例 = 校验拒绝）；character 声明树全体角色共享，根保留名 `attachtags`（固有 TAG 末端 = string_list 纯名集合，GM 挂 TAG 的直写点）+ `tags`（union_attach 从动池 = string_list）。TAG 附加文件（世界包 `vars-tags.json`，档内副本 `_sys.varsTags`）与模板同构：节点级条目向下级联到全部后代末端（根节点自身也可挂条目 = 级联到该根全部末端）、末端级条目只挂该末端，按模板末端位置解析映射实例路径，cid 类条目按实例属主分发（character 根挂 {category:"cid"} = 每角色全部末端挂自身 CID）；附加 TAG 读取期与实例 tags 合并、不物化进实例值（消费在提示词组装层）；状态编辑器把合并结果以只读「附加」chips 并入各末端 chips 区显示（前端镜像 resolveAttachTags：级联/单挂/cid 按当前 scope 角色分发，world 域无属主遇 cid 条目跳过；只作显示，绝不写进实例值/保存载荷/侧车）。
+- **从动级联**：任一变量根（world 域或某角色）写落后，按该根依赖图拓扑序整根全量重算全部从动末端（expr 数值公式 + `union_attach` 内置算子；从动集合小，不做细粒度失效分析），值变则写回并把该末端的 VarChange 追加到同段 changes（回溯/重放天然覆盖）。计划 = 模板声明 formula ∪ 实例携带 formula（实例覆盖同路径模板声明）；类型容器在计划中按 `*` 通配段展开、重算时对实例根做实例名枚举；expr 依赖末端无实例（取不到值）时该末端跳过重算（保持现值）。依赖成环 = 拒装/拒写（装配/续档/直编共用 `_sys` 严格解析出口，成环闸随解析做一次）。直编替换后两域全量级联——被直编的从动值回归计算值，级联结果并入同一次 commit。程序消费角色 TAG 集只读 `vars.tags` 池（string[] 纯名集合；union_attach 从动末端，走同一级联，无特判路径）。
 - 角色自有数据（relations/长期记忆）由角色决策包驱动，经同一确定性通道落账。
+
+### 3.5 TAG 系统（选择层）
+
+- **TAG = 内容可见性的判定通货**：内容侧挂载 `{name, level}`（level ∈ 1-7；同级 = 或、跨级 = 与），判定式 T =（一级组 ∨）∧ … ∧（七级组 ∨），空组无约束，无 TAG = 恒通过（adr/0007）。对象侧 = 纯名称集合，无等级。
+- **注册表**：世界包 `tags.json`，档内副本 `_sys.tagRegistry`；名称即键，条目 `{name, description?, condition?, category?, system?}`；category = 封闭枚举 {cid, channel, location}（有类别按类别登记，实例合法性程序判定、实例值不登记）；system 条目 = 程序化只读参考，加载校验与代码常量（aud/vis/A/V/全知/强制全知 + cid/channel/location 三类别同名条目）双向一致——三个开放类别各有一条同名 system 类别条目（system + category 同现），缺一条即拒装；非 system 条目 = 求值真实数据源。
+- **写值校验类别化**：三条 TAG 写通道（末端外壳 tags / attachtags 纯名集合 / 系统末端 tags 侧车；GM deltas 与直编同口径）名称合法 = 注册表条目名 ∪（cid 类别已声明 ∧ 名 ∈ 现存角色 CID 集合，实例集由调用方注入）∪（channel/location 已声明即放行——实例集运行期派生，不做写时校验）；CID 形态名（C+数字）按 cid 类别判定，未知 CID 拒绝（防手误）。
+- **求值契约**（`evaluateTagFilter`，纯逻辑零 IO）：逐末端返回 `{status: pass/fail, content, matched}`——matched = 双侧共同持有记号集（扁平交集去重，含虚拟挂载；cid/channel/location 命中归一化为类别记号）。对象有效 TAG 集（角色 = `vars.tags` 池 name 集 ∪ 程序派生）由调用方注入；**全知 = 全知权重**（角色系统字段 `omniscience`，0-6，唯一语义来源——权重 N 虚拟覆盖 ≤N 级非空组）+ **强制全知**（只覆盖七级组、仅 GM 持有；GM/正文 = 权重 6 + 持强制全知）；全知打破 = 内容挂 N+1 级 TAG。condition（注册表可选比对内容）经注入 varReader 按读者变量树求真，fail-closed，被虚拟挂载覆盖的组跳过求值。
+- **GM 挂 TAG = 普通变量写**：deltas 直写 `characters.{cid}.vars.attachtags`（string_list 纯名数组全量替换；注册表名称校验，非法拒绝该条）；tags 池由 union_attach 级联自动维护（§3.4）。
+- lore/事件的扁平字符串 tags（known_by 体系）仍是感知过滤现状；注入侧 TAG 过滤接入见 ROADMAP P2-3。
 
 ---
 
@@ -213,8 +226,8 @@ ST 的本质是**单上下文、单人格、全知视角的文本拼接器**：
 
 ### 5.2 变量库
 
-- `world.json`：`{schema_version, world:{time:{y,m,d,h,min}, 周期计数 X, ...世界变量}, pipeline:{seq, working_set, current}}`。clock 由 world.time 派生不落盘；pipeline 永不进入 agent 的 world 快照。
-- `characters.json`：`{schema_version, characters:{cid: CharacterState}}` 单文件，C0 与 NPC 同构——name/gender/age/personality/tags/reaction/location/timer/group/initiative/level/isPlayer/relations/long_term_memory/vars。角色只注入自己的完整快照，GM 注入全部角色快照。
+- `world.json`：`{schema_version, world:{time:{y,m,d,h,min}, _sys:{tagRegistry, varsTemplate, varsTags, cycles_since_gm, gm_trigger, gm_trigger_batch}, ...世界变量树}, pipeline:{seq, working_set, current}}`。clock 由 world.time 派生不落盘；pipeline 永不进入 agent 的 world 快照；`_sys` = 程序分支（档内注册表/模板/附加文件三副本 + 程序计数键，模板校验豁免，deltas 拒写）。
+- `characters.json`：`{schema_version, characters:{cid: CharacterState}}` 单文件，C0 与 NPC 同构——name/gender/age/personality/reaction/location/timer/group/initiative/level/omniscience/isPlayer/relations/long_term_memory/vars（vars = 变量树：末端 `{value, tags, formula?}` 外壳；角色根保留名 attachtags = 固有 TAG 末端、tags = union_attach 从动池）。角色只注入自己的完整快照，GM 注入全部角色快照。
 
 ### 5.3 存档（Generation 布局，统一 schema_version）
 
@@ -230,7 +243,7 @@ ST 的本质是**单上下文、单人格、全知视角的文本拼接器**：
 - **回溯**：`rollbackTo(targetSeq)` = 回到第 targetSeq 步刚完成的位置——倒序反向执行变量变更（before 写回）；archive 截断、events 按 seq 截断、lore 按 changelog 反向回滚；回滚后变量与目标步结束时逐字节一致。回溯丢弃不留底。
 - **编辑** = 该步的一次新输出：setup 段保留、`changes.effects` 整段反向后经**同一效果规划器**（`src/application/`）重放（relations/邀请应答/标记/GM 效应无手工复制）；GM 步编辑 = 旧效应整体反向 + 事件按 seq 截断后按编辑包重新提交；正文步只改记录（participants/scenes 原样保留）。interrupted 步（停止后）拒绝继续，必须回溯或编辑。
 - **重 roll** = Coordinator 的 `rollback_and_continue` 复合命令（同一队列任务内 rollback→continue，不可插队），只有最新一轮可用。
-- **状态直编**（Web 状态栏）：world/characters/events 三域校验后整体替换（任一失败整体还原），LLM 在途拒绝；变量域经 varDiff 净额并入当前步 changes.effects（archive 记跨步净变更，手动编辑不是独立变更记录），事件域按 seq 截断口径；提交前跑一次组派生（rederiveGroups，幂等保稳，组未变则零变更）——直编对齐 timer/location 立即反映到编组；派生现算无缓存，编辑即时生效。
+- **状态直编**（Web 状态栏）：world/characters/events 三域校验后整体替换（任一失败整体还原），LLM 在途拒绝；变量域经 varDiff 净额并入当前步 changes.effects（archive 记跨步净变更，手动编辑不是独立变更记录），事件域按 seq 截断口径；提交前跑一次组派生（rederiveGroups，幂等保稳，组未变则零变更）——直编对齐 timer/location 立即反映到编组；派生现算无缓存，编辑即时生效。直编 modal =「变量 / 事件」两标签页（一次只显示一个）：变量页 = 树状**状态编辑器**（世界/角色切换；`_sys` 不显示；系统只读 = {acted, group, channel, timer, isPlayer} 五字段，其余角色顶层字段按内置声明表可编辑——omniscience 前端钳制 0-6、initiative 为 null 时两值齐全整体写回、relations 条目增删、long_term_memory 行编辑；状态操作 = 末端写值 / 外壳 tags 与 tag_list chip 编辑（条目名称取自档内注册表）/ 类型容器实例增删（只动实例不动模板）；从动末端值只读、formula 只读标注；保存载荷不含模板修改——`_sys.varsTemplate` 原样随 world 副本上送；直编后两域全量级联，从动值回归计算值），事件页 = raw JSON。modal UX：整树重渲保持滚动容器 scrollTop 不跳顶；保存成功不关窗（行内「已保存」短提示 + baseRevision 用保存后新 revision 推进，失败 400/409 行为不变）；取消/点遮罩在有未保存修改时先 confirm 确认。**变量结构编辑归世界页，双模式**：打开时探 GET /api/session/state/sys——有活跃会话 = **档内模式**（数据源 = 会话 `world._sys` 的 varsTemplate/varsTags/tagRegistry + baseRevision；保存 = PUT /api/session/state 带 `sys: {varsTemplate, varsTags}` + baseRevision 乐观闸，服务端取当前 world 替换 `_sys` 对应键后走同一直编通道——`_sys` 严格解析 + normalize + 从动级联沿用，结构不合法 400 零落盘，409 提示重取；保存后立即生效，TAG 附加注册表数据源 = 档内 `_sys.tagRegistry`），无活跃会话（404 NO_ACTIVE_SESSION）= **包基线模式**（vars-template.json / vars-tags.json，PUT 经 parseVarsTemplate / parseVarsTags 对拍校验、失败 400 零落盘、markStale 新会话生效；缺文件 GET 回缺省空结构、PUT 创建；注册表 = 包 tags.json）；模式指示行常显，编辑器本体两模式复用。编辑器本体：变量模板子区 = 声明树结构编辑（扁平末端五 valueType/结构体/多实例容器新增、声明删除、类型新建/逐字段定义/删除（被 {type} 引用类型拒删）、末端 formula 声明编辑/清空（expr + binds / union_attach paths），character 域 = 全体角色共享模板、根保留名 attachtags/tags 保护、**character 根显示并入系统声明分支**（系统节点带徽记、全部结构操作禁用——只是显示注入，绝不写回保存载荷；与系统键同名的新增拒绝；formula 校验按并入后根解析，作者公式可绑系统 number 末端）），TAG 附加子区 = 声明树节点挂附加条目（{name/category, level}，名称下拉自当前模式注册表；character 根投影同样并入系统声明分支，系统节点可挂附加条目——与服务端 parseVarsTags 按并入后根校验口径一致；类型容器整型 {tags, type} 挂载，实例名形态不在编辑器管理面）。
 
 ### 5.5 认知层
 
@@ -298,7 +311,7 @@ ST 的本质是**单上下文、单人格、全知视角的文本拼接器**：
 
 ## 8. Lorebook 治理
 
-- **触发制**：GM 不为正文激活/禁知条目；正文 lore = 在场角色固定标签激活条目的并集（去重、按 ID 排序）；秘密条目访问控制 = 标签（如 `灯塔：秘密` 只随持该标签的角色进正文）。GM 自身注入 lore 全文（id+tags+content，按 ID 排序）作自用参考。
+- **触发制**：GM 不为正文激活/禁知条目；正文 lore = 在场角色 tags 池（有效 TAG 名集）激活条目的并集（去重、按 ID 排序）；秘密条目访问控制 = 标签（如 `灯塔：秘密` 只随持该标签的角色进正文）。GM 自身注入 lore 全文（id+tags+content，按 ID 排序）作自用参考。
 - **档内副本**：新会话把世界 lorebook 拷入存档 `lore.json`，运行期增删改只动副本，不污染 `data/assets/` 原始世界包；changelog 逐条记录严格可逆变更（回溯按 changelog 反向回滚）。
 - 角色固定携带标签（出身/职业等），**GM 可在游戏中授予/摘除标签**（转职、获得知识、状态变化），属于 GM 转写职责的一部分。
 

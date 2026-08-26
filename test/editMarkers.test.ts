@@ -17,7 +17,7 @@ const llm = h.llm;
 llm.defaultDecision = (_agent, seq) => ({ action: `行动#${seq}`, inner: `内心#${seq}`, dialogue: `台词#${seq}` });
 const callsText = h.callsText.bind(h);
 const charState = h.charState.bind(h);
-const worldVars = h.worldVars.bind(h);
+const worldSys = h.worldSys.bind(h);
 
 function makeSession(
   tag: string,
@@ -68,20 +68,20 @@ describe("编辑执行标记（editResult 重放 applyMarkers，与普通路径�
 
     await session.continuePipeline(); // seq1 C1001（无标记）→ 停等玩家
     assert.equal(charState(session, "C1001").channel, null);
-    assert.notEqual(worldVars(session)["gm_trigger"], true);
+    assert.notEqual(worldSys(session)["gm_trigger"], true);
 
     session.editResult(
       JSON.stringify(decision({ dialogue: "打个电话", markers: [{ type: "contact", channel: "电话", targets: ["C1002"] }] })),
     );
     const ch1 = charState(session, "C1001").channel;
     assert.ok(ch1 !== null && ch1 === charState(session, "C1002").channel, "邀请双方同频道");
-    assert.equal(worldVars(session)["gm_trigger"], true, "contact 触发 GM 立即激活");
+    assert.equal(worldSys(session)["gm_trigger"], true, "contact 触发 GM 立即激活");
 
     session.editResult(JSON.stringify(decision({ dialogue: "算了" })));
     assert.equal(charState(session, "C1001").channel, null);
     assert.equal(charState(session, "C1002").channel, null);
     // 旧 contact 效应被反向：gm_trigger 还原到编辑前状态（首次立标前该键不存在 → 反向后删键）
-    assert.notEqual(worldVars(session)["gm_trigger"], true, "旧 contact 效应被反向");
+    assert.notEqual(worldSys(session)["gm_trigger"], true, "旧 contact 效应被反向");
   });
 
   it("编辑插入 recall → 拉回未结算离开者（timer 归 clock、归组、先攻复用不补投）", async () => {
@@ -171,7 +171,7 @@ describe("工作集跨周期注入（#当前场景：GM 清算前的全体言行
     // 玩家行动（seq2）→ 周期 1 完成 X=1（<2 无 GM）→ 周期 2：seq3 C1001 → 停等
     await session.handlePlayerInput("玩家一周期");
     assert.equal(session.turnCount, 3);
-    assert.equal(worldVars(session)["cycles_since_gm"], 1);
+    assert.equal(worldSys(session)["cycles_since_gm"], 1);
 
     // 跨周期注入：C1001 第二周期决策时能看到①自己上一周期言行②他人（玩家）上一周期言行
     const scene2 = callsText("character:C1001", 3);
@@ -181,7 +181,7 @@ describe("工作集跨周期注入（#当前场景：GM 清算前的全体言行
     // 玩家行动（seq4）→ 周期 2 完成 X=2 达阈值 → 周期末 GM（seq5）→ 清算工作集 → seq6 C1001
     await session.handlePlayerInput("玩家二周期");
     assert.equal(session.turnCount, 6);
-    assert.equal(worldVars(session)["cycles_since_gm"], 0, "GM 激活后 X 清零");
+    assert.equal(worldSys(session)["cycles_since_gm"], 0, "GM 激活后 X 清零");
     const scene3 = callsText("character:C1001", 6);
     assert.ok(!scene3.includes("甲一周期台词"), "GM 清算后注入不含旧周期言行");
     assert.ok(!scene3.includes("玩家一周期"), "GM 清算后注入不含旧周期玩家言行");

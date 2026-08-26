@@ -22,7 +22,7 @@ const setupWorld = h.setupWorld.bind(h);
 const callsText = h.callsText.bind(h);
 const readRun = h.runFile.bind(h);
 const charState = h.charState.bind(h);
-const worldVars = h.worldVars.bind(h);
+const worldSys = h.worldSys.bind(h);
 
 /** StepChanges 扁平视图（断言用：先 setup 后 effects，与存档 v6 扁平 var_changes 同序）。 */
 function flat(step: {
@@ -79,7 +79,7 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
     await session.handlePlayerInput("玩家行动一");
     assert.equal(session.pipelineInfo.phase, "await_player");
     assert.equal(session.turnCount, 3);
-    assert.equal(worldVars(session)["cycles_since_gm"], 1);
+    assert.equal(worldSys(session)["cycles_since_gm"], 1);
     assert.equal(calls.filter((c) => c.agent === "gm").length, 0, "无判定轮：周期内 GM 不激活");
     assert.equal(charState(session, "C1001").acted, true, "第二周期 C1001 已行动");
     assert.equal(charState(session, "C0").acted, false, "第二周期玩家未行动");
@@ -95,8 +95,8 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
     );
 
     // GM 激活后 X 清零、触发复位、结算成员 acted 清零
-    assert.equal(worldVars(session)["cycles_since_gm"], 0);
-    assert.equal(worldVars(session)["gm_trigger"], false);
+    assert.equal(worldSys(session)["cycles_since_gm"], 0);
+    assert.equal(worldSys(session)["gm_trigger"], false);
     assert.equal(charState(session, "C0").acted, false);
     assert.equal(charState(session, "C1001").acted, true, "seq7 已再次行动");
 
@@ -154,8 +154,8 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
       ["1:character:C1001", "2:gm", "3:character:C1001"],
     );
     // 中途 GM：X 清零、触发复位；双方 timer 都被推进（未行动成员不滞留原值）
-    assert.equal(worldVars(session)["gm_trigger"], false);
-    assert.equal(worldVars(session)["cycles_since_gm"], 0);
+    assert.equal(worldSys(session)["gm_trigger"], false);
+    assert.equal(worldSys(session)["cycles_since_gm"], 0);
     assert.equal(charState(session, "C1001").timer, 5);
     assert.equal(charState(session, "C0").timer, 5, "在场组未行动成员一并被 GM 推进（组不撕裂）");
     // 结算成员转后台 acted 清零（GM 步 changes 留痕）；C1001 在 seq3 重新行动
@@ -203,7 +203,7 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
     );
     // 玩家步 changes 含触发落账（结构化输入的标记程序即时执行）
     const seq1 = session.getArchive()[0]!;
-    assert.ok(flat(seq1).some((c) => c.path === "world.gm_trigger" && c.after === true));
+    assert.ok(flat(seq1).some((c) => c.path === "world._sys.gm_trigger" && c.after === true));
     // 同值批注入隔离：C1001 的 #当前场景 不含玩家言行；GM 见全部
     assert.ok(!callsText("character:C1001", 2).includes("秘密输入X"), "同值批互不可见");
     assert.ok(callsText("gm", 3).includes("秘密输入X"));
@@ -265,7 +265,7 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
     assert.equal(player.group, 0);
     assert.equal(player.timer, null);
     assert.equal(player.channel, null);
-    assert.notEqual(worldVars(session)["gm_trigger"], true, "玩家离开不置 GM 触发");
+    assert.notEqual(worldSys(session)["gm_trigger"], true, "玩家离开不置 GM 触发");
     assert.equal(calls.filter((c) => c.agent === "gm").length, 0, "玩家离开不触发 GM");
     // 全员无计时器（玩家离场置 null、甲本就没有）→ 死锁防御停等玩家，不空转
     assert.equal(session.pipelineInfo.phase, "await_player");
@@ -329,7 +329,7 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
       ["1:character:C1001", "2:player", "3:gm"],
     );
     assert.equal(calls.filter((c) => c.agent === "gm").length, 1);
-    assert.equal(worldVars(session)["cycles_since_gm"], 0);
+    assert.equal(worldSys(session)["cycles_since_gm"], 0);
     assert.equal(charState(session, "C1001").timer, 5, "离开者由 GM durations 覆盖结算");
     assert.equal(charState(session, "C0").timer, 5);
   });
@@ -357,7 +357,7 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
     await session.continuePipeline();
     await session.handlePlayerInput("玩家一周期");
     assert.equal(session.turnCount, 3);
-    assert.equal(worldVars(session)["cycles_since_gm"], 1);
+    assert.equal(worldSys(session)["cycles_since_gm"], 1);
     assert.equal(charState(session, "C1001").acted, true);
 
     // 玩家立 leave（seq4）：幸存者 C1001 acted 重置 + X 归 0（本步 effects 留痕）
@@ -372,7 +372,7 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
       "幸存者本周期已行动也重置 acted",
     );
     assert.ok(
-      flat(seq4).some((c) => c.path === "world.cycles_since_gm" && c.before === 1 && c.after === 0),
+      flat(seq4).some((c) => c.path === "world._sys.cycles_since_gm" && c.before === 1 && c.after === 0),
       "减员至单人时 X 归 0",
     );
     assert.deepEqual(
@@ -380,7 +380,7 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
       ["1:character:C1001", "2:player", "3:character:C1001", "4:player", "5:character:C1001", "6:gm"],
       "幸存者一次单人行动后才 GM（双人期累积的 X 不得立即满足周期完成判定）",
     );
-    assert.equal(worldVars(session)["cycles_since_gm"], 0);
+    assert.equal(worldSys(session)["cycles_since_gm"], 0);
     assert.equal(charState(session, "C0").timer, 5, "离开者由 GM durations 覆盖结算");
   });
 

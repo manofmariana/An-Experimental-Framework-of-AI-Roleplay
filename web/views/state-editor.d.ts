@@ -18,6 +18,8 @@ export interface StateEditorDeps {
   trackModal: (overlay: any) => () => void;
   mountModal: (overlay: any) => void;
   notifyError: (text: string) => void;
+  /** 取消确认（有未保存修改时；返回值 = 用户是否确认放弃） */
+  confirm: (msg: string) => boolean;
 }
 
 export function openStateEditor(deps: StateEditorDeps): void;

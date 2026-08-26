@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import type { GameSession } from "../src/application/gameSession.js";
 import { GenerationRepository } from "../src/truth/generationRepository.js";
+import { projectCharacterTree, type CharacterProjectionInput } from "../src/vars/systemChar.js";
 import { buildAdjudication as gmPkg } from "./builders/index.js";
 import { SessionHarness } from "./harness/session.js";
 
@@ -73,13 +74,14 @@ describe("applyDirectEdit（状态栏直接编辑）", () => {
       world: Record<string, unknown>;
       characters: Record<string, { name: string; timer: number }>;
     };
-    assert.equal(after.world["hp"], 42);
+    // 直编世界变量经模板 normalize 落为末端外壳 {value, tags}
+    assert.equal((after.world["hp"] as { value: unknown }).value, 42);
     assert.equal(after.characters["C1001"]!.name, "新名字");
     assert.equal(after.characters["C1001"]!.timer, 12345);
 
     // 持久化：从磁盘 loadCurrent 读回（存档 v6：唯一读盘口径）
     const loaded = new GenerationRepository(dir).loadCurrent();
-    assert.equal(loaded.save.world["hp"], 42);
+    assert.equal((loaded.save.world["hp"] as { value: unknown }).value, 42);
     assert.equal(loaded.save.characters["C1001"]!.name, "新名字");
     assert.equal(loaded.save.characters["C1001"]!.timer, 12345);
   });
@@ -159,6 +161,66 @@ describe("applyDirectEdit（状态栏直接编辑）", () => {
     assert.throws(() => session.applyDirectEdit({ world }), /运行中/);
     session.setBusy(false);
     session.applyDirectEdit({ world }); // 不再抛错
+  });
+
+  it("直编写系统末端 tags 侧车：写后投影可读、注册名/分支校验、回溯还原", async () => {
+    const { session } = makeSession("system-tags", { pause: { ...NO_PAUSE, afterGm: true } });
+    await session.continuePipeline(); // seq1 C1001 → 停等玩家
+    await session.handlePlayerInput("玩家行动"); // seq2 玩家 → seq3 GM → GM 后停
+
+    // 写侧车：name 挂 aud（harness 注册表 system 条目之一）
+    const edit = stateClone(session);
+    (edit.characters["C1001"] as { systemTags: Record<string, unknown> }).systemTags = {
+      name: [{ name: "aud", level: 2 }],
+    };
+    session.applyDirectEdit({ characters: edit.characters });
+    // 写后投影可读：系统末端外壳 tags 来自侧车
+    const projected = projectCharacterTree(
+      (session.getState() as unknown as { characters: Record<string, CharacterProjectionInput> }).characters["C1001"]!,
+    ) as Record<string, { value: unknown; tags: unknown }>;
+    assert.deepEqual(projected["name"]!.tags, [{ name: "aud", level: 2 }]);
+
+    // 校验：未知 CID（CID 形态名按 cid 类别判定）/ 系统分支外路径 拒绝（不落盘）
+    const badName = stateClone(session);
+    (badName.characters["C1001"] as { systemTags: unknown }).systemTags = { name: [{ name: "C9999", level: 1 }] };
+    assert.throws(() => session.applyDirectEdit({ characters: badName.characters }), /未注册 TAG 名 "C9999"/);
+    const badPath = stateClone(session);
+    (badPath.characters["C1001"] as { systemTags: unknown }).systemTags = { hp: [] };
+    assert.throws(() => session.applyDirectEdit({ characters: badPath.characters }), /不在系统分支内/);
+
+    // 回溯还原：侧车随 seq3 的 effects 段一并反转
+    session.rollbackTo(2);
+    const restored = (session.getState() as unknown as { characters: Record<string, CharacterProjectionInput> })
+      .characters["C1001"]!;
+    assert.deepEqual(restored.systemTags, {});
+  });
+
+  it("cid 类别判定同口径：直编写系统末端 tags 与 vars 外壳 tags 现存 CID 成功、未知 CID 拒绝", () => {
+    const { session } = makeSession("cid-tags");
+    // 系统末端侧车 + vars 末端外壳同挂现存角色 CID（cid 类别已声明 ∧ 实例存在）
+    const edit = stateClone(session);
+    const c1001 = edit.characters["C1001"] as {
+      systemTags: Record<string, unknown>;
+      vars: Record<string, unknown>;
+    };
+    c1001.systemTags = { name: [{ name: "C1001", level: 1 }] };
+    c1001.vars = { attachtags: { value: [], tags: [{ name: "C0", level: 3 }] } };
+    session.applyDirectEdit({ characters: edit.characters });
+    const after = session.getState() as unknown as {
+      characters: Record<string, { systemTags: unknown; vars: Record<string, { tags: unknown }> }>;
+    };
+    assert.deepEqual(after.characters["C1001"]!.systemTags, { name: [{ name: "C1001", level: 1 }] });
+    assert.deepEqual(after.characters["C1001"]!.vars["attachtags"]!.tags, [{ name: "C0", level: 3 }]);
+
+    // 未知 CID：侧车与 vars 外壳 tags 同口径拒绝（防手误，不落盘）
+    const badSidecar = stateClone(session);
+    (badSidecar.characters["C1001"] as { systemTags: unknown }).systemTags = { name: [{ name: "C9999", level: 1 }] };
+    assert.throws(() => session.applyDirectEdit({ characters: badSidecar.characters }), /未注册 TAG 名 "C9999"/);
+    const badShell = stateClone(session);
+    (badShell.characters["C1001"] as { vars: Record<string, unknown> }).vars = {
+      attachtags: { value: [], tags: [{ name: "C9999", level: 1 }] },
+    };
+    assert.throws(() => session.applyDirectEdit({ characters: badShell.characters }), /未注册 TAG 名 "C9999"/);
   });
 
   it("phase 由 deriveNext 重推落盘（timer 编辑直接影响调度派生）", () => {
@@ -304,7 +366,7 @@ describe("直编差异并入当前步 changes.effects（净额合并，回溯随
   it("用户例子逐步复现：步内 0→100 后直编 50 → 归档净记录 0→50；回溯到该步 = 50、到上一步 = 0", async () => {
     const { session } = makeSession("net", {
       pause: { ...NO_PAUSE, afterGm: true },
-      gm: gmFull([{ path: "A", op: "=", value: 100 }]),
+      gm: gmFull([{ path: "world.A", op: "=", value: 100 }]),
     });
     // SEQ=0 基线：首步之前（current=null）直编 A=0 —— 不并入，编辑即初始基线
     const base = stateClone(session);
@@ -325,7 +387,7 @@ describe("直编差异并入当前步 changes.effects（净额合并，回溯随
     assert.equal(current?.seq, 3);
     const liveRecords = recordsOf(current, "world.A");
     assert.equal(liveRecords.length, 1, "world.A 只有一条净记录");
-    assert.deepEqual(liveRecords[0], { path: "world.A", before: 0, after: 50 });
+    assert.deepEqual(liveRecords[0], { path: "world.A", before: { value: 0, tags: [] }, after: { value: 50, tags: [] } });
 
     // 驱动下一步启动 → seq3 归档：归档条目同样是净记录 0→50
     await session.continuePipeline(); // seq4 正文（归档 seq3）→ seq5 C1001 → 停等玩家
@@ -333,13 +395,13 @@ describe("直编差异并入当前步 changes.effects（净额合并，回溯随
     assert.ok(archived, "seq3 已归档");
     const archivedRecords = recordsOf(archived, "world.A");
     assert.equal(archivedRecords.length, 1, "归档 world.A 只有一条净记录");
-    assert.deepEqual(archivedRecords[0], { path: "world.A", before: 0, after: 50 });
+    assert.deepEqual(archivedRecords[0], { path: "world.A", before: { value: 0, tags: [] }, after: { value: 50, tags: [] } });
 
     // 回溯到第 3 步结束 → A=50（含手动编辑）；回溯到第 2 步结束 → A=0
     session.rollbackTo(3);
-    assert.equal((session.getState().world as Record<string, unknown>)["A"], 50);
+    assert.equal(((session.getState().world as Record<string, unknown>)["A"] as { value: unknown }).value, 50);
     session.rollbackTo(2);
-    assert.equal((session.getState().world as Record<string, unknown>)["A"], 0);
+    assert.equal(((session.getState().world as Record<string, unknown>)["A"] as { value: unknown }).value, 0);
   });
 
   it("直编新增路径：并入条目 before_exists=false 且落在末尾；回滚后路径删除并 prune", async () => {
@@ -358,7 +420,7 @@ describe("直编差异并入当前步 changes.effects（净额合并，回溯随
     assert.deepEqual(rec[0], {
       path: "world.region",
       before: null,
-      after: { harbor: { fog: true } },
+      after: { harbor: { fog: { value: true, tags: [] } } },
       before_exists: false,
     });
     assert.equal(changes[changes.length - 1], rec[0], "新增记录尾部追加（effects 段）");
@@ -385,11 +447,11 @@ describe("直编差异并入当前步 changes.effects（净额合并，回溯随
     const changes = current?.changes?.effects ?? [];
     const rec = recordsOf(current, "world.A");
     assert.equal(rec.length, 1);
-    assert.deepEqual(rec[0], { path: "world.A", before: 0, after: null, after_exists: false });
+    assert.deepEqual(rec[0], { path: "world.A", before: { value: 0, tags: [] }, after: null, after_exists: false });
     assert.equal(changes[changes.length - 1], rec[0], "删除记录尾部追加（effects 段）");
 
     session.rollbackTo(1);
-    assert.equal((session.getState().world as Record<string, unknown>)["A"], 0, "回滚后恢复原值");
+    assert.equal(((session.getState().world as Record<string, unknown>)["A"] as { value: unknown }).value, 0, "回滚后恢复原值");
   });
 
   it("分段安全：setup 段不受影响；effects 段已有条目不删不动，同路径只改写末条 after + 尾部追加", async () => {
@@ -425,7 +487,7 @@ describe("直编差异并入当前步 changes.effects（净额合并，回溯随
     assert.deepEqual(afterEffects[afterEffects.length - 1], {
       path: "world.fresh",
       before: null,
-      after: 1,
+      after: { value: 1, tags: [] },
       before_exists: false,
     });
     // v7：数组下标定位（effects_from/markers_from）已删除，分段安全由 setup/effects 结构本身保证
@@ -439,6 +501,39 @@ describe("直编差异并入当前步 changes.effects（净额合并，回溯随
     world["hp"] = 1;
     session.applyDirectEdit({ world });
     assert.equal(session.getPipelineCurrent(), null, "不建步不并入");
-    assert.equal((session.getState().world as Record<string, unknown>)["hp"], 1);
+    assert.equal(((session.getState().world as Record<string, unknown>)["hp"] as { value: unknown }).value, 1);
+  });
+});
+
+describe("档内结构编辑（`_sys.varsTemplate` 替换 = 运行期扩充模板）", () => {
+  it("world 携带新 _sys：_sys 已替换、树按新模板 normalize、从动级联按新模板跑", () => {
+    const { session } = makeSession("sys-swap");
+    const { world } = stateClone(session);
+    const sys = world["_sys"] as Record<string, unknown>;
+    const tpl = JSON.parse(JSON.stringify(sys["varsTemplate"])) as { world: { children: Record<string, unknown> } };
+    tpl.world.children["mana"] = "number"; // 运行期新增扁平末端
+    tpl.world.children["hp2"] = { valueType: "number", formula: { expr: "hp * 2", binds: { hp: "hp" } } }; // 运行期新增从动末端
+    sys["varsTemplate"] = tpl;
+    world["hp"] = { value: 5, tags: [] }; // 顺带改实例值，验证级联取新值
+    world["mana"] = 7; // 新声明的实例值随载荷上送（旧模板下 = 未声明键必拒）
+
+    session.applyDirectEdit({ world });
+
+    const after = h.worldVars(session);
+    assert.deepEqual(h.worldSys(session)["varsTemplate"], tpl); // _sys 已替换为提交值
+    // mana 按新模板 normalize 落末端外壳（若仍按旧模板对拍，未声明键早已抛错）
+    assert.equal((after["mana"] as { value: unknown }).value, 7);
+    assert.equal((after["hp2"] as { value: unknown }).value, 10); // 从动级联按新模板计算（hp=5 → hp2=10）
+  });
+
+  it("结构不合法：拒写且 live 零变化（_sys 与变量树原样、revision 不动）", () => {
+    const { session } = makeSession("sys-bad");
+    const before = JSON.parse(JSON.stringify(session.getState())) as unknown;
+    const revBefore = session.revision;
+    const { world } = stateClone(session);
+    (world["_sys"] as Record<string, unknown>)["varsTemplate"] = { world: "垃圾" };
+    assert.throws(() => session.applyDirectEdit({ world }));
+    assert.equal(session.revision, revBefore);
+    assert.deepEqual(JSON.parse(JSON.stringify(session.getState())), before); // draft 丢弃，live 原样
   });
 });

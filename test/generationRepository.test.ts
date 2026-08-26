@@ -22,7 +22,7 @@ const START = { y: 0, m: 1, d: 1, h: 6, min: 0 };
 
 function sampleSave(marker: string): SaveSet {
   return {
-    world: { time: START, note: marker },
+    world: { time: START, note: marker, _sys: {} },
     pipeline: { seq: 0, working_set: [], current: null },
     characters: {},
     events: [],

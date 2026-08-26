@@ -45,9 +45,9 @@ export function simCharsOf(truth: TruthStores): Record<string, SimChar> {
   );
 }
 
-/** 周期计数 X（世界变量 cycles_since_gm；缺省 0）。 */
+/** 周期计数 X（世界变量 `_sys.cycles_since_gm`；缺省 0）。 */
 export function cycleCountOf(truth: TruthStores): number {
-  const v: unknown = truth.world.world["cycles_since_gm"];
+  const v: unknown = truth.world.world._sys["cycles_since_gm"];
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
@@ -62,7 +62,7 @@ export function applyScheduleSetup(truth: TruthStores, setup: ScheduleSetup): Va
     if (to > truth.world.clock) changes.push(truth.world.setClock(to));
   }
   if (setup.cycleIncrement) {
-    changes.push(...truth.world.apply([{ path: "cycles_since_gm", op: "=", value: cycleCountOf(truth) + 1 }]));
+    changes.push(truth.world.writeRaw("_sys.cycles_since_gm", cycleCountOf(truth) + 1));
   }
   for (const cid of setup.actedClears) changes.push(...truth.characters.setVars(cid, { acted: false }));
   return changes;
