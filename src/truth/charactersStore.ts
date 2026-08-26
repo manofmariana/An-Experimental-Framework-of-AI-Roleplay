@@ -4,7 +4,7 @@ import { InitiativeSchema, LocationSchema, PLAYER_CID, type RelationUpdate } fro
 import { evalTagsPool } from "../vars/derived.js";
 import type { ContainerDecl } from "../vars/template.js";
 import { normalizeInstance, TagMountSchema, type InstanceNode, type TerminalInstance } from "../vars/tree.js";
-import { RelationsDataSchema, normalizeCid, type RelationEntry, type RelationsData } from "./identity.js";
+import { RelationsDataSchema, normalizeCid, type RelationEntry } from "./identity.js";
 import { deleteByPath, getByPath, makeVarChange, setByPath, type VarChange } from "./varChanges.js";
 import { SAVE_SCHEMA_VERSION } from "./saveSchema.js";
 
@@ -121,16 +121,19 @@ export class CharactersStore {
   updateRelations(cid: string, updates: RelationUpdate[]): VarChange[] {
     if (updates.length === 0) return [];
     const state = this.get(cid);
-    const relations: RelationsData = { ...state.relations };
+    const relations: RelationEntry[] = state.relations.map((entry) => ({ ...entry }));
     const changes: VarChange[] = [];
     for (const update of updates) {
       const target = normalizeCid(update.target);
-      const previous = relations[target];
-      const next: RelationEntry = { ...(previous ?? {}) };
+      const index = relations.findIndex((entry) => entry.cid === target);
+      const previous = index >= 0 ? relations[index] : undefined;
+      const next: RelationEntry = { ...(previous ?? { cid: target }) };
       if (update.name !== undefined) next.name = update.name;
       if (update.impression !== undefined) next.impression = update.impression;
-      relations[target] = next;
-      changes.push(makeVarChange(`characters.${cid}.relations.${target}`, previous, next));
+      const at = index >= 0 ? index : relations.length;
+      if (index >= 0) relations[index] = next;
+      else relations.push(next);
+      changes.push(makeVarChange(`characters.${cid}.relations.${at}`, previous, next));
     }
     this.data = { ...this.data, characters: { ...this.data.characters, [cid]: { ...state, relations } } };
     return changes;

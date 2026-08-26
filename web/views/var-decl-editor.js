@@ -5,9 +5,10 @@
  * 声明树区 + 类型区 + 错误行（模型操作报错原样落此）：
  * - 树形缩进（.vte-kids 左侧参考线）+ 容器折叠箭头（默认展开，按 root|path 持有）；
  * - 结构操作（+/×/ƒ）收在行尾 .vte-actions，行 hover 才浮现；
- * - 容器「+」开行内设定表单（名称 + 种类：五 valueType 扁平末端/结构体/多实例容器——
- *   纯声明，无初始值/实例列）；类型区「+」= 新建类型，类型/类型容器字段上同一表单
- *   逐字段定义；删除（声明/类型/类型字段）一点即删（模型保护 character 根必需声明）；
+ * - 容器「+」开行内设定表单（名称 + 种类：五 valueType 扁平末端/结构体/结构化数组
+ *   （引用类型或内联结构）——纯声明，无初始值/实例列）；类型区「+」= 新建类型，
+ *   类型/内联数组字段上同一表单逐字段定义；删除（声明/类型/类型字段）一点即删
+ *   （模型保护 character 根必需声明）；
  * - ƒ 开 formula 行内表单（expr = 表达式 + binds 每行 `标识符=路径`；union_attach =
  *   paths 每行一个；选「无」清空），从动末端带「从动」徽记 + formula 可读文本；
  * - character 根的系统声明分支节点带「系统」徽记，全部结构操作（+/×/ƒ）不渲染
@@ -16,13 +17,13 @@
  * createVarsTagsEditor：渲染 vars-tags-model 视图模型——声明树每个节点（含根节点
  * 自身）挂附加条目 chip（名称/类别 + 等级小字 + ×），行尾小型添加（下拉选「名称」
  * （datalist 来自同包 tags.json 注册表，允许自由输入）或「cid 类别」（按属主分发）
- * + level 1-7）；类型容器节点整型挂载（{tags, type} 形式），存在实例名形态时只读
- * 提示（不在本编辑器管理面）。
+ * + level 1-7）；结构化数组节点整型挂载（{tags, array} 形式，扇出到元素结构全部
+ * 末端），存在 children 旧形态时只读提示（不在本编辑器管理面）。
  *
  * el/model 注入，import 期零副作用。
  */
 
-/** 结构新增种类选项（值 = 内部令牌：vt:* 扁平末端 / struct 结构体 / typeContainer 多实例容器）。 */
+/** 结构新增种类选项（值 = 内部令牌：vt:* 扁平末端 / struct 结构体 / array 结构化数组（引用类型）/ arrayInline 结构化数组（内联结构））。 */
 const KIND_OPTIONS = [
   ["vt:string", "字符串"],
   ["vt:number", "数值"],
@@ -30,7 +31,8 @@ const KIND_OPTIONS = [
   ["vt:string_list", "扁平数组"],
   ["vt:tag_list", "TAG 数组"],
   ["struct", "结构体"],
-  ["typeContainer", "多实例容器"],
+  ["array", "结构化数组（引用类型）"],
+  ["arrayInline", "结构化数组（内联结构）"],
 ];
 
 /** formula 可读表达式文本。 */
@@ -126,7 +128,7 @@ export function createVarDeclEditor({ el, model }) {
       };
       form.appendChild(kind);
 
-      if (addForm.kind === "typeContainer") {
+      if (addForm.kind === "array") {
         const typeNames = model.listTypeNames();
         if (typeNames.length === 0) {
           form.appendChild(el("span", "muted", "尚无类型：请先在「类型」区新建"));
@@ -161,9 +163,11 @@ export function createVarDeclEditor({ el, model }) {
           spec.valueType = addForm.kind.slice(3);
         } else if (addForm.kind === "struct") {
           spec.kind = "struct";
-        } else {
-          spec.kind = "typeContainer";
+        } else if (addForm.kind === "array") {
+          spec.kind = "array";
           spec.typeName = addForm.typeRef;
+        } else {
+          spec.kind = "arrayInline";
         }
         if (addForm.target === "typeField") model.addTypeField(addForm.typeName, addForm.path, spec);
         else model.addDecl(root, addForm.path, spec);
@@ -331,21 +335,24 @@ export function createVarDeclEditor({ el, model }) {
     }
   }
 
-  /** 声明容器/类型容器行：折叠箭头 + 加粗名称 + 计数 + hover 操作；系统节点只读（无 +/×）。 */
+  /** 声明容器/结构化数组行：折叠箭头 + 加粗名称 + 计数 + hover 操作；系统节点只读（无 +/×）。
+   *  引用类型数组不展开（元素字段到类型区编辑）；内联元素结构可折叠展开并经 `[*]` 路径新增字段。 */
   function renderDeclContainerLike(node, out) {
+    const isArray = node.kind === "declArray";
+    const expandable = node.kind === "declContainer" || (isArray && node.elementType === null);
     const fk = foldKey(node.path);
     const row = el("div", "vte-row");
-    row.appendChild(chevron(fk, node.kind === "declContainer"));
+    row.appendChild(chevron(fk, expandable));
     row.appendChild(el("span", "vte-key vte-key-dir", node.key));
-    if (node.kind === "declTypeContainer") row.appendChild(el("span", "vte-badge vte-type", node.typeName));
+    if (isArray) row.appendChild(el("span", "vte-badge vte-type", node.elementType ?? "内联数组"));
     if (node.system) row.appendChild(el("span", "vte-badge", "系统"));
-    if (node.kind === "declContainer") row.appendChild(el("span", "vte-count", `${node.children.length}`));
+    if (expandable) row.appendChild(el("span", "vte-count", `${node.children.length}`));
 
     const btns = [];
-    if (node.kind === "declContainer" && !node.system) {
+    if (expandable && !node.system) {
       btns.push(
-        iconBtn("+", "新增声明（扁平末端/结构体/多实例容器）", () => {
-          openAddForm("decl", { path: node.path });
+        iconBtn("+", "新增声明（扁平末端/结构体/结构化数组）", () => {
+          openAddForm("decl", { path: isArray ? `${node.path}[*]` : node.path });
           folded.delete(fk); // 展开以露出表单
           render();
         }),
@@ -357,9 +364,9 @@ export function createVarDeclEditor({ el, model }) {
     if (btns.length > 0) row.appendChild(actionsOf(...btns));
     out.appendChild(row);
 
-    if (node.kind !== "declContainer" || folded.has(fk)) return;
+    if (!expandable || folded.has(fk)) return;
     const kids = el("div", "vte-kids");
-    if (addForm !== null && addForm.target === "decl" && addForm.path === node.path) {
+    if (addForm !== null && addForm.target === "decl" && addForm.path === (isArray ? `${node.path}[*]` : node.path)) {
       kids.appendChild(renderAddForm());
     }
     for (const child of node.children) renderNode(child, kids);
@@ -394,17 +401,20 @@ export function createVarDeclEditor({ el, model }) {
     out.appendChild(kids);
   }
 
-  /** 类型声明容器字段行：+ 递归加子字段 / × 删字段。 */
+  /** 类型声明容器/内联数组字段行：+ 递归加子字段 / × 删字段。 */
   function renderTypeDeclContainer(node, out) {
+    const isArray = node.kind === "typeDeclArray";
+    const kidsPath = isArray ? `${node.path}[*]` : node.path;
     const fk = foldKey(`types|${node.typeName}|${node.path}`);
     const row = el("div", "vte-row");
     row.appendChild(chevron(fk, true));
     row.appendChild(el("span", "vte-key vte-key-dir", node.key));
+    if (isArray) row.appendChild(el("span", "vte-badge vte-type", "内联数组"));
     row.appendChild(el("span", "vte-count", `${node.children.length}`));
     row.appendChild(
       actionsOf(
         iconBtn("+", "新增子字段", () => {
-          openAddForm("typeField", { typeName: node.typeName, path: node.path });
+          openAddForm("typeField", { typeName: node.typeName, path: kidsPath });
           folded.delete(fk);
           render();
         }),
@@ -418,7 +428,7 @@ export function createVarDeclEditor({ el, model }) {
       addForm !== null &&
       addForm.target === "typeField" &&
       addForm.typeName === node.typeName &&
-      addForm.path === node.path
+      addForm.path === kidsPath
     ) {
       kids.appendChild(renderAddForm());
     }
@@ -426,7 +436,7 @@ export function createVarDeclEditor({ el, model }) {
     out.appendChild(kids);
   }
 
-  /** 类型声明叶子字段行（末端 / {type} 引用）：末端带 ƒ formula 表单；× 删字段。 */
+  /** 类型声明叶子字段行（末端 / 引用类型数组）：末端带 ƒ formula 表单；× 删字段。 */
   function renderTypeDeclLeaf(node, out) {
     const row = el("div", "vte-row");
     row.appendChild(chevron("", false));
@@ -456,7 +466,7 @@ export function createVarDeclEditor({ el, model }) {
         }),
       );
     } else {
-      row.appendChild(el("span", "vte-badge vte-type", node.refTypeName));
+      row.appendChild(el("span", "vte-badge vte-type", `${node.elementType}[]`));
     }
     btns.push(iconBtn("×", "删除字段", () => runOp(() => model.removeTypeField(node.typeName, node.path))));
     row.appendChild(actionsOf(...btns));
@@ -483,7 +493,7 @@ export function createVarDeclEditor({ el, model }) {
         renderDeclTerminal(node, out);
         return;
       case "declContainer":
-      case "declTypeContainer":
+      case "declArray":
         renderDeclContainerLike(node, out);
         return;
       case "typeRoot":
@@ -492,8 +502,11 @@ export function createVarDeclEditor({ el, model }) {
       case "typeDeclContainer":
         renderTypeDeclContainer(node, out);
         return;
+      case "typeDeclArray":
+        if (node.elementType === null) renderTypeDeclContainer(node, out);
+        else renderTypeDeclLeaf(node, out);
+        return;
       case "typeDeclTerminal":
-      case "typeDeclTypeRef":
         renderTypeDeclLeaf(node, out);
         return;
       default:
@@ -690,17 +703,17 @@ export function createVarsTagsEditor({ el, model, tagNames }) {
       out.appendChild(row);
       return;
     }
-    if (node.kind === "tagsTerminal" || node.kind === "tagsTypeContainer") {
+    if (node.kind === "tagsTerminal" || node.kind === "tagsArray") {
       const row = el("div", "vte-row");
       row.appendChild(chevron("", false));
       row.appendChild(el("span", "vte-key", node.key));
-      if (node.kind === "tagsTypeContainer") {
-        row.appendChild(el("span", "vte-badge vte-type", node.typeName));
+      if (node.kind === "tagsArray") {
+        row.appendChild(el("span", "vte-badge vte-type", node.elementType !== null ? `${node.elementType}[]` : "内联数组"));
       } else {
         row.appendChild(el("span", "vte-badge", node.valueType));
       }
-      if (node.kind === "tagsTypeContainer" && node.hasInstanceForm) {
-        row.appendChild(el("span", "muted", "（存在实例名形态附加，本编辑器不管理）"));
+      if (node.kind === "tagsArray" && node.hasLegacyChildren) {
+        row.appendChild(el("span", "muted", "（存在 children 旧形态附加，本编辑器不管理）"));
       } else {
         row.appendChild(renderChips(node));
       }

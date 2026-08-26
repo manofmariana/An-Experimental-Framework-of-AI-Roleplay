@@ -365,6 +365,20 @@ describe("loadCurrent 灾备回退", () => {
     expectKind(() => repo.loadCurrent(), "version", /核心文件版本混合/);
   });
 
+  it("旧版本存档拒装：v9 档（结构化数组前的关系库对象形态）整代拒载", () => {
+    const dir = tempDir("airp-gen-v9-");
+    const repo = new GenerationRepository(dir);
+    repo.commit(0, sampleSave("一"));
+    // 把整代六文件改写成 v9（上一版本号），模拟旧档
+    for (const name of ["world.json", "characters.json", "events.json", "archive.json", "lore.json", "time.json"]) {
+      const file = path.join(dir, "generations", "000001", name);
+      const raw = JSON.parse(fs.readFileSync(file, "utf8")) as { schema_version: number };
+      raw.schema_version = 9;
+      fs.writeFileSync(file, JSON.stringify(raw));
+    }
+    expectKind(() => repo.loadCurrent(), "version", /请新建会话\/重启服务/);
+  });
+
   it("loadPrevious() 显式灾备读取：有上一代返回之，无上一代 → not_found", () => {
     const dir = tempDir("airp-gen-");
     const repo = new GenerationRepository(dir);

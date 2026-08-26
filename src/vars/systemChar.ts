@@ -7,15 +7,17 @@
  * 与 vars 树呈现为同一棵树的标准末端：本模块持有系统声明子树（代码常量，不进世界包
  * 模板文件），parseVarsTemplate 解析时并入 character 根（与世界作者声明同名 = 拒装），
  * 物理布局不变（调度器继续消费类型化字段）。五调度字段的声明节点带 system 元数据
- * （值只读语义，呈现层徽记）；relations 引用系统类型 relation = {name, impression}。
+ * （值只读语义，呈现层徽记）；relations = 结构化数组（元素 = 系统类型 relation
+ * {cid, name, impression}，消费侧按元素的 cid 字段匹配）。
  *
  * projectCharacterTree = 投影：系统分支的值从类型化字段读出（timer/channel 可 null——
- * 系统分支特判，null 原样呈现不走 valueType 校验；initiative null = 容器无实例），
- * vars 树原样并入，合成一棵实例树。系统分支各末端 = {value, tags} 外壳，tags 来自
- * systemTags 侧车（系统分支末端路径 → {name, level}[]，只经直编修改；侧车校验
- * validateSystemTags 在 tree.ts）。
+ * 系统分支特判，null 原样呈现不走 valueType 校验；initiative null = 容器无实例；
+ * relations 数组按下标投影为元素对象），vars 树原样并入，合成一棵实例树。系统分支各
+ * 末端 = {value, tags} 外壳，tags 来自 systemTags 侧车（系统分支末端路径 →
+ * {name, level}[]，只经直编修改；数组层路径用 `键[下标]` 语法，如 relations[0].name；
+ * 侧车校验 validateSystemTags 在 tree.ts）。
  */
-import type { ContainerDecl, DeclNode, TerminalDecl, ValueType } from "./template.js";
+import type { ArrayDecl, ContainerDecl, DeclNode, TerminalDecl, ValueType } from "./template.js";
 import type { InstanceNode, TagMount, TerminalInstance } from "./tree.js";
 
 // ---------------------------------------------------------------------------
@@ -32,9 +34,9 @@ function container(children: Record<string, DeclNode>): ContainerDecl {
   return { kind: "container", children };
 }
 
-/** 系统类型 relation 的声明（relations 类型容器内联用，同时并入模板 types）。 */
+/** 系统类型 relation 的声明（relations 数组元素结构，同时并入模板 types）。 */
 export const SYSTEM_CHAR_TYPES: Readonly<Record<string, ContainerDecl>> = {
-  relation: container({ name: terminal("string"), impression: terminal("string") }),
+  relation: container({ cid: terminal("string"), name: terminal("string"), impression: terminal("string") }),
 };
 
 /** character 根系统声明子树（键序 = 投影呈现序；仅五调度字段带 system 元数据）。 */
@@ -49,10 +51,10 @@ export const SYSTEM_CHAR_CHILDREN: Readonly<Record<string, DeclNode>> = {
   location: container({ name: terminal("string"), level: terminal("number") }),
   initiative: container({ value: terminal("number"), group: terminal("number") }),
   relations: {
-    kind: "typeContainer",
+    kind: "array",
+    element: SYSTEM_CHAR_TYPES["relation"]!,
     typeName: "relation",
-    decl: SYSTEM_CHAR_TYPES["relation"]!,
-  },
+  } satisfies ArrayDecl,
   long_term_memory: terminal("string_list"),
   acted: terminal("boolean", true),
   group: terminal("number", true),
@@ -79,7 +81,7 @@ export interface CharacterProjectionInput {
   omniscience: number;
   location: { name: string; level: number };
   initiative: { value: number; group: number } | null;
-  relations: Readonly<Record<string, { name?: string | undefined; impression?: string | undefined }>>;
+  relations: ReadonlyArray<{ cid: string; name?: string | undefined; impression?: string | undefined }>;
   long_term_memory: readonly string[];
   acted: boolean;
   group: number;
@@ -93,8 +95,9 @@ export interface CharacterProjectionInput {
 
 /**
  * 角色状态 → 单棵实例树投影：系统分支值从类型化字段读出（timer/channel null 原样
- * 呈现，不走 valueType 校验；initiative null = 容器无实例），vars 树原样并入。
- * 系统分支各末端 = {value, tags} 外壳，tags 取自 systemTags 侧车（缺省空表）。
+ * 呈现，不走 valueType 校验；initiative null = 容器无实例；relations 数组按下标
+ * 投影），vars 树原样并入。系统分支各末端 = {value, tags} 外壳，tags 取自 systemTags
+ * 侧车（缺省空表）。
  */
 export function projectCharacterTree(state: CharacterProjectionInput): InstanceNode {
   const tagsOf = (path: string): TagMount[] => [...(state.systemTags?.[path] ?? [])];
@@ -114,15 +117,11 @@ export function projectCharacterTree(state: CharacterProjectionInput): InstanceN
       name: shell(state.location.name, "location.name"),
       level: shell(state.location.level, "location.level"),
     },
-    relations: Object.fromEntries(
-      Object.entries(state.relations).map(([key, entry]) => [
-        key,
-        {
-          name: shell(entry.name ?? "", `relations.${key}.name`),
-          impression: shell(entry.impression ?? "", `relations.${key}.impression`),
-        },
-      ]),
-    ),
+    relations: state.relations.map((entry, i) => ({
+      cid: shell(entry.cid, `relations[${i}].cid`),
+      name: shell(entry.name ?? "", `relations[${i}].name`),
+      impression: shell(entry.impression ?? "", `relations[${i}].impression`),
+    })),
     long_term_memory: shell([...state.long_term_memory], "long_term_memory"),
     acted: shell(state.acted, "acted"),
     group: shell(state.group, "group"),

@@ -19,19 +19,19 @@ export interface TagsTerminalNode extends NodeBase {
   entries: AttachEntry[];
 }
 
-/** 附加编辑容器节点（节点级条目向下级联到后代末端）。 */
+/** 附加编辑容器节点（节点级条目扇出到后代全部末端）。 */
 export interface TagsContainerNode extends NodeBase {
   kind: "tagsContainer";
   entries: AttachEntry[];
   children: VarsTagsNodeView[];
 }
 
-/** 附加编辑类型容器节点（整型 {tags, type} 挂载；hasInstanceForm = 存在实例名形态，整型挂载被拒）。 */
-export interface TagsTypeContainerNode extends NodeBase {
-  kind: "tagsTypeContainer";
-  typeName: string;
+/** 附加编辑结构化数组节点（整型 {tags, array} 挂载，扇出到元素结构全部末端；elementType = 元素类型名，null = 内联元素结构；hasLegacyChildren = 存在 children 旧形态，整型挂载被拒）。 */
+export interface TagsArrayNode extends NodeBase {
+  kind: "tagsArray";
+  elementType: string | null;
   entries: AttachEntry[];
-  hasInstanceForm: boolean;
+  hasLegacyChildren: boolean;
 }
 
 /** 不可判别声明节点（只读呈现）。 */
@@ -40,7 +40,7 @@ export interface TagsUnknownNode extends NodeBase {
   display: string;
 }
 
-export type VarsTagsNodeView = TagsTerminalNode | TagsContainerNode | TagsTypeContainerNode | TagsUnknownNode;
+export type VarsTagsNodeView = TagsTerminalNode | TagsContainerNode | TagsArrayNode | TagsUnknownNode;
 
 export interface VarsTagsView {
   root?: string;

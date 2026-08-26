@@ -18,7 +18,7 @@ const manifest: CharacterManifest = {
   id: "C1001", name: "林雾", gender: "女", age: "26", personality: "谨慎。",
   initial_memories: ["记忆一"], location: { name: "loc_lighthouse", level: 1 }, reaction: 5,
   timer: null, group: 0, initiative: null, channel: null, acted: false, level: 1, omniscience: 0, isPlayer: false,
-  relations: {}, vars: {},
+  relations: [], vars: {},
 };
 
 /** 计数的 fake LLM：永远抛指定错误。 */

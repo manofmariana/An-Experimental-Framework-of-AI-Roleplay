@@ -1,20 +1,22 @@
 /**
  * 变量实例树（纯逻辑，禁 IO/LLM/server/truth/application，审计守护）。
  *
- * 实例树与模板声明树同构：容器 = 嵌套对象，末端 = 外壳 {value, tags, formula?}
- * （tags = {name, level 1-7}[]，原子值，元素不是树节点；formula 与模板侧同 schema，
- * 允许实例覆盖/补充，校验规则相同）。原始值（number/string/boolean）或数组 = 末端
- * 简写，展开为 {value, tags: []}。
+ * 实例树与模板声明树同构：容器 = 嵌套对象，结构化数组 = 元素对象数组（元素字段为
+ * 末端外壳/嵌套对象/嵌套数组；元素自身无 tags 挂载位），末端 = 外壳
+ * {value, tags, formula?}（tags = {name, level 1-7}[]，原子值，元素不是树节点；
+ * formula 与模板侧同 schema，允许实例覆盖/补充，校验规则相同）。原始值
+ * （number/string/boolean）或扁平数组（string_list 等）= 末端简写，展开为
+ * {value, tags: []}。
  *
  * normalizeInstance 做简写展开 + 模板对拍：无声明有实例 = 抛错拒绝（消息带路径）；
  * 有声明无实例 = 合法（跳过）；值类型按声明 valueType 校验（number = 有限数、
- * string_list = string[]、tag_list = {name, level 1-7}[]）。类型容器逐子键按类型
- * 声明展开。
+ * string_list = string[]、tag_list = {name, level 1-7}[]）；结构化数组实例必须是
+ * 数组，逐元素按元素结构展开。
  *
- * 路径解析：resolvePath 解析声明树（容器查子键、类型容器按实例名穿越、不得穿越
- * 末端）；readTerminal 读末端实例——裸路径默认取 value，.tags 后缀 = 字段选择子取
- * tag_list，末端后还有段 = 抛错（该末端的 .tags 选择子除外）；路径必须解析到末端，
- * 有声明无实例 = 返回 undefined。
+ * 路径解析：resolvePath 解析声明树（容器查子键、数组层按 `键[数字]`/`键[*]` 下标
+ * 穿越到元素结构、不得穿越末端）；readTerminal 读末端实例——裸路径默认取 value，
+ * .tags 后缀 = 字段选择子取 tag_list，末端后还有段 = 抛错（该末端的 .tags 选择子
+ * 除外）；路径必须解析到末端，有声明无实例 = 返回 undefined。
  *
  * validateTagListWrite = 内容侧挂载表（末端外壳 tags）写值校验：{name, level 1-7}[]
  * 形状合法 + 名称校验（见 TagWriteScope）。validateTagNamesWrite = 对象侧
@@ -30,6 +32,7 @@ import { z } from "zod";
 import type { TagCategory } from "../tags/registry.js";
 import {
   resolveDeclPath,
+  splitVarPath,
   validateFormulaSpec,
   type ContainerDecl,
   type DeclNode,
@@ -56,8 +59,8 @@ export interface TerminalInstance {
   formula?: TerminalDecl["formula"];
 }
 
-/** 实例节点：末端外壳或嵌套容器对象。 */
-export type InstanceNode = TerminalInstance | { [key: string]: InstanceNode };
+/** 实例节点：末端外壳、嵌套容器对象或结构化数组（元素对象数组）。 */
+export type InstanceNode = TerminalInstance | { [key: string]: InstanceNode } | InstanceNode[];
 
 // ---------------------------------------------------------------------------
 // 值形状校验
@@ -164,7 +167,12 @@ export function validateSystemTags(
 ): Record<string, TagMount[]> {
   const out: Record<string, TagMount[]> = {};
   for (const [path, value] of Object.entries(systemTags)) {
-    const head = path.split(".")[0]!;
+    let head = "";
+    try {
+      head = splitVarPath(path)[0] ?? "";
+    } catch {
+      throw new Error(`systemTags 路径 "${path}" 在系统分支中不可解析`);
+    }
     if (!SYSTEM_CHAR_KEYS.has(head)) {
       throw new Error(`systemTags 路径 "${path}" 不在系统分支内`);
     }
@@ -225,15 +233,14 @@ function normalize(raw: unknown, decl: DeclNode, path: string, rootDecl: DeclNod
   if (decl.kind === "terminal") {
     return normalizeTerminal(raw, decl, path, rootDecl, scope);
   }
+  if (decl.kind === "array") {
+    if (!Array.isArray(raw)) {
+      throw new Error(`结构化数组实例必须是数组（路径 "${path}"）`);
+    }
+    return raw.map((el, i) => normalize(el, decl.element, `${path}[${i}]`, rootDecl, scope));
+  }
   if (!isPlainObject(raw)) {
     throw new Error(`容器实例必须是对象（路径 "${path}"）`);
-  }
-  if (decl.kind === "typeContainer") {
-    const out: Record<string, InstanceNode> = {};
-    for (const [key, value] of Object.entries(raw)) {
-      out[key] = normalize(value, decl.decl, path === "" ? key : `${path}.${key}`, rootDecl, scope);
-    }
-    return out;
   }
   const out: Record<string, InstanceNode> = {};
   for (const [key, value] of Object.entries(raw)) {
@@ -259,7 +266,7 @@ export function normalizeInstance(rawNode: unknown, declNode: DeclNode, path: st
 // 路径解析与末端读取
 // ---------------------------------------------------------------------------
 
-/** 解析声明树路径（容器查子键、类型容器按实例名穿越、不得穿越末端）。 */
+/** 解析声明树路径（容器查子键、数组层按下标段穿越到元素结构、不得穿越末端）。 */
 export function resolvePath(declNode: DeclNode, dottedPath: string): DeclNode {
   return resolveDeclPath(declNode, dottedPath);
 }
@@ -293,15 +300,15 @@ export function readTerminal(
   // 声明侧全量解析：穿越末端/不可解析/非末端 = 抛错（与实例是否存在无关）
   const decl = resolveDeclPath(declRoot, path);
   if (decl.kind !== "terminal") {
-    throw new Error(`路径 "${dottedPath}" 必须解析到末端（当前为容器）`);
+    throw new Error(`路径 "${dottedPath}" 必须解析到末端（当前为容器/数组）`);
   }
-  // 实例侧下行：有声明无实例 = undefined
+  // 实例侧下行：有声明无实例 = undefined（数组层按数字字符串下标穿越）
   let inst: unknown = instanceRoot;
-  for (const seg of path.split(".")) {
-    if (!isPlainObject(inst) || isTerminalInstance(inst)) {
+  for (const seg of splitVarPath(path)) {
+    if ((!isPlainObject(inst) && !Array.isArray(inst)) || isTerminalInstance(inst)) {
       return undefined;
     }
-    inst = inst[seg];
+    inst = (inst as Record<string, unknown>)[seg];
     if (inst === undefined) return undefined;
   }
   if (!isTerminalInstance(inst)) {

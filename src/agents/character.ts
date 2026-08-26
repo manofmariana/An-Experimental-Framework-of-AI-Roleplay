@@ -20,7 +20,7 @@ export const CharacterManifestSchema = z.object({
   /** 全知权重（0-6；恒定系统字段，不开放写通道） */
   omniscience: z.number().int().min(0).max(6).default(0),
   isPlayer: z.boolean(),
-  relations: z.record(z.string(), z.object({ name: z.string().optional(), impression: z.string().optional() })),
+  relations: z.array(z.object({ cid: z.string().min(1), name: z.string().optional(), impression: z.string().optional() })),
   initial_memories: z.array(z.string()),
   /** 变量树初值（允许末端简写；形状校验在装配层按 character 模板 normalize 时做） */
   vars: z.record(z.string(), z.unknown()).default({}),

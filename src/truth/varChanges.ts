@@ -4,7 +4,7 @@ import { z } from "zod";
  * VarChange 路径引擎（真相根路径）：var_changes 记录的统一契约与
  * 点路径 get/set/delete 通用工具。路径以真相文件为根：
  * world 域 `world.time`、`world.region.harbor.fog`；
- * characters 域 `characters.C1001.timer`、`characters.C1001.relations.C1002`
+ * characters 域 `characters.C1001.timer`、`characters.C1001.relations.0`
  * （数组按数字字符串下标，如 `characters.C1001.long_term_memory.3`）。
  *
  * 纯逻辑：无 IO、不依赖 truth 内其他模块；各 Store 的 apply/revertChange

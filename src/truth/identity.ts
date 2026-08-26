@@ -10,15 +10,16 @@
  */
 import { z } from "zod";
 
-/** 人际关系库单条：认识的名字 / 印象称谓。 */
+/** 人际关系库单条：对方 CID + 认识的名字 / 印象称谓。 */
 export const RelationEntrySchema = z.object({
+  cid: z.string().min(1),
   name: z.string().optional(),
   impression: z.string().optional(),
 });
 export type RelationEntry = z.infer<typeof RelationEntrySchema>;
 
-/** 人际关系库文件形状：targetCid → 条目。 */
-export const RelationsDataSchema = z.record(z.string(), RelationEntrySchema);
+/** 人际关系库文件形状：条目数组（消费侧按元素 cid 字段匹配）。 */
+export const RelationsDataSchema = z.array(RelationEntrySchema);
 export type RelationsData = z.infer<typeof RelationsDataSchema>;
 
 /** 演员表成员（@CID ↔ 真名/称谓）。 */
@@ -35,6 +36,11 @@ export function normalizeCid(raw: string): string {
   return raw.startsWith("@") ? raw.slice(1) : raw;
 }
 
+/** 按 cid 字段查人际关系条目。 */
+function findRelation(relations: RelationsData, cid: string): RelationEntry | undefined {
+  return relations.find((rel) => rel.cid === cid);
+}
+
 /** 读者视角渲染：@CID 按读者的身份与认知替换。 */
 export function renderForReader(
   payload: string,
@@ -43,7 +49,7 @@ export function renderForReader(
 ): string {
   return payload.replace(TOKEN, (_match: string, cid: string) => {
     if (cid === readerCid) return "我";
-    const rel = relations[cid];
+    const rel = findRelation(relations, cid);
     if (rel?.name !== undefined && rel.name !== "") return rel.name;
     if (rel?.impression !== undefined && rel.impression !== "") return rel.impression;
     return "陌生人";
@@ -73,7 +79,7 @@ export function renderRefsDisplay(text: string): string {
  */
 export function renderRefsForReader(text: string, relations: RelationsData): string {
   return text.replace(REF, (_match: string, _label: string, cid: string) => {
-    const rel = relations[cid];
+    const rel = findRelation(relations, cid);
     if (rel?.name !== undefined && rel.name !== "") return rel.name;
     if (rel?.impression !== undefined && rel.impression !== "") return rel.impression;
     return `@${cid}`;

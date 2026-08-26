@@ -21,9 +21,9 @@ export type FormulaView =
   | { kind: "unionAttach"; paths: string[] };
 
 interface NodeBase {
-  /** 显示名（容器/末端子键、实例名）。 */
+  /** 显示名（容器/末端子键、数组元素下标）。 */
   key: string;
-  /** 根内点分路径（系统分支与 vars 树同一命名空间）。 */
+  /** 根内路径（数组层用 `键[下标]` 语法；系统分支与 vars 树同一命名空间）。 */
   path: string;
 }
 
@@ -48,18 +48,18 @@ export interface ContainerNode extends NodeBase {
   children: VarTreeNode[];
 }
 
-/** 类型容器节点：children = 各类型实例（系统分支 relations 同为类型容器）。 */
-export interface TypeContainerNode extends NodeBase {
-  kind: "typeContainer";
-  typeName: string;
+/** 结构化数组节点：children = 各元素（elementType = 引用类型名；null = 内联元素结构；系统分支 relations 同为数组）。 */
+export interface ArrayNode extends NodeBase {
+  kind: "array";
+  elementType: string | null;
   children: VarTreeNode[];
 }
 
-/** 类型实例节点：canRemoveInstance = 可删实例（只动实例不动模板）。 */
-export interface TypeInstanceNode extends NodeBase {
-  kind: "typeInstance";
+/** 数组元素节点：canRemoveElement = 可删元素（只动实例不动模板；元素自身无 tags 挂载位）。 */
+export interface ArrayElementNode extends NodeBase {
+  kind: "arrayElement";
   children: VarTreeNode[];
-  canRemoveInstance: boolean;
+  canRemoveElement: boolean;
 }
 
 /** 实例侧未声明键只读呈现（正常态不存在；不静默隐藏数据）。 */
@@ -73,8 +73,8 @@ export interface UnknownNode extends NodeBase {
 export type VarTreeNode =
   | TerminalNode
   | ContainerNode
-  | TypeContainerNode
-  | TypeInstanceNode
+  | ArrayNode
+  | ArrayElementNode
   | UnknownNode;
 
 export interface VarTreeView {
@@ -93,11 +93,9 @@ export interface VarTreeModel {
   buildTree(scope: string): VarTreeView;
   writeTerminalValue(scope: string, path: string, value: unknown): void;
   writeTerminalTags(scope: string, path: string, tagList: TagMount[]): void;
-  addRelationEntry(scope: string, entryKey: string): void;
-  writeRelationField(scope: string, entryKey: string, fieldKey: string, value: string): void;
-  removeRelationEntry(scope: string, entryKey: string): void;
-  addTypeInstance(scope: string, containerPath: string, name: string): void;
-  removeTypeInstance(scope: string, containerPath: string, name: string): void;
+  addRelationEntry(scope: string, cid: string): void;
+  addArrayElement(scope: string, arrayPath: string): void;
+  removeArrayElement(scope: string, arrayPath: string, index: number): void;
   getPayload(): { world: any; characters: any };
 }
 

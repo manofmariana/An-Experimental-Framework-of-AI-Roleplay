@@ -21,7 +21,7 @@ _Avoid_: 倒计时、剩余时间（注入层派生渲染，非变量）；"GM �
 _Avoid_: duration、偏移量、倒计时
 
 **Character（角色）**:
-主控角色（isPlayer=true，缺省 C0）与 NPC 的统称；所有角色状态完全同构：name/gender/age/personality/reaction/location/timer/group/initiative/level/omniscience/isPlayer/channel/acted/relations/long_term_memory/systemTags/vars（固有 TAG 不在顶层，存变量树 `vars.attachtags` 末端；systemTags = 系统末端内容侧 TAG 侧车，系统分支末端路径 → {name, level}[]，只经直编修改）。角色决策包：`inner` 必填（内心活动与意图），`action` 与 `dialogue` 至少其一，关系实际变化时追加 `relations`，调度指令追加 `markers`；角色决策不含时长，Span 仅供 GM 裁决包 `durations` 字段。
+主控角色（isPlayer=true，缺省 C0）与 NPC 的统称；所有角色状态完全同构：name/gender/age/personality/reaction/location/timer/group/initiative/level/omniscience/isPlayer/channel/acted/relations/long_term_memory/systemTags/vars（relations = `{cid, name?, impression?}[]` 数组，消费侧按元素 cid 字段匹配；固有 TAG 不在顶层，存变量树 `vars.attachtags` 末端；systemTags = 系统末端内容侧 TAG 侧车，系统分支末端路径（数组层用 `键[下标]` 语法）→ {name, level}[]，只经直编修改）。角色决策包：`inner` 必填（内心活动与意图），`action` 与 `dialogue` 至少其一，关系实际变化时追加 `relations`，调度指令追加 `markers`；角色决策不含时长，Span 仅供 GM 裁决包 `durations` 字段。
 _Avoid_: 仅指 NPC；通用 `changes` 字段
 
 **isPlayer**:
@@ -115,18 +115,18 @@ _Avoid_: 扁平文本标签各自解释（P1 现状，P2-3 迁移后废止）；
 _Avoid_: 权重 7（与强制全知重复，不开放）；把"全知"当普通 TAG 挂给角色
 
 **末端（Terminal）**:
-可注入内容的统一模型：事件/lore/工作集条目 = 天生末端；变量树末端 = **末端类型的实例**——末端类型 = 复合结构类型（对象/记录）且所有直接属性均为原始类型（number/string/boolean/string_list/tag_list，不再拥有子属性）的类型；判定静态（只看模板声明，与实例形态无关——"叶子对象"是派生事实，不是定义）。`{value, tags, formula?}` 外壳是唯一末端类型：模板不存在裸原始属性（`name: string` 是 `name: 外壳(string)` 的简写），故自定义类型的直接属性必为复合（外壳或类型引用）、其实例 = 容器。tags = tag_list 原子值，其 {name, level} 值元素不是树节点（递归在定义上不存在）。**只有末端携带 TAG、只有末端可被路径调用**：路径必须解析到末端实例（裸路径默认取 value，`.tags` 字段选择子原子返回 TAG 列表，路径不得穿越末端）；过滤逐末端求值，求值对象 = 末端实例的 tags 属性。
+可注入内容的统一模型：事件/lore/工作集条目 = 天生末端；变量树末端 = **末端类型的实例**——末端类型 = 复合结构类型（对象/记录）且所有直接属性均为原始类型（number/string/boolean/string_list/tag_list，不再拥有子属性）的类型；判定静态（只看模板声明，与实例形态无关——"叶子对象"是派生事实，不是定义）。`{value, tags, formula?}` 外壳是唯一末端类型：模板不存在裸原始属性（`name: string` 是 `name: 外壳(string)` 的简写），故 types 结构别名与内联元素结构的直接属性必为复合（外壳或结构化数组）、其实例 = 容器对象或数组元素对象。tags = tag_list 原子值，其 {name, level} 值元素不是树节点（递归在定义上不存在）。结构化数组（`{array: 元素声明}`）不是末端：实例 = 元素对象数组，元素身份 = 数字下标（实例键不存在），tags 只落在元素内末端上——数组节点与元素对象自身没有挂载位，指向它们的附加条目扇出到其下全部末端。**只有末端携带 TAG、只有末端可被路径调用**：路径必须解析到末端实例（裸路径默认取 value，`.tags` 字段选择子原子返回 TAG 列表，路径不得穿越末端）；过滤逐末端求值，求值对象 = 末端实例的 tags 属性。
 _Avoid_: 按实际数据形态判定可否挂 TAG（含"叶子对象"式实例判定）；把 tag_list 值元素当树节点
 
 **TAG 注册表**:
 世界包 `tags.json`（装配时读取，缺文件拒装），档内副本 = `world.json` 系统分支 `_sys.tagRegistry`。名称即键；条目 = {name, description?, condition?, category?, system?}，各字段均为外壳末端（name 冗余为末端使名称可被路径调用；condition = 容器，含 path/op/value 三原始值型末端）、tags 恒空（注册表分支恒不挂 TAG，可读性由抓取层控制）——GM 经占位符路由一处读全。category = 封闭枚举 {cid, channel, location}：有类别按类别声明登记（实例合法性程序判定；实例值 GM 经变量注入可见，不重复登记）——三个开放类别各有一条同名 system 类别条目（system + category 同现，加载时缺一条即拒装）；写值校验类别化（名称合法 = 条目名 ∪ cid 现存角色 CID 实例 ∪ channel/location 声明即放行；CID 形态名按 cid 判定，未知 CID 拒绝），无类别按名称登记。system 条目 = 程序化只读参考（真实挂载与求值逻辑由代码持有，加载校验与代码常量一致，任何层不得占用同名）；非程序化条目 = 求值真实数据源，GM 运行期增改走裁决包结构化字段、随 changes 落账。
 
 **Variable Tree（变量树）**:
-全部变量的统一模型（存储已落地）：容器/末端两类节点，末端 = `{value, tags, formula?}` 外壳类型的实例（唯一末端类型，见"末端"词条判定式）。末端身份由 **Variable Template** 静态声明，与实际数据形态无关；只有末端携带 TAG、可被路径调用。世界与角色同一树模型、不同根；系统字段存储层保持顶层专用通道，命名空间（统一路径语法）与树视图（只读分支投影）两层统一。容器子键 = 人类可读名称；无数组节点（有序集合 = 容器 + 数字键）。valueType 封闭集 = number/string/boolean/string_list/tag_list（{name, level} 数组原子值）。保留名约定：`attachtags` = 普通 string_list 末端（对象侧纯名集合），容器实例附加给属主的 TAG（角色根部 = 固有 TAG，GM 挂 TAG = 直写此末端）；character 模板根必含 `tags` 从动末端（tag 池 = string_list，恒从动，程序消费唯一路径 `characters.{cid}.vars.tags`）。**系统声明分支**（代码持有常量，不进世界包模板文件）：角色顶层字段与五调度字段的声明子树，模板解析时并入 character 根（与世界作者声明同名 = 拒装），角色全部字段与 vars 树因而是同一棵树的标准末端（存储层物理布局不变，走投影）；系统末端外壳 tags 存 Character 的 systemTags 侧车。
+全部变量的统一模型（存储已落地）：容器/结构化数组/末端三类节点，末端 = `{value, tags, formula?}` 外壳类型的实例（唯一末端类型，见"末端"词条判定式）。末端身份由 **Variable Template** 静态声明，与实际数据形态无关；只有末端携带 TAG、可被路径调用。世界与角色同一树模型、不同根；系统字段存储层保持顶层专用通道，命名空间（统一路径语法）与树视图（只读分支投影）两层统一。容器子键 = 人类可读名称（禁保留名 value/tags/formula 与下标括号）；结构化数组 = `{array: 元素声明}`（元素 = `{type}` 引用 types 结构别名或 `{children}` 内联对象结构，元素根不得又是数组），路径经 `键[数字]`（精确下标）/ `键[*]`（通配）语法穿越（如 `items[0].name` / `items[*].name`）。valueType 封闭集 = number/string/boolean/string_list/tag_list（{name, level} 数组原子值；string_list 等扁平数组 = 一个末端值整体，与结构化数组不同类）。保留名约定：`attachtags` = 普通 string_list 末端（对象侧纯名集合），容器实例附加给属主的 TAG（角色根部 = 固有 TAG，GM 挂 TAG = 直写此末端）；character 模板根必含 `tags` 从动末端（tag 池 = string_list，恒从动，程序消费唯一路径 `characters.{cid}.vars.tags`）。**系统声明分支**（代码持有常量，不进世界包模板文件）：角色顶层字段与五调度字段的声明子树，模板解析时并入 character 根（与世界作者声明同名 = 拒装），角色全部字段与 vars 树因而是同一棵树的标准末端（存储层物理布局不变，走投影）；系统末端外壳 tags 存 Character 的 systemTags 侧车。
 _Avoid_: vars 扁平表（已废除）
 
 **Variable Template（变量模板）**:
-末端身份的唯一出处：世界包 `vars-template.json`（装配时读取，缺文件拒装；档内副本 `_sys.varsTemplate`），{world, character, types} 三棵声明树，character 声明树全体角色共享、个体差异在实例侧。配套的 TAG 附加文件（`vars-tags.json` / `_sys.varsTags`）与其同构：节点级条目向下级联到每个末端（根节点自身也可挂条目 = 级联到该根全部末端），按模板末端位置解析再映射到实例，cid 类 TAG 按实例属主分发（每角色仅自身 CID 一个；「每角色全部末端挂自身 CID」= character 根挂一条 {category:"cid"} 条目）。结构编辑与实例写值解耦：无声明的实例路径 = 校验拒绝，有声明无实例 = 取不到数的定义空行为。
+末端身份的唯一出处：世界包 `vars-template.json`（装配时读取，缺文件拒装；档内副本 `_sys.varsTemplate`），{world, character, types} 三棵声明树（types = 纯结构别名注册表：每类型只能 `{children}`，引用必须可解析且无环，只作数组元素结构复用），character 声明树全体角色共享、个体差异在实例侧。配套的 TAG 附加文件（`vars-tags.json` / `_sys.varsTags`）与其同构（数组节点 = `{tags, array}` 整型挂载）：节点级条目向下级联到每个末端（根节点自身也可挂条目 = 级联到该根全部末端），按模板末端位置解析再映射到实例，cid 类 TAG 按实例属主分发（每角色仅自身 CID 一个；「每角色全部末端挂自身 CID」= character 根挂一条 {category:"cid"} 条目）。结构编辑与实例写值解耦：无声明的实例路径 = 校验拒绝，有声明无实例 = 取不到数的定义空行为。
 _Avoid_: 按实例实际形态推断结构
 
 **Placeholder（占位符）**:
@@ -150,7 +150,7 @@ _Avoid_: 把模糊条当安全边界（服务端硬遮蔽现阶段不做）
 _Avoid_: 模板内嵌脚本；按画面坐标划区
 
 **Derived Variable（从动变量）**:
-带 formula 的末端（GM deltas 拒写，由程序维护）：所属变量根任一写落后，同一提交内按依赖图拓扑序整根全量重算全部从动末端，结果作为追加 VarChange 记入同段 changes（回溯/重放天然覆盖）。数值公式 = compileFormula（expr，binds 逐键取同根末端值；依赖末端无实例 = 跳过重算保持现值）；非数值 = 封闭内置算子（`union_attach`：自身 attachtags ∪ 显式子树路径下的全部 attachtags，原型 = character.tags 池）。计划 = 模板声明 formula ∪ 实例携带 formula（实例覆盖同路径模板声明）；类型容器按 `*` 通配段展开、重算时按实例名枚举。依赖用模板路径声明（与占位符选变量内容同一机制），同根、模板可静态解析；跨根与依赖系统字段不开放；依赖成环 = 拒装/拒写。直编从动值无特例——保存后级联自动回归。
+带 formula 的末端（GM deltas 拒写，由程序维护）：所属变量根任一写落后，同一提交内按依赖图拓扑序整根全量重算全部从动末端，结果作为追加 VarChange 记入同段 changes（回溯/重放天然覆盖）。数值公式 = compileFormula（expr，binds 逐键取同根末端值；依赖末端无实例 = 跳过重算保持现值）；非数值 = 封闭内置算子（`union_attach`：自身 attachtags ∪ 显式子树路径下的全部 attachtags，原型 = character.tags 池）。计划 = 模板声明 formula ∪ 实例携带 formula（实例覆盖同路径模板声明）；结构化数组按 `*` 通配段展开、重算时按元素下标枚举（cid 键控记录仍枚举键）。依赖用模板路径声明（与占位符选变量内容同一机制），同根、模板可静态解析；跨根与依赖系统字段不开放；依赖成环 = 拒装/拒写。直编从动值无特例——保存后级联自动回归。
 _Avoid_: 异步从动（不存在此类别——轮次写入是普通变量的存在形式）
 
 ## Relationships

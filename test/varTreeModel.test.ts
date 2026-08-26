@@ -5,33 +5,35 @@
  * - 视图模型：世界树滤 time/_sys、实例简写读出、未声明键 unknown 呈现；
  * - 角色树 = 系统声明分支投影 + vars 实例树（同一棵树不分区）：系统分支值从类型化
  *   字段读出（timer/channel null 原样、initiative null = 容器无实例、relations =
- *   系统类型 relation 类型容器），系统只读收窄为 {acted, group, channel, timer, isPlayer}；
+ *   结构化数组按下标投影），系统只读收窄为 {acted, group, channel, timer, isPlayer}；
+ * - 结构化数组：可折叠分支、元素增删（按元素结构物化空元素/按下标摘除）、元素内
+ *   字段经 `键[下标]` 路径写值（嵌套数组递归）；
  * - 系统末端写值：回写类型化字段（omniscience 钳制 0-6、initiative null 两值齐全整体
- *   写入、relations 条目字段、long_term_memory）；系统五字段拒写；
- * - 外壳 tags：全部末端可编——系统末端写 systemTags 侧车、vars 末端写外壳；
+ *   写入、relations 元素字段、long_term_memory）；系统五字段拒写；
+ * - 外壳 tags：全部末端可编——系统末端写 systemTags 侧车（数组层键 = `键[下标]`，
+ *   relations 元素删除顺带重映射）、vars 末端写外壳；
  * - 从动判定：声明带 formula / 实例外壳带 formula 均只读且出结构化 formula 只读标注；
  * - vars 末端写值：外壳改写 / 无实例物化 / 简写物化 / 从动拒写 / valueType 校验；
  * - attachtags/tags 池 = string_list 纯名集合（值编辑走 string[] 校验）；
- * - 类型容器实例增删：按类型声明物化空白实例、只动实例不动模板（relations 同通道）；
  * - 附加来源 tags 合并显示（`_sys.varsTags` 读取期合并的只读 attachTags：节点级级联/
- *   末端级单挂/整型挂载 "*" 通配/cid 类别按属主分发，world 域 cid 跳过）+ 零泄漏红线
- *   （工作副本/保存载荷/侧车与附加前逐字节一致）；
+ *   末端级单挂/数组整型挂载 `[*]` 通配/cid 类别按属主分发，world 域 cid 跳过）+
+ *   零泄漏红线（工作副本/保存载荷/侧车与附加前逐字节一致）；
  * - 保存载荷：_sys.varsTemplate 原样随 world 副本上送（状态编辑不动模板）。
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   createVarTreeModel,
+  type ArrayElementNode,
+  type ArrayNode,
   type ContainerNode,
   type TerminalNode,
-  type TypeContainerNode,
-  type TypeInstanceNode,
   type VarTreeModel,
   type VarTreeNode,
 } from "../web/views/var-tree-model.js";
 
 // ---------------------------------------------------------------------------
-// 夹具：原始模板（字符串简写 / 完整形末端 / 容器 / 类型容器）+ 实例（外壳与简写混合）
+// 夹具：原始模板（字符串简写 / 完整形末端 / 容器 / 结构化数组）+ 实例（外壳与简写混合）
 // ---------------------------------------------------------------------------
 
 function makeWorking() {
@@ -42,7 +44,7 @@ function makeWorking() {
         luck: "number",
         pool: "tag_list",
         loc: { children: { name: "string", items: "string_list" } },
-        bag: { type: "item" },
+        bag: { array: { type: "item" } },
       },
     },
     character: {
@@ -52,11 +54,11 @@ function makeWorking() {
         mood: "string",
         str: "number",
         double_str: { valueType: "number", formula: { expr: "str * 2", binds: { str: "str" } } },
-        gear: { type: "item" },
+        gear: { array: { type: "item" } },
       },
     },
     types: {
-      item: { children: { count: "number", note: "string", parts: { type: "part" } } },
+      item: { children: { count: "number", note: "string", parts: { array: { type: "part" } } } },
       part: { children: { w: "number" } },
     },
   };
@@ -70,7 +72,7 @@ function makeWorking() {
       hp: 5, // 简写末端
       luck: { value: 7, tags: [], formula: { expr: "1 + 1" } }, // 实例携带 formula → 从动
       loc: { name: "酒馆" }, // items 无实例
-      bag: { 铁剑: { count: 1, parts: { 刀刃: { w: 2 } } } },
+      bag: [{ count: 1, parts: [{ w: 2 }] }],
     },
     characters: {
       C1001: {
@@ -83,7 +85,7 @@ function makeWorking() {
         omniscience: 1,
         location: { name: "酒馆", level: 2 },
         initiative: null,
-        relations: { C1002: { name: "乙", impression: "老友" } },
+        relations: [{ cid: "C1002", name: "乙", impression: "老友" }],
         long_term_memory: ["记忆一", "记忆二"],
         timer: 120,
         group: 0,
@@ -100,7 +102,7 @@ function makeWorking() {
       },
       C1002: {
         name: "乙",
-        relations: {},
+        relations: [],
         systemTags: {},
         vars: {
           attachtags: { value: [], tags: [] },
@@ -135,7 +137,7 @@ function terminalOf(view: { children: VarTreeNode[] }, key: string): TerminalNod
 // ---------------------------------------------------------------------------
 
 describe("var-tree-model：视图模型", () => {
-  it("世界树滤掉 time/_sys；简写末端读出值；类型容器展开实例", () => {
+  it("世界树滤掉 time/_sys；简写末端读出值；结构化数组展开元素", () => {
     const m = modelOf(makeWorking());
     const tree = m.buildTree("world");
     const keys = tree.children.map((n) => n.key);
@@ -156,19 +158,21 @@ describe("var-tree-model：视图模型", () => {
     assert.equal(items.hasInstance, false); // 有声明无实例
     assert.equal(items.value, undefined);
 
-    const bag = childAt(tree, "bag") as TypeContainerNode;
-    assert.equal(bag.kind, "typeContainer");
-    assert.equal(bag.typeName, "item");
+    const bag = childAt(tree, "bag") as ArrayNode;
+    assert.equal(bag.kind, "array");
+    assert.equal(bag.elementType, "item");
     assert.equal(bag.children.length, 1);
-    const sword = bag.children[0] as TypeInstanceNode;
-    assert.equal(sword.kind, "typeInstance");
-    assert.equal(sword.key, "铁剑");
-    assert.equal(sword.canRemoveInstance, true);
+    const sword = bag.children[0] as ArrayElementNode;
+    assert.equal(sword.kind, "arrayElement");
+    assert.equal(sword.key, "0");
+    assert.equal(sword.path, "bag[0]");
+    assert.equal(sword.canRemoveElement, true);
     assert.equal(terminalOf(sword, "count").value, 1);
     assert.equal(terminalOf(sword, "note").hasInstance, false);
-    const parts = childAt(sword, "parts") as TypeContainerNode;
-    assert.equal(parts.kind, "typeContainer"); // 嵌套类型容器
-    assert.equal(parts.children.length, 1); // 刀刃实例
+    const parts = childAt(sword, "parts") as ArrayNode;
+    assert.equal(parts.kind, "array"); // 嵌套数组
+    assert.equal(parts.children.length, 1); // 一个零件元素
+    assert.equal((parts.children[0] as ArrayElementNode).path, "bag[0].parts[0]");
   });
 
   it("从动判定：声明带 formula 与实例外壳带 formula 均只读且出结构化只读标注", () => {
@@ -225,12 +229,15 @@ describe("var-tree-model：视图模型", () => {
     assert.equal(initiative.kind, "container");
     assert.ok(initiative.children.every((c) => c.kind === "terminal" && !c.hasInstance));
 
-    // relations = 系统类型 relation 类型容器
-    const relations = childAt(tree, "relations") as TypeContainerNode;
-    assert.equal(relations.kind, "typeContainer");
-    assert.equal(relations.typeName, "relation");
-    const entry = relations.children[0] as TypeInstanceNode;
-    assert.equal(entry.key, "C1002");
+    // relations = 结构化数组（元素含 cid 字段，按下标投影）
+    const relations = childAt(tree, "relations") as ArrayNode;
+    assert.equal(relations.kind, "array");
+    assert.equal(relations.elementType, "relation");
+    const entry = relations.children[0] as ArrayElementNode;
+    assert.equal(entry.kind, "arrayElement");
+    assert.equal(entry.key, "0");
+    assert.equal(entry.path, "relations[0]");
+    assert.equal(terminalOf(entry, "cid").value, "C1002");
     assert.equal(terminalOf(entry, "name").value, "乙");
     assert.equal(terminalOf(entry, "impression").value, "老友");
 
@@ -310,26 +317,29 @@ describe("var-tree-model：系统末端写值", () => {
     assert.throws(() => m.writeTerminalValue("world", "name", "x"), /不是已声明的末端/);
   });
 
-  it("relations 条目字段经末端写值回写；条目增删走实例通道", () => {
+  it("relations 元素字段经末端写值回写；条目增删走数组元素通道", () => {
     const w = makeWorking();
     const m = modelOf(w);
-    m.writeTerminalValue("C1001", "relations.C1002.name", "乙改");
-    assert.deepEqual(w.characters.C1001.relations.C1002, { name: "乙改", impression: "老友" });
-    assert.throws(() => m.writeTerminalValue("C1001", "relations.C9999.name", "x"), /不存在/);
+    m.writeTerminalValue("C1001", "relations[0].name", "乙改");
+    assert.deepEqual(w.characters.C1001.relations[0], { cid: "C1002", name: "乙改", impression: "老友" });
+    assert.throws(() => m.writeTerminalValue("C1001", "relations[5].name", "x"), /不存在/);
 
-    m.addTypeInstance("C1001", "relations", "C1003");
-    assert.deepEqual(w.characters.C1001.relations.C1003, {});
-    assert.throws(() => m.addTypeInstance("C1001", "relations", "C1003"), /已存在/);
-    m.writeRelationField("C1001", "C1003", "impression", "陌生");
-    assert.deepEqual(w.characters.C1001.relations.C1003, { impression: "陌生" });
+    m.addRelationEntry("C1001", "C1003");
+    assert.deepEqual(w.characters.C1001.relations[1], { cid: "C1003" });
+    assert.throws(() => m.addRelationEntry("C1001", "C1003"), /已存在/);
+    assert.throws(() => m.addRelationEntry("C1001", "@C1002"), /已存在/, "前导 @ 归一化后判重");
+    m.writeTerminalValue("C1001", "relations[1].impression", "陌生");
+    assert.deepEqual(w.characters.C1001.relations[1], { cid: "C1003", impression: "陌生" });
 
     // 视图立刻反映
-    const relationsView = childAt(m.buildTree("C1001"), "relations") as TypeContainerNode;
-    assert.deepEqual(relationsView.children.map((c) => c.key), ["C1002", "C1003"]);
+    const relationsView = childAt(m.buildTree("C1001"), "relations") as ArrayNode;
+    assert.deepEqual(relationsView.children.map((c) => c.key), ["0", "1"]);
 
-    m.removeTypeInstance("C1001", "relations", "C1002");
-    assert.equal(w.characters.C1001.relations.C1002, undefined);
-    assert.throws(() => m.removeTypeInstance("C1001", "relations", "C1002"), /不存在/);
+    m.removeArrayElement("C1001", "relations", 0);
+    assert.deepEqual(w.characters.C1001.relations, [{ cid: "C1003", impression: "陌生" }]);
+    assert.throws(() => m.removeArrayElement("C1001", "relations", 5), /不存在/);
+    // relations 之外的系统数组不存在；系统数组元素新增走 addRelationEntry
+    assert.throws(() => m.addArrayElement("C1001", "relations"), /addRelationEntry/);
   });
 });
 
@@ -378,15 +388,18 @@ describe("var-tree-model：vars 末端写值", () => {
     assert.throws(() => m.writeTerminalValue("C1001", "attachtags", [{ name: "x", level: 1 }]), /错配/);
   });
 
-  it("类型容器内实例末端写值（实例名自由穿越）", () => {
+  it("数组元素内末端写值（`键[下标]` 路径；嵌套数组递归）", () => {
     const w = makeWorking();
     const m = modelOf(w);
-    m.writeTerminalValue("world", "bag.铁剑.count", 3);
-    assert.deepEqual((w.world.bag as Record<string, Record<string, unknown>>).铁剑!.count, { value: 3, tags: [] });
-    m.writeTerminalValue("world", "bag.铁剑.note", "锋利"); // 无实例物化
-    assert.deepEqual((w.world.bag as Record<string, Record<string, unknown>>).铁剑!.note, { value: "锋利", tags: [] });
-    m.writeTerminalValue("world", "bag.无此剑.count", 1); // 实例缺失沿途补建（防御路径，DOM 只渲染已有实例）
-    assert.deepEqual((w.world.bag as Record<string, unknown>).无此剑, { count: { value: 1, tags: [] } });
+    m.writeTerminalValue("world", "bag[0].count", 3);
+    assert.deepEqual((w.world.bag as Record<string, unknown>[])[0]!.count, { value: 3, tags: [] });
+    m.writeTerminalValue("world", "bag[0].note", "锋利"); // 无实例物化
+    assert.deepEqual((w.world.bag as Record<string, unknown>[])[0]!.note, { value: "锋利", tags: [] });
+    m.writeTerminalValue("world", "bag[0].parts[0].w", 9); // 嵌套数组
+    const parts = (w.world.bag as Record<string, unknown>[])[0]!.parts as Record<string, unknown>[];
+    assert.deepEqual(parts[0]!.w, { value: 9, tags: [] });
+    m.writeTerminalValue("world", "bag[2].count", 1); // 元素缺失沿途补建（防御路径，DOM 只渲染已有元素）
+    assert.deepEqual((w.world.bag as Record<string, unknown>[])[2], { count: { value: 1, tags: [] } });
   });
 });
 
@@ -411,6 +424,17 @@ describe("var-tree-model：外壳 tags 编辑", () => {
     assert.throws(() => m.writeTerminalTags("C1001", "str", [{ name: "", level: 1 }]), /形状非法/);
   });
 
+  it("数组元素内 vars 末端 tags 写外壳（元素自身无 tags 挂载位）", () => {
+    const w = makeWorking();
+    const m = modelOf(w);
+    m.writeTerminalTags("world", "bag[0].count", [{ name: "暴怒", level: 1 }]);
+    const bag = w.world.bag as Record<string, unknown>[];
+    assert.deepEqual((bag[0]!.count as { tags: unknown }).tags, [{ name: "暴怒", level: 1 }]);
+    // 数组节点/元素对象不是末端：拒绝
+    assert.throws(() => m.writeTerminalTags("world", "bag", []), /不是已声明的末端/);
+    assert.throws(() => m.writeTerminalTags("world", "bag[0]", []), /不是已声明的末端/);
+  });
+
   it("系统末端：写 systemTags 侧车（空表摘键），值不变", () => {
     const w = makeWorking();
     const m = modelOf(w);
@@ -420,61 +444,65 @@ describe("var-tree-model：外壳 tags 编辑", () => {
     // 视图立刻反映
     assert.deepEqual(terminalOf(m.buildTree("C1001"), "name").tags, [{ name: "冷静", level: 1 }]);
 
-    m.writeTerminalTags("C1001", "relations.C1002.name", [{ name: "暴怒", level: 4 }]);
-    assert.deepEqual(w.characters.C1001.systemTags["relations.C1002.name"], [{ name: "暴怒", level: 4 }]);
+    m.writeTerminalTags("C1001", "relations[0].name", [{ name: "暴怒", level: 4 }]);
+    assert.deepEqual(w.characters.C1001.systemTags["relations[0].name"], [{ name: "暴怒", level: 4 }]);
     // 系统五字段的外壳 tags 同样可编
     m.writeTerminalTags("C1001", "timer", [{ name: "冷静", level: 2 }]);
     assert.deepEqual(w.characters.C1001.systemTags["timer"], [{ name: "冷静", level: 2 }]);
 
     m.writeTerminalTags("C1001", "name", []); // 空表摘键
     assert.equal(Object.hasOwn(w.characters.C1001.systemTags, "name"), false);
-    // relations 条目删除顺带摘侧车
-    m.removeTypeInstance("C1001", "relations", "C1002");
-    assert.equal(Object.hasOwn(w.characters.C1001.systemTags, "relations.C1002.name"), false);
+    // relations 条目删除顺带摘侧车（被删下标摘除、其后前移）
+    m.writeTerminalTags("C1001", "relations[0].impression", [{ name: "冷静", level: 3 }]);
+    m.addRelationEntry("C1001", "C1009");
+    m.writeTerminalTags("C1001", "relations[1].name", [{ name: "闻名", level: 1 }]);
+    m.removeArrayElement("C1001", "relations", 0);
+    assert.equal(Object.hasOwn(w.characters.C1001.systemTags, "relations[0].impression"), false);
+    assert.deepEqual(w.characters.C1001.systemTags["relations[0].name"], [{ name: "闻名", level: 1 }], "后位下标前移");
   });
 });
 
 // ---------------------------------------------------------------------------
-// 类型容器实例增删（状态操作：只动实例不动模板）
+// 结构化数组元素增删（状态操作：只动实例不动模板）
 // ---------------------------------------------------------------------------
 
-describe("var-tree-model：类型实例增删", () => {
-  it("新增实例按类型声明物化空白（嵌套容器递归、嵌套类型容器留空），不动模板", () => {
+describe("var-tree-model：数组元素增删", () => {
+  it("新增元素按元素结构物化空白（嵌套容器递归、嵌套数组留空），不动模板", () => {
     const w = makeWorking();
     const m = modelOf(w);
     const tplBefore = JSON.stringify(w.world._sys.varsTemplate);
-    m.addTypeInstance("world", "bag", "皮甲");
-    assert.deepEqual((w.world.bag as any).皮甲, {
+    m.addArrayElement("world", "bag");
+    assert.deepEqual((w.world.bag as any)[1], {
       count: { value: 0, tags: [] },
       note: { value: "", tags: [] },
-      parts: {}, // 嵌套类型容器空白起步
+      parts: [], // 嵌套数组空白起步
     });
     assert.equal(JSON.stringify(w.world._sys.varsTemplate), tplBefore); // 模板不动
 
-    // 角色域：类型容器实例整体缺失时补建
-    m.addTypeInstance("C1001", "gear", "头盔");
-    assert.deepEqual((w.characters.C1001.vars as any).gear.头盔.count, { value: 0, tags: [] });
+    // 角色域：数组实例整体缺失时补建
+    m.addArrayElement("C1001", "gear");
+    assert.deepEqual((w.characters.C1001.vars as any).gear[0].count, { value: 0, tags: [] });
 
-    const bag = childAt(m.buildTree("world"), "bag") as TypeContainerNode;
-    assert.deepEqual(bag.children.map((n) => n.key), ["铁剑", "皮甲"]);
+    const bag = childAt(m.buildTree("world"), "bag") as ArrayNode;
+    assert.deepEqual(bag.children.map((n) => n.key), ["0", "1"]);
   });
 
-  it("冲突/非类型容器/非法名拒绝", () => {
+  it("非数组路径拒绝；系统数组走 addRelationEntry", () => {
     const m = modelOf(makeWorking());
-    assert.throws(() => m.addTypeInstance("world", "bag", "铁剑"), /已存在/);
-    assert.throws(() => m.addTypeInstance("world", "loc", "x"), /不是类型容器/);
-    assert.throws(() => m.addTypeInstance("world", "bag", ""), /不能为空/);
+    assert.throws(() => m.addArrayElement("world", "loc"), /不是结构化数组/);
+    assert.throws(() => m.addArrayElement("C1001", "relations"), /addRelationEntry/);
+    assert.throws(() => m.removeArrayElement("world", "loc", 0), /不是结构化数组/);
+    assert.throws(() => m.removeArrayElement("world", "bag", 9), /不存在/);
   });
 
-  it("删除实例只动实例不动模板", () => {
+  it("删除元素只动实例不动模板", () => {
     const w = makeWorking();
     const m = modelOf(w);
     const tplBefore = JSON.stringify(w.world._sys.varsTemplate);
-    m.removeTypeInstance("world", "bag", "铁剑");
-    assert.deepEqual(w.world.bag, {});
+    m.removeArrayElement("world", "bag", 0);
+    assert.deepEqual(w.world.bag, []);
     assert.equal(JSON.stringify(w.world._sys.varsTemplate), tplBefore);
-    assert.throws(() => m.removeTypeInstance("world", "bag", "铁剑"), /不存在/);
-    assert.throws(() => m.removeTypeInstance("world", "loc", "x"), /不是类型容器/);
+    assert.throws(() => m.removeArrayElement("world", "bag", 0), /不存在/);
   });
 });
 
@@ -514,7 +542,7 @@ function makeWorkingWithAttach() {
       tags: [{ name: "全域", level: 2 }], // 根节点级：级联到 world 全部末端
       children: {
         loc: { tags: [{ category: "cid", level: 1 }] }, // world 域无属主：cid 条目跳过（loc 子树零附加）
-        bag: { tags: [{ category: "channel", level: 3 }], type: "item" }, // 整型挂载：级联到 item 全部末端（"*" 占位）
+        bag: { tags: [{ category: "channel", level: 3 }], array: "item" }, // 整型挂载：扇出到 item 全部末端（[*] 占位）
       },
     },
     character: {
@@ -524,7 +552,7 @@ function makeWorkingWithAttach() {
       ],
       children: {
         str: { tags: [{ name: "刚毅", level: 3 }] }, // 末端级单挂
-        gear: { tags: [{ name: "随身", level: 2 }], type: "item" }, // 整型挂载
+        gear: { tags: [{ name: "随身", level: 2 }], array: "item" }, // 整型挂载
       },
     },
   };
@@ -569,19 +597,19 @@ describe("var-tree-model：附加来源 tags 合并显示（只读）", () => {
     assert.ok(strAttach.every((t) => t.name !== "冷静"), "实例持有的同名附加条目应去重");
   });
 
-  it("整型挂载：类型层 '*' 占位按实例名匹配（含嵌套类型容器）", () => {
+  it("整型挂载：数组层 [*] 占位按下标匹配（含嵌套数组）", () => {
     const m = modelOf(makeWorkingWithAttach());
     const world = m.buildTree("world");
-    const bag = childAt(world, "bag") as TypeContainerNode;
-    const sword = bag.children[0] as TypeInstanceNode;
-    // bag {tags:[channel], type:item} → bag.* 全部末端
+    const bag = childAt(world, "bag") as ArrayNode;
+    const sword = bag.children[0] as ArrayElementNode;
+    // bag {tags:[channel], array:item} → bag[*] 全部末端
     assert.deepEqual(terminalOf(sword, "count").attachTags, [
       { name: "全域", level: 2 },
       { name: "channel", level: 3 },
     ]);
-    // 嵌套类型容器 parts：bag.*.parts.*.w
-    const parts = childAt(sword, "parts") as TypeContainerNode;
-    const blade = parts.children[0] as TypeInstanceNode;
+    // 嵌套数组 parts：bag[*].parts[*].w
+    const parts = childAt(sword, "parts") as ArrayNode;
+    const blade = parts.children[0] as ArrayElementNode;
     assert.deepEqual(terminalOf(blade, "w").attachTags, [
       { name: "全域", level: 2 },
       { name: "channel", level: 3 },

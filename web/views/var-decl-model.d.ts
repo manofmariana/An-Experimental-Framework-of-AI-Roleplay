@@ -39,10 +39,11 @@ export interface DeclContainerNode extends NodeBase {
   system: boolean;
 }
 
-/** 声明类型容器节点（只显示类型引用；字段到类型区编辑；system = 系统分支节点）。 */
-export interface DeclTypeContainerNode extends NodeBase {
-  kind: "declTypeContainer";
-  typeName: string;
+/** 声明结构化数组节点（elementType = 引用类型名，元素字段到类型区编辑；null = 内联元素结构，children 经 `[*]` 路径可编辑；system = 系统分支节点）。 */
+export interface DeclArrayNode extends NodeBase {
+  kind: "declArray";
+  elementType: string | null;
+  children?: VarDeclNode[];
   canDelete: boolean;
   system: boolean;
 }
@@ -75,22 +76,23 @@ export interface TypeDeclContainerNode extends NodeBase {
   children: VarDeclNode[];
 }
 
-/** 类型声明内的 {type} 引用字段。 */
-export interface TypeDeclTypeRefNode extends NodeBase {
-  kind: "typeDeclTypeRef";
+/** 类型声明结构化数组字段（elementType = 引用类型名；null = 内联元素结构，children 可编辑）。 */
+export interface TypeDeclArrayNode extends NodeBase {
+  kind: "typeDeclArray";
   typeName: string;
-  refTypeName: string;
+  elementType: string | null;
+  children?: VarDeclNode[];
 }
 
 export type VarDeclNode =
   | DeclTerminalNode
   | DeclContainerNode
-  | DeclTypeContainerNode
+  | DeclArrayNode
   | DeclUnknownNode
   | TypeRootNode
   | TypeDeclTerminalNode
   | TypeDeclContainerNode
-  | TypeDeclTypeRefNode;
+  | TypeDeclArrayNode;
 
 export interface VarDeclView {
   root?: string;
@@ -102,10 +104,10 @@ export interface VarDeclRoot {
   label: string;
 }
 
-/** 结构新增规格（kind 缺省 = terminal；只动声明，无实例联动）。 */
+/** 结构新增规格（kind 缺省 = terminal；array = 引用类型数组，arrayInline = 内联元素结构数组；只动声明，无实例联动）。 */
 export interface AddSpec {
   name: string;
-  kind?: "terminal" | "struct" | "typeContainer";
+  kind?: "terminal" | "struct" | "array" | "arrayInline";
   valueType?: ValueType;
   typeName?: string;
 }
@@ -132,5 +134,7 @@ export function defaultValueFor(valueType: ValueType): unknown;
 export function validateBaseName(name: string): void;
 export function formulaViewOf(raw: unknown): FormulaView | null;
 export function collectTypeRefs(raw: unknown, out: string[]): void;
+export function splitVarPath(path: string): string[];
+export function isIndexSegment(seg: string): boolean;
 
 export function createVarDeclModel(deps: { template: any }): VarDeclModel;

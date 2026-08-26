@@ -85,7 +85,7 @@ async function renderSetCharacters(host, ctx) {
         ...base, id, name: fields.name.value.trim(), gender: fields.gender.value.trim(), age: fields.age.value.trim(),
         personality: fields.personality.value.trim(), location: { name: fields.locationName.value.trim(), level: Number(fields.locationLevel.value) || 1 },
         timer: fields.timer.value.trim() === "" ? null : Number(fields.timer.value), reaction: Number(fields.reaction.value) || 0,
-        level: Number(fields.level.value) || 1, initial_memories: lines("initial_memories"), relations: source.relations ?? {},
+        level: Number(fields.level.value) || 1, initial_memories: lines("initial_memories"), relations: source.relations ?? [],
         vars: { ...(source.vars ?? {}), attachtags },
       };
       try { const response = await api(ctx.characterUrl(id), "PUT", manifest); status.textContent = ` ${response.note}`; }

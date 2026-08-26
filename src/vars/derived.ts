@@ -9,13 +9,13 @@
  * buildDerivedPlan = 依赖图构建：expr 依赖 = binds 值路径（精确）；union_attach
  * 依赖 = paths（粗粒度：子树任意写入触发重算，即子树下每个从动末端都是被依赖项）。
  * 拓扑排序输出求值顺序供写时级联重算；成环 = 抛错（消息带环路径）。同根限定：
- * 依赖路径不得含 world./characters. 前缀（纯相对模板路径）。类型容器在静态计划
+ * 依赖路径不得含 world./characters. 前缀（纯相对模板路径）。结构化数组在静态计划
  * 中按通配段 "*" 展开一次（实例无关的依赖形状）。
  *
  * buildRootDerivedPlan = 写时级联用的根级计划：模板声明 formula ∪ 实例携带 formula
- * （实例覆盖同路径模板声明），拓扑排序后把 "*" 通配段按实例树枚举为实例名，输出
- * 实例侧求值目标序列。类型声明内部的 formula 的 binds/paths 以类型根为基准，并入
- * 计划时按挂载路径补齐前缀（"*" 段在求值时逐位替换为具体实例名）。
+ * （实例覆盖同路径模板声明），拓扑排序后把 "*" 通配段按实例树枚举为元素下标，输出
+ * 实例侧求值目标序列。数组元素结构内的 formula 的 binds/paths 以元素结构根为基准，
+ * 并入计划时按挂载路径补齐前缀（"*" 段在求值时逐位替换为具体下标）。
  *
  * evalDerived = 按声明的 formula 求值：expr 逐键经 scope.resolve 取 number 后走
  * 编译闭包；union_attach 走本模块算子（需要 scope.declRoot 做子树路径解析）。
@@ -24,6 +24,7 @@
  */
 import {
   resolveDeclPath,
+  splitVarPath,
   type ContainerDecl,
   type DeclNode,
   type FormulaDecl,
@@ -39,20 +40,25 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** 取实例子树（仅按实例形状下行；缺段 = undefined）。 */
+/** 取实例子树（仅按实例形状下行，数组层按数字字符串下标穿越；缺段 = undefined）。 */
 function instanceAtPath(instanceRoot: unknown, dottedPath: string): unknown {
   let node = instanceRoot;
-  for (const seg of dottedPath.split(".")) {
-    if (!isPlainObject(node)) return undefined;
-    node = node[seg];
+  for (const seg of splitVarPath(dottedPath)) {
+    if ((!isPlainObject(node) && !Array.isArray(node)) || isTerminalInstance(node)) return undefined;
+    node = (node as Record<string, unknown>)[seg];
     if (node === undefined) return undefined;
   }
   return node;
 }
 
-/** 递归收集实例子树内所有名为 attachtags 的末端实例值（string[] 纯名集合）。 */
+/** 递归收集实例子树内所有名为 attachtags 的末端实例值（string[] 纯名集合；数组逐元素递归）。 */
 function collectAttachTags(node: unknown, sink: (items: readonly string[]) => void): void {
-  if (!isPlainObject(node) || isTerminalInstance(node)) return;
+  if (isTerminalInstance(node)) return;
+  if (Array.isArray(node)) {
+    for (const el of node) collectAttachTags(el, sink);
+    return;
+  }
+  if (!isPlainObject(node)) return;
   for (const [key, value] of Object.entries(node)) {
     if (key === "attachtags" && isTerminalInstance(value) && Array.isArray(value.value)) {
       sink(value.value as string[]);
@@ -65,7 +71,7 @@ function collectAttachTags(node: unknown, sink: (items: readonly string[]) => vo
 /**
  * union_attach 求值：实例根部 attachtags 末端值 ∪ 各子树路径下所有名为 attachtags
  * 的末端实例值；按名去重（先取者胜：自身 attachtags 优先，子树按 paths 顺序）。
- * 子树路径必须解析到容器声明；实例子树缺失按空集处理。
+ * 子树路径必须解析到容器/数组声明；实例子树缺失按空集处理。
  */
 export function unionAttach(
   instanceRoot: InstanceNode,
@@ -85,7 +91,7 @@ export function unionAttach(
   for (const p of subtreePaths) {
     const decl = resolveDeclPath(declRoot, p);
     if (decl.kind === "terminal") {
-      throw new Error(`union_attach 子树路径 "${p}" 必须解析到容器声明`);
+      throw new Error(`union_attach 子树路径 "${p}" 必须解析到容器/数组声明`);
     }
     collectAttachTags(instanceAtPath(instanceRoot, p), pushAll);
   }
@@ -131,14 +137,14 @@ function formulaDeps(path: string, f: FormulaDecl): readonly string[] {
   return list;
 }
 
-/** 收集根下全部带 formula 的末端声明（类型容器按 "*" 通配段展开一次）。 */
+/** 收集根下全部带 formula 的末端声明（结构化数组按 "*" 通配段展开一次）。 */
 function collectDerived(decl: DeclNode, path: string, out: Array<{ path: string; decl: TerminalDecl }>): void {
   if (decl.kind === "terminal") {
     if (decl.formula !== undefined) out.push({ path, decl });
     return;
   }
-  if (decl.kind === "typeContainer") {
-    collectDerived(decl.decl, `${path}.*`, out);
+  if (decl.kind === "array") {
+    collectDerived(decl.element, `${path}.*`, out);
     return;
   }
   for (const [key, child] of Object.entries(decl.children)) {
@@ -146,7 +152,7 @@ function collectDerived(decl: DeclNode, path: string, out: Array<{ path: string;
   }
 }
 
-/** 计划节点：path 可含 "*" 通配段（类型容器层）或为实例侧具体路径。 */
+/** 计划节点：path 可含 "*" 通配段（结构化数组层）或为实例侧具体路径。 */
 interface PlanNode {
   path: string;
   deps: readonly string[];
@@ -259,21 +265,21 @@ export function evalDerived(
 // 写时级联：根级计划（模板声明 ∪ 实例 formula）与实例侧目标求值
 // ---------------------------------------------------------------------------
 
-/** 从动求值目标：实例侧具体路径（类型容器层已枚举为实例名）+ 生效 formula。 */
+/** 从动求值目标：实例侧具体路径（数组层已枚举为元素下标）+ 生效 formula。 */
 export interface DerivedTarget {
   path: string;
   formula: FormulaDecl;
 }
 
-/** 实例侧具体路径 → 模板侧路径（类型容器层以 "*" 占位；按声明树下行，不可下行时原样返回）。 */
+/** 实例侧具体路径 → 模板侧路径（数组层以 "*" 占位；按声明树下行，不可下行时原样返回）。 */
 function patternPathOf(declRoot: DeclNode, concretePath: string): string {
   let node = declRoot;
   const out: string[] = [];
-  for (const seg of concretePath.split(".")) {
+  for (const seg of splitVarPath(concretePath)) {
     if (node.kind === "terminal") return concretePath;
-    if (node.kind === "typeContainer") {
+    if (node.kind === "array") {
       out.push("*");
-      node = node.decl;
+      node = node.element;
       continue;
     }
     const child = node.children[seg];
@@ -285,15 +291,21 @@ function patternPathOf(declRoot: DeclNode, concretePath: string): string {
 }
 
 /**
- * 模板侧路径按实例树把 "*" 通配段枚举为实例名（无实例的类型容器 = 零展开；
- * 普通段实例缺失不截断——从动末端允许有声明无实例，求值时再判定）。
+ * 模板侧路径按实例树把 "*" 通配段枚举为实例键/元素下标（无实例的数组 = 零展开；
+ * 普通段实例缺失不截断——从动末端允许有声明无实例，求值时再判定）。characters 根
+ * 等 cid 键控记录枚举键，结构化数组枚举数字下标——两种通配语义按实例形状分派。
  */
 function expandWildcard(instanceRoot: unknown, patternPath: string): string[] {
   let fronts: Array<{ node: unknown; segs: string[] }> = [{ node: instanceRoot, segs: [] }];
   for (const seg of patternPath.split(".")) {
     const next: Array<{ node: unknown; segs: string[] }> = [];
     for (const f of fronts) {
-      const container = isPlainObject(f.node) && !isTerminalInstance(f.node) ? f.node : undefined;
+      const container =
+        isPlainObject(f.node) && !isTerminalInstance(f.node)
+          ? (f.node as Record<string, unknown>)
+          : Array.isArray(f.node)
+            ? (f.node as unknown as Record<string, unknown>)
+            : undefined;
       if (seg === "*") {
         for (const key of Object.keys(container ?? {})) {
           next.push({ node: (container as Record<string, unknown>)[key], segs: [...f.segs, key] });
@@ -318,26 +330,25 @@ function collectInstanceFormulas(
     if (isTerminalInstance(inst) && inst.formula !== undefined) out.push({ path, formula: inst.formula });
     return;
   }
-  if (!isPlainObject(inst) || isTerminalInstance(inst)) return;
-  if (decl.kind === "typeContainer") {
-    for (const [key, value] of Object.entries(inst)) {
-      collectInstanceFormulas(decl.decl, value, `${path}.${key}`, out);
-    }
+  if (decl.kind === "array") {
+    if (!Array.isArray(inst)) return;
+    inst.forEach((el, i) => collectInstanceFormulas(decl.element, el, `${path}.${i}`, out));
     return;
   }
+  if (!isPlainObject(inst) || isTerminalInstance(inst)) return;
   for (const [key, child] of Object.entries(decl.children)) {
     collectInstanceFormulas(child, inst[key], path === "" ? key : `${path}.${key}`, out);
   }
 }
 
-/** 模板侧路径的类型挂载前缀（formula 的 binds/paths 解析基准）：含 "*" = 截至末个 "*" 段；否则根。 */
+/** 模板侧路径的数组挂载前缀（formula 的 binds/paths 解析基准）：含 "*" = 截至末个 "*" 段；否则根。 */
 function mountPrefixOf(patternPath: string): string {
   const segs = patternPath.split(".");
   const last = segs.lastIndexOf("*");
   return last < 0 ? "" : segs.slice(0, last + 1).join(".");
 }
 
-/** 类型声明内部的 formula 改写到挂载路径基准（binds/paths 补前缀；"*" 段求值时替换为实例名）。 */
+/** 数组元素结构内的 formula 改写到挂载路径基准（binds/paths 补前缀；"*" 段求值时替换为元素下标）。 */
 function rebaseFormula(f: FormulaDecl, mount: string): FormulaDecl {
   if (mount === "") return f;
   if (f.kind === "expr") {
@@ -350,9 +361,9 @@ function rebaseFormula(f: FormulaDecl, mount: string): FormulaDecl {
 
 /**
  * 根级从动计划（写时级联用）：模板声明 formula ∪ 实例携带 formula（实例覆盖同路径
- * 模板声明），依赖图拓扑排序（成环 = 抛错）后把 "*" 通配段按实例树枚举为实例名。
- * 输出 = 按求值顺序排列的实例侧求值目标。类型声明内部的 formula 的依赖以类型根为
- * 基准，并入计划时按挂载路径补齐前缀。
+ * 模板声明），依赖图拓扑排序（成环 = 抛错）后把 "*" 通配段按实例树枚举为元素下标。
+ * 输出 = 按求值顺序排列的实例侧求值目标。数组元素结构内的 formula 的依赖以元素
+ * 结构根为基准，并入计划时按挂载路径补齐前缀。
  */
 export function buildRootDerivedPlan(declRoot: DeclNode, instanceRoot: InstanceNode): DerivedTarget[] {
   const tplDerived: Array<{ path: string; decl: TerminalDecl }> = [];
@@ -393,7 +404,7 @@ export function buildRootDerivedPlan(declRoot: DeclNode, instanceRoot: InstanceN
 
 /**
  * 求值一个实例侧从动目标：expr = binds 逐键 readTerminal 取值（路径中的 "*" 段按
- * 目标具体路径逐位替换为实例名），任一依赖末端无实例（取不到值）= 返回 undefined
+ * 目标具体路径逐位替换为元素下标），任一依赖末端无实例（取不到值）= 返回 undefined
  * （跳过重算，保持现值，不报错）；union_attach = 内置算子（子树缺失按空集）。
  */
 export function evalDerivedTarget(

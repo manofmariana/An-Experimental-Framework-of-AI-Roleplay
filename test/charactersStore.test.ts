@@ -33,7 +33,7 @@ describe("CharactersStore 同构角色文件", () => {
     const store = CharactersStore.fromManifests([manifest()], 1000, DECL);
     const changes = [...store.updateRelations("C1001", [{ target: "@C0", name: "旅人" }]), ...store.setVars("C1001", { timer: 1200 })];
     for (const change of [...changes].reverse()) store.revertChange(change);
-    assert.deepEqual(store.get("C1001").relations, {}); assert.equal(store.get("C1001").timer, 1060);
+    assert.deepEqual(store.get("C1001").relations, []); assert.equal(store.get("C1001").timer, 1060);
   });
   it("saveData 回环：重建后读回一致；旧 schema（无信封）parse 拒绝", () => {
     const store = CharactersStore.fromManifests([manifest()], 1000, DECL);

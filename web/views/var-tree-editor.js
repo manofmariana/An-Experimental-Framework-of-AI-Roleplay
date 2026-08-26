@@ -9,8 +9,9 @@
  * - 世界作用域 =「世界变量」区块；角色作用域 =「角色变量」单区块——系统声明分支
  *   投影与 vars 实例树同一棵树，不再分区；
  * - 树形缩进：子级包 .vte-kids（左侧参考线），容器行首折叠箭头（默认展开）；
- * - 状态操作按钮（实例 +/×、tags）收在行尾 .vte-actions，行 hover 才浮现；
- *   类型容器行尾「+」开行内实例名表单（只动实例不动模板；relations 同通道）；
+ * - 状态操作按钮（数组元素 +/×、tags）收在行尾 .vte-actions，行 hover 才浮现；
+ *   结构化数组行尾「+」追加空白元素（只动实例不动模板；relations 开行内 CID
+ *   表单追加条目）；
  * - 外壳 tags = chip 胶囊（名称 + 等级小字 + ×），行尾小型添加（名称 datalist 来自
  *   _sys.tagRegistry 允许自由输入 + level 1-7）；全部末端（含系统字段）可编——
  *   系统末端写侧车、vars 末端写外壳；附加来源 tags（模型 attachTags）以「附加」徽记
@@ -42,7 +43,7 @@ export function createVarTreeEditor({ el, model, scrollHost, onEdit }) {
   const folded = new Set(); // 折叠的容器 `${scope}|${path}`
   const secFolded = new Set(); // 折叠的区块 `${scope}|${section}`
   const tagsOpen = new Set(); // 展开外壳 tags 编辑器的末端 `${scope}|${path}`
-  let instForm = null; // {path, name}（类型容器新增实例行内表单）
+  let cidForm = null; // {path, cid}（relations 新增条目行内 CID 表单）
   const structPending = new Map(); // `${scope}|${path}` → {texts}（null 结构体两值暂存）
 
   const root = el("div", "vte");
@@ -232,26 +233,26 @@ export function createVarTreeEditor({ el, model, scrollHost, onEdit }) {
 
   // ---- 行内表单 ---------------------------------------------------------------
 
-  /** 类型容器新增实例行内表单（只动实例不动模板；relations 同通道）。 */
-  function renderInstForm() {
+  /** relations 新增条目行内表单（CID 必填；普通数组元素直接追加，无表单）。 */
+  function renderCidForm() {
     const form = el("div", "vte-form");
     const name = el("input");
     name.type = "text";
-    name.placeholder = "实例名";
-    name.value = instForm.name;
+    name.placeholder = "对方 CID（如 C1002）";
+    name.value = cidForm.cid;
     name.onchange = () => {
-      instForm.name = name.value;
+      cidForm.cid = name.value;
     };
     form.appendChild(name);
     const ok = el("button", "vte-btn", "确定");
     ok.onclick = () =>
       runOp(() => {
-        model.addTypeInstance(scope, instForm.path, instForm.name);
-        instForm = null;
+        model.addRelationEntry(scope, cidForm.cid);
+        cidForm = null;
       });
     const cancel = el("button", "vte-btn", "取消");
     cancel.onclick = () => {
-      instForm = null;
+      cidForm = null;
       render();
     };
     form.append(ok, cancel);
@@ -358,33 +359,47 @@ export function createVarTreeEditor({ el, model, scrollHost, onEdit }) {
     }
   }
 
-  /** 容器类行（普通容器 / 类型容器 / 类型实例）：折叠箭头 + 加粗名称 + 计数 + hover 操作。 */
+  /** 容器类行（普通容器 / 结构化数组 / 数组元素）：折叠箭头 + 加粗名称 + 计数 + hover 操作。 */
   function renderContainerLike(node, out) {
     const fk = foldKey(node.path);
     const row = el("div", "vte-row");
     row.appendChild(chevron(fk, true));
     row.appendChild(el("span", "vte-key vte-key-dir", node.key));
-    if (node.kind === "typeContainer") row.appendChild(el("span", "vte-badge vte-type", node.typeName));
-    if (node.kind === "typeInstance") row.appendChild(el("span", "vte-badge", "实例"));
+    if (node.kind === "array") {
+      row.appendChild(el("span", "vte-badge vte-type", node.elementType !== null ? `${node.elementType}[]` : "内联数组"));
+    }
+    if (node.kind === "arrayElement") row.appendChild(el("span", "vte-badge", "元素"));
     // initiative null = 容器无实例（系统分支投影）
     const isNullInitiative = node.path === "initiative" && node.children.every((c) => !c.hasInstance);
     if (isNullInitiative) row.appendChild(el("span", "vte-badge", "null"));
     row.appendChild(el("span", "vte-count", `${node.children.length}`));
 
     const btns = [];
-    if (node.kind === "typeContainer") {
-      btns.push(
-        iconBtn("+", "新增实例（只动实例不动模板）", () => {
-          instForm = { path: node.path, name: "" };
-          folded.delete(fk); // 展开以露出表单
-          render();
-        }),
-      );
+    if (node.kind === "array") {
+      if (node.path === "relations" && scope !== WORLD_SCOPE) {
+        // relations 条目 = 系统数组元素：CID 必填（行内表单）
+        btns.push(
+          iconBtn("+", "新增关系条目（CID 必填）", () => {
+            cidForm = { path: node.path, cid: "" };
+            folded.delete(fk); // 展开以露出表单
+            render();
+          }),
+        );
+      } else {
+        btns.push(
+          iconBtn("+", "新增元素（按元素结构物化空白，只动实例不动模板）", () =>
+            runOp(() => {
+              model.addArrayElement(scope, node.path);
+              folded.delete(fk);
+            }),
+          ),
+        );
+      }
     }
-    if (node.kind === "typeInstance" && node.canRemoveInstance) {
-      const parentPath = node.path.includes(".") ? node.path.slice(0, node.path.lastIndexOf(".")) : "";
+    if (node.kind === "arrayElement" && node.canRemoveElement) {
+      const parentPath = node.path.replace(/\[\d+\]$/, "");
       btns.push(
-        iconBtn("×", "删除实例（不动模板）", () => runOp(() => model.removeTypeInstance(scope, parentPath, node.key))),
+        iconBtn("×", "删除元素（不动模板）", () => runOp(() => model.removeArrayElement(scope, parentPath, Number(node.key)))),
       );
     }
     if (btns.length > 0) row.appendChild(actionsOf(...btns));
@@ -392,7 +407,7 @@ export function createVarTreeEditor({ el, model, scrollHost, onEdit }) {
 
     if (folded.has(fk)) return;
     const kids = el("div", "vte-kids");
-    if (instForm !== null && instForm.path === node.path) kids.appendChild(renderInstForm());
+    if (cidForm !== null && cidForm.path === node.path) kids.appendChild(renderCidForm());
     if (isNullInitiative) {
       renderInitiativeNullForm(node, kids);
     } else {
@@ -410,8 +425,8 @@ export function createVarTreeEditor({ el, model, scrollHost, onEdit }) {
         renderTerminal(node, out);
         return;
       case "container":
-      case "typeContainer":
-      case "typeInstance":
+      case "array":
+      case "arrayElement":
         renderContainerLike(node, out);
         return;
       default:
@@ -453,7 +468,7 @@ export function createVarTreeEditor({ el, model, scrollHost, onEdit }) {
     select.value = scope;
     select.onchange = () => {
       scope = select.value;
-      instForm = null;
+      cidForm = null;
       render();
     };
     head.appendChild(select);

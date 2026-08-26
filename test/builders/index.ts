@@ -92,7 +92,7 @@ export function buildManifest(overrides: Partial<CharacterManifest> & { id: stri
     level: 1,
     omniscience: 0,
     isPlayer: false,
-    relations: {},
+    relations: [],
     vars: {},
     ...overrides,
   };
@@ -115,7 +115,7 @@ export function buildCharacterState(overrides?: Partial<CharacterState>): Charac
     level: 1,
     omniscience: 0,
     isPlayer: false,
-    relations: {},
+    relations: [],
     long_term_memory: [],
     systemTags: {},
     vars: {},

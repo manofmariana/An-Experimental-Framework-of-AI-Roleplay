@@ -1,22 +1,24 @@
 /**
  * 双根 deltas 应用编排 + 档内 `_sys` 严格解析（truth 层；纯内存变异）。
  *
- * 路由：`world.…` → world 域；`characters.{cid}.…` → 角色域（cid 必须存在）。
- * 拒写：`world.time`（时间只能由调度器推进）/`world._sys`/`world.pipeline`（程序分支）、
+ * 路由：`world.…` → world 域；`characters.{cid}.…` → 角色域（cid 必须存在）。路径支持
+ * 数组下标语法 `键[数字]`（如 characters.C1001.vars.items[0].name；解析期拆段，落账路径
+ * 归一化为点分数字下标）；`[*]` 通配只用于从动/附加解析，写路径一律拒。拒写：
+ * `world.time`（时间只能由调度器推进）/`world._sys`/`world.pipeline`（程序分支）、
  * 角色系统分支（vars 下首段命中系统声明分支键（name/timer/location 等）即拒——系统
  * 字段走 durations/location 等白名单专用通道，GM deltas 只可写 vars 作者子树；系统
  * 末端 tags 侧车本轮不开放 GM 写通道）、从动末端（带 formula，由程序维护）。
  *
  * 校验：路径必须在档内模板中可解析（resolvePath，无声明 = 抛错拒绝该条）；
  * 写末端 = 写 value（`=` 全量替换，值按 valueType 校验，外壳 tags 保留；`+=`/`-=` 仅
- * number 末端且当前值与增量均数值）；写容器 = `=` 整体对象（经 normalizeInstance 校验）；
- * attachtags（string_list 纯名集合）写值过 validateTagNamesWrite、tag_list 末端写值过
- * validateTagListWrite（名称校验 = 档内注册名集合 + 开放类别声明，deps 注入；cid 类别
- * 实例集 = 调用方注入的现存角色 CID 集合）。
+ * number 末端且当前值与增量均数值）；写容器/数组 = `=` 整体值（经 normalizeInstance
+ * 校验）；attachtags（string_list 纯名集合）写值过 validateTagNamesWrite、tag_list
+ * 末端写值过 validateTagListWrite（名称校验 = 档内注册名集合 + 开放类别声明，deps
+ * 注入；cid 类别实例集 = 调用方注入的现存角色 CID 集合）。
  *
  * 落地：经 store 低层写入口（writeRaw）写入，产出真相根路径 VarChange。每写落一条
  * delta 后对该根做整根从动级联：按依赖图拓扑序重算全部从动末端（expr 公式 +
- * union_attach，含实例携带 formula 与类型容器 "*" 段实例枚举），值变则写回并追加
+ * union_attach，含实例携带 formula 与结构化数组 "*" 段元素枚举），值变则写回并追加
  * 该末端的 VarChange（级联写回是程序内部写，不走 GM 拒写闸）。
  *
  * `_sys` 程序分支 = {tagRegistry, varsTemplate, varsTags, cycles_since_gm, gm_trigger,
@@ -32,6 +34,7 @@ import { SYSTEM_CHAR_KEYS } from "../vars/systemChar.js";
 import {
   parseVarsTags,
   parseVarsTemplate,
+  splitVarPath,
   type DeclNode,
   type VarsTagsNode,
   type VarsTemplate,
@@ -129,7 +132,7 @@ export interface VarWriteStores {
 
 /**
  * 整根从动级联：按该根依赖图拓扑序重算全部从动末端（expr 公式 + union_attach，
- * 含实例携带 formula 与类型容器 "*" 段实例枚举），值变则写回并追加该末端的
+ * 含实例携带 formula 与结构化数组 "*" 段元素枚举），值变则写回并追加该末端的
  * VarChange（真相根路径）；值不变/依赖末端无实例（跳过重算）不产生记录。
  * 从动集合小，不做细粒度失效分析——任一根写落后整根全量重算。
  */
@@ -177,7 +180,19 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** 计算写入值（末端 = 外壳整体，容器 = normalize 后的子树）。 */
+/**
+ * 写路径拆段（`键[数字]` → 键 + 下标两段）：通配段 `*` = 拒写（通配只用于从动/附加
+ * 解析）；返回点分归一段序列（落账路径 = 段列 join "."）。
+ */
+function splitWritePath(path: string): string[] {
+  const segs = splitVarPath(path);
+  if (segs.includes("*")) {
+    throw new Error(`写路径不支持 [*] 通配（${path}）`);
+  }
+  return segs;
+}
+
+/** 计算写入值（末端 = 外壳整体，容器/数组 = normalize 后的子树）。 */
 function computeWriteValue(
   decl: DeclNode,
   before: unknown,
@@ -186,7 +201,7 @@ function computeWriteValue(
   deps: VarWriteDeps,
 ): unknown {
   if (decl.kind !== "terminal") {
-    if (delta.op !== "=") throw new Error(`${delta.op} 只能用于 number 末端（${atPath} 为容器）`);
+    if (delta.op !== "=") throw new Error(`${delta.op} 只能用于 number 末端（${atPath} 为容器/数组）`);
     return normalizeInstance(delta.value, decl, atPath, deps);
   }
   if (decl.formula !== undefined) {
@@ -198,7 +213,7 @@ function computeWriteValue(
       return { value: validateTagListWrite(delta.value, deps), tags: existingTags };
     }
     // attachtags = 对象侧纯名集合（string_list 保留名末端）：名称校验
-    if (decl.valueType === "string_list" && atPath.split(".").at(-1) === "attachtags") {
+    if (decl.valueType === "string_list" && splitVarPath(atPath).at(-1) === "attachtags") {
       return { value: validateTagNamesWrite(delta.value, deps), tags: existingTags };
     }
     if (isPlainObject(delta.value)) {
@@ -220,7 +235,8 @@ function computeWriteValue(
 /** world 域：拒写 time/_sys/pipeline 程序分支，其余按 world 模板校验落账；写后整根级联。 */
 function applyWorldDelta(stores: VarWriteStores, delta: StateDelta, deps: VarWriteDeps): VarChange[] {
   const rest = delta.path.slice("world.".length);
-  const head = rest.split(".")[0]!;
+  const segs = splitWritePath(rest);
+  const head = segs[0]!;
   if (head === "") throw new Error(`变量路径不完整：${delta.path}`);
   if (head === "time") {
     throw new Error(`GM deltas 不得修改 world.time；时间只能由调度器推进：${delta.path}`);
@@ -228,9 +244,10 @@ function applyWorldDelta(stores: VarWriteStores, delta: StateDelta, deps: VarWri
   if (head === "_sys" || head === "pipeline") {
     throw new Error(`GM deltas 不得写程序分支 world.${head}：${delta.path}`);
   }
-  const decl = resolvePath(deps.template.world, rest);
-  const before = getByPath(stores.world.world, rest);
-  const change = stores.world.writeRaw(rest, computeWriteValue(decl, before, delta, delta.path, deps));
+  const rel = segs.join(".");
+  const decl = resolvePath(deps.template.world, rel);
+  const before = getByPath(stores.world.world, rel);
+  const change = stores.world.writeRaw(rel, computeWriteValue(decl, before, delta, delta.path, deps));
   return [change, ...cascadeDerived(stores, { kind: "world" }, deps)];
 }
 
@@ -248,7 +265,8 @@ function applyCharacterDelta(stores: VarWriteStores, delta: StateDelta, deps: Va
       `角色系统字段走白名单专用通道（durations/location 等裁决包字段），GM deltas 只可写 vars 子树：${delta.path}`,
     );
   }
-  const rel = inner.slice("vars".length).replace(/^\./, "");
+  const relRaw = inner.slice("vars".length).replace(/^\./, "");
+  const rel = relRaw === "" ? "" : splitWritePath(relRaw).join(".");
   // 系统分支先查：vars 下首段命中系统声明分支键 = 拒写（系统字段走白名单专用通道）
   const relHead = rel.split(".")[0]!;
   if (SYSTEM_CHAR_KEYS.has(relHead)) {

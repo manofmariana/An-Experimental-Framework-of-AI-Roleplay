@@ -5,13 +5,21 @@
  * 后传入，全部编辑原地作用于副本），服务世界页「变量模板」子区：纯声明树结构编辑——
  * 无实例列、无值编辑（实例状态编辑在游玩页直编 modal，见 var-tree-model）。
  *
- * 同时是声明树共享原语的唯一出处（var-tree-model 复用）：VALUE_TYPES /
- * defaultValueFor / isPlainObject / classifyRawDecl / validateBaseName /
- * formulaViewOf / collectTypeRefs。
+ * 同时是声明树共享原语的唯一出处（var-tree-model / vars-tags-model 复用）：
+ * VALUE_TYPES / defaultValueFor / isPlainObject / classifyRawDecl / validateBaseName /
+ * formulaViewOf / collectTypeRefs / splitVarPath / isIndexSegment。
+ *
+ * 声明节点形态：末端（字符串简写 / {valueType, formula?}）/ 容器（{children}）/
+ * 结构化数组（{array: {type} 引用类型 | {array: {children}} 内联元素结构；元素根不得
+ * 又是数组）。types = 纯结构别名注册表（每类型只能 {children}）。
+ *
+ * 路径语法（splitVarPath 拆段）：`键[数字]` = 数组精确下标、`键[*]` = 数组通配；
+ * 声明编辑导航对内联元素结构一律经 `[*]` 段（如 items[*].name）。
  *
  * 视图模型（buildRootView 世界/角色根 + buildTypesView 类型区）：
  * - 末端 = declTerminal（valueType + 结构化 formula 视图）；容器 = declContainer
- *   （可递归新增）；类型容器 = declTypeContainer（只显示类型引用，字段到类型区编辑）；
+ *   （可递归新增）；结构化数组 = declArray（引用类型只显示徽记，字段到类型区编辑；
+ *   内联元素结构可经 `[*]` 路径递归编辑）；
  * - character 根必需声明 attachtags/tags 保护性拒删（服务端 parse 仍是最终闸）；
  * - **character 根视图并入系统声明分支显示**（镜像常量取自 system-char-decl.js，
  *   系统节点 system 标记 + 全部操作禁用，作者子树原序随后；world 根不变）。系统
@@ -21,17 +29,18 @@
  *
  * 编辑操作（先校验后落副本，非法即抛错，消息给编辑器错误行原样展示）：
  * - addDecl / deleteDecl：容器「+」——扁平末端（五 valueType 字符串简写声明）/
- *   结构体（{children:{}}）/ 多实例容器（{type} 引用已有类型）；删除 = 摘声明；
+ *   结构体（{children:{}}）/ 结构化数组（引用类型或内联元素结构）；删除 = 摘声明；
  * - addType / deleteType / addTypeField / removeTypeField：类型区——新建类型 = 命名
- *   空结构体；删除类型前端预检引用（服务端保存时严格解析仍是最终闸）；
+ *   空结构体；删除类型前端预检引用（含数组元素 {type} 引用；服务端保存时严格解析
+ *   仍是最终闸）；
  * - setDeclFormula：末端 formula 声明编辑/清空（expr + binds 仅 number 末端，
  *   binds 值 = 同根 number 末端路径；union_attach 仅 string_list 末端，paths = 同根
- *   容器路径；character 根 attachtags 不得挂 formula、tags 必须保持 union_attach）；
+ *   容器/数组路径；character 根 attachtags 不得挂 formula、tags 必须保持 union_attach）；
  * - setTypeDeclFormula：类型声明内末端 formula 编辑/清空（binds/paths 以类型根为
- *   基准校验与展示；嵌套 {type} 引用内的末端不开放，到其类型上编辑）。
+ *   基准校验与展示；引用类型数组元素内的末端不开放，到其类型上编辑）。
  */
 
-import { SYSTEM_CHAR_DECLS, SYSTEM_CHAR_KEYS } from "./system-char-decl.js";
+import { SYSTEM_CHAR_DECLS, SYSTEM_CHAR_KEYS, SYSTEM_CHAR_TYPES } from "./system-char-decl.js";
 
 export const VALUE_TYPES = ["number", "string", "boolean", "string_list", "tag_list"];
 
@@ -45,20 +54,27 @@ const CHAR_ROOT_REQUIRED = new Set(["attachtags", "tags"]);
 const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 // ---------------------------------------------------------------------------
-// 共享原语（var-tree-model 复用）
+// 共享原语（var-tree-model / vars-tags-model 复用）
 // ---------------------------------------------------------------------------
 
 export function isPlainObject(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** 原始声明节点判别：末端（简写/完整形）/ 容器 / 类型容器；不可判别 = null。 */
+/**
+ * 原始声明节点判别：末端（简写/完整形）/ 容器 / 结构化数组；不可判别 = null。
+ * 数组元素 = {type} 引用类型（elementType）或 {children} 内联结构（elementChildren）。
+ */
 export function classifyRawDecl(raw) {
   if (typeof raw === "string") {
     return VALUE_TYPES.includes(raw) ? { kind: "terminal", valueType: raw, formula: undefined } : null;
   }
   if (!isPlainObject(raw)) return null;
-  if (typeof raw.type === "string") return { kind: "typeContainer", typeName: raw.type };
+  if (isPlainObject(raw.array)) {
+    if (typeof raw.array.type === "string") return { kind: "array", elementType: raw.array.type, elementChildren: undefined };
+    if (isPlainObject(raw.array.children)) return { kind: "array", elementType: undefined, elementChildren: raw.array.children };
+    return null;
+  }
   if (isPlainObject(raw.children)) return { kind: "container", children: raw.children };
   if (typeof raw.valueType === "string" && VALUE_TYPES.includes(raw.valueType)) {
     return { kind: "terminal", valueType: raw.valueType, formula: raw.formula };
@@ -84,10 +100,11 @@ export function defaultValueFor(valueType) {
   }
 }
 
-/** 变量名基础合法性：非空、无路径分隔符、非保留名。 */
+/** 变量名基础合法性：非空、无路径分隔符/下标括号、非保留名。 */
 export function validateBaseName(name) {
   if (typeof name !== "string" || name.trim() === "") throw new Error("变量名不能为空");
   if (name.includes(".")) throw new Error(`变量名 "${name}" 不得包含 "."`);
+  if (name.includes("[") || name.includes("]")) throw new Error(`变量名 "${name}" 不得包含 "[" / "]"`);
   if (RESERVED_NAMES.has(name)) throw new Error(`变量名 "${name}" 为保留名`);
 }
 
@@ -103,11 +120,17 @@ export function formulaViewOf(raw) {
   return null;
 }
 
-/** 收集原始声明子树内全部 {type} 引用名。 */
+/** 收集原始声明子树内全部类型引用名（含数组元素 {type} 引用）。 */
 export function collectTypeRefs(raw, out) {
   if (typeof raw === "string" || !isPlainObject(raw)) return;
-  if (typeof raw.type === "string") {
-    out.push(raw.type);
+  if (isPlainObject(raw.array)) {
+    if (typeof raw.array.type === "string") {
+      out.push(raw.array.type);
+      return;
+    }
+    if (isPlainObject(raw.array.children)) {
+      for (const child of Object.values(raw.array.children)) collectTypeRefs(child, out);
+    }
     return;
   }
   if (isPlainObject(raw.children)) {
@@ -115,8 +138,26 @@ export function collectTypeRefs(raw, out) {
   }
 }
 
-function splitPath(path) {
-  return path === "" ? [] : path.split(".");
+const SEG_RE = /^([^[\]]+?)(?:\[(\d+|\*)\])?$/;
+
+/**
+ * 路径拆段（与服务端 splitVarPath 同口径）：`a.b[0].c[*]` → ["a","b","0","c","*"]；
+ * 非法段（裸括号/空键）= 抛错。
+ */
+export function splitVarPath(path) {
+  const out = [];
+  for (const raw of path.split(".")) {
+    const m = SEG_RE.exec(raw);
+    if (m === null) throw new Error(`路径 "${path}" 含非法段 "${raw}"（下标语法：键[数字] / 键[*]）`);
+    out.push(m[1]);
+    if (m[2] !== undefined) out.push(m[2]);
+  }
+  return out;
+}
+
+/** 段 = 数组下标（精确数字或 `*` 通配）。 */
+export function isIndexSegment(seg) {
+  return seg === "*" || /^\d+$/.test(seg);
 }
 
 // ---------------------------------------------------------------------------
@@ -145,11 +186,16 @@ export function createVarDeclModel({ template }) {
   }
 
   /**
-   * 系统分支写护栏：character 根首段命中系统声明键即拒——系统分支只是显示注入
-   * （代码常量，不进模板文件），任何写操作不得落工作副本。
+   * 系统分支写护栏：character 根首段（先拆 `键[下标]` 取键）命中系统声明键即拒——
+   * 系统分支只是显示注入（代码常量，不进模板文件），任何写操作不得落工作副本。
    */
   function assertNotSystemDecl(root, path) {
-    const head = splitPath(path)[0] ?? "";
+    let head = "";
+    try {
+      head = splitVarPath(path)[0] ?? "";
+    } catch {
+      head = "";
+    }
     if (root === "character" && SYSTEM_CHAR_KEYS.has(head)) {
       throw new Error(`"${head}" 属系统声明分支（代码常量），只读不写回`);
     }
@@ -160,75 +206,112 @@ export function createVarDeclModel({ template }) {
   }
 
   function typeChildren(typeName) {
+    if (Object.hasOwn(SYSTEM_CHAR_TYPES, typeName)) return SYSTEM_CHAR_TYPES[typeName].children;
     const info = classifyRawDecl(rawTypes()[typeName]);
     return info !== null && info.kind === "container" ? info.children : null;
   }
 
   /**
-   * 解析根内点分路径到原始声明节点（类型容器按实例名自由穿越，实例名段解析为类型
-   * 声明容器且 parent 置空——其下节点不开放增删）。character 根首层带系统声明分支
-   * overlay：查找并入系统声明（formula 校验可解析系统末端），parent 仍指作者子树表
-   * ——系统节点的写操作由各写操作的系统护栏先拒，不会落到这里。
+   * 解析根内路径到原始声明节点（`键[数字]`/`键[*]` 下标段穿越数组元素结构——引用类型
+   * 的元素解析为类型声明且 crossedElement 置位，其下节点不开放增删；内联元素结构可
+   * 编辑）。character 根首层带系统声明分支 overlay：查找并入系统声明（formula 校验可
+   * 解析系统末端），parent 仍指作者子树表——系统节点的写操作由各写操作的系统护栏
+   * 先拒，不会落到这里。
    * @returns {{raw: any, info: object, parent: {children: object, key: string}|null,
-   *            crossedType: boolean} | null} 不可解析 = null
+   *            crossedElement: boolean} | null} 不可解析 = null
    */
   function resolveDeclPath(root, path) {
-    const segs = splitPath(path);
     const children = rootChildren(root);
     if (children === null) return null;
-    if (segs.length === 0) {
-      return { raw: null, info: { kind: "container", children }, parent: null, crossedType: false };
+    if (path === "") {
+      return { raw: null, info: { kind: "container", children }, parent: null, crossedElement: false };
     }
-    // layer：children = 普通容器子键表（sys = character 根首层的系统分支 overlay）；
-    // typeInst = 类型容器层（键为自由实例名，解析为类型声明）
-    let layer = { kind: "children", map: children, sys: root === "character" ? SYSTEM_CHAR_DECLS : null };
-    let crossedType = false;
+    let segs;
+    try {
+      segs = splitVarPath(path);
+    } catch {
+      return null;
+    }
+    // layer：map = 当前可按键查找的子键表（sys = character 根首层的系统分支 overlay）；
+    // locked = 引用类型数组的元素结构（只读导航，不开放增删）
+    let layer = { map: children, sys: root === "character" ? SYSTEM_CHAR_DECLS : null, locked: false };
+    let crossedElement = false;
     for (let i = 0; i < segs.length; i++) {
       const key = segs[i];
-      let raw = null;
-      let info = null;
-      let parent = null;
-      if (layer.kind === "typeInst") {
-        if (key === "") return null;
-        info = { kind: "container", children: layer.map };
-        crossedType = true;
-      } else {
-        raw = layer.map[key];
-        if (raw === undefined) {
-          if (!layer.sys || !Object.hasOwn(layer.sys, key)) return null;
-          raw = layer.sys[key];
-        }
-        info = classifyRawDecl(raw);
-        if (info === null) return null;
-        parent = { children: layer.map, key };
+      let raw = layer.map[key];
+      if (raw === undefined) {
+        if (layer.sys === null || !Object.hasOwn(layer.sys, key)) return null;
+        raw = layer.sys[key];
       }
-      if (i === segs.length - 1) return { raw, info, parent, crossedType };
+      const info = classifyRawDecl(raw);
+      if (info === null) return null;
+      const parent = { children: layer.map, key };
+      if (i === segs.length - 1) return { raw, info, parent, crossedElement };
       if (info.kind === "container") {
-        layer = { kind: "children", map: info.children, sys: null };
-      } else if (info.kind === "typeContainer") {
-        const next = typeChildren(info.typeName);
-        if (next === null) return null;
-        layer = { kind: "typeInst", map: next };
-      } else {
-        return null; // 穿越末端
+        layer = { map: info.children, sys: null, locked: layer.locked };
+        continue;
       }
+      if (info.kind === "array") {
+        const idx = segs[i + 1];
+        if (idx === undefined || !isIndexSegment(idx)) return null;
+        i += 1; // 消费下标段
+        if (i === segs.length - 1) {
+          // 路径止于元素本身（如 items[*]）：呈现为元素结构容器（引用类型 = 只读导航）
+          const map = info.elementType !== undefined ? typeChildren(info.elementType) : info.elementChildren;
+          if (map == null) return null;
+          return {
+            raw: null,
+            info: { kind: "container", children: map },
+            parent: null,
+            crossedElement: info.elementType !== undefined,
+          };
+        }
+        if (info.elementType !== undefined) {
+          const map = typeChildren(info.elementType);
+          if (map === null) return null;
+          layer = { map, sys: null, locked: true };
+          crossedElement = true;
+        } else {
+          layer = { map: info.elementChildren, sys: null, locked: layer.locked };
+        }
+        continue;
+      }
+      return null; // 穿越末端
     }
     return null;
   }
 
   /**
-   * 类型声明内导航：沿 {children} 普通容器下行到目标容器子键表；穿越 {type} 引用或
-   * 末端 = 抛错（嵌套类型容器的字段请到其类型上编辑）。
+   * 类型声明内导航：沿 {children} 普通容器与内联数组元素结构（`[*]` 段）下行到目标
+   * 容器子键表；穿越引用类型数组元素或末端 = 抛错（其字段请到对应类型上编辑）。
    */
   function typeDeclContainerAt(typeName, containerPath) {
     let children = typeChildren(typeName);
-    if (children === null) throw new Error(`类型 "${typeName}" 未声明`);
-    for (const seg of splitPath(containerPath)) {
+    if (children === null || Object.hasOwn(SYSTEM_CHAR_TYPES, typeName)) {
+      throw new Error(`类型 "${typeName}" 未声明`);
+    }
+    let segs;
+    try {
+      segs = containerPath === "" ? [] : splitVarPath(containerPath);
+    } catch {
+      throw new Error(`类型 "${typeName}" 路径 "${containerPath || "<根>"}" 不可解析`);
+    }
+    for (let i = 0; i < segs.length; i++) {
+      const seg = segs[i];
       const raw = children[seg];
       const info = raw === undefined ? null : classifyRawDecl(raw);
       if (info === null) throw new Error(`类型 "${typeName}" 路径 "${containerPath || "<根>"}" 不可解析`);
-      if (info.kind === "typeContainer") {
-        throw new Error(`嵌套类型容器 "${seg}" 的字段请到类型 "${info.typeName}" 上编辑`);
+      if (info.kind === "array") {
+        const idx = segs[i + 1];
+        if (idx === undefined || !isIndexSegment(idx)) {
+          throw new Error(`类型 "${typeName}" 路径 "${containerPath}" 的数组层需要 [*] 段`);
+        }
+        i += 1;
+        if (info.elementType !== undefined) {
+          throw new Error(`引用类型数组 "${seg}" 的元素字段请到类型 "${info.elementType}" 上编辑`);
+        }
+        children = info.elementChildren;
+        continue;
       }
       if (info.kind !== "container") throw new Error(`类型 "${typeName}" 路径 "${containerPath}" 穿越末端`);
       children = info.children;
@@ -237,13 +320,19 @@ export function createVarDeclModel({ template }) {
   }
 
   /**
-   * 类型内路径解析（formula binds/paths 校验基准 = 类型根；嵌套 {type} 引用按模板语义
-   * 穿越——实例名段自由，与服务端类型内联后的解析口径一致）。不可解析 = null。
+   * 类型内路径解析（formula binds/paths 校验基准 = 类型根；数组层按下标段穿越——
+   * 引用类型元素按模板语义穿越到类型声明，与服务端类型内联后的解析口径一致）。
+   * 不可解析 = null。
    */
   function resolveInType(typeName, path) {
     let children = typeChildren(typeName);
     if (children === null) return null;
-    const segs = splitPath(path);
+    let segs;
+    try {
+      segs = path === "" ? [] : splitVarPath(path);
+    } catch {
+      return null;
+    }
     if (segs.length === 0) return { kind: "container", children };
     let info = null;
     for (let i = 0; i < segs.length; i++) {
@@ -253,12 +342,16 @@ export function createVarDeclModel({ template }) {
       if (i === segs.length - 1) return info;
       if (info.kind === "container") {
         children = info.children;
-      } else if (info.kind === "typeContainer") {
-        const next = typeChildren(info.typeName);
-        if (next === null) return null;
-        i += 1; // 实例名段（自由）
-        if (i >= segs.length || segs[i] === "") return null;
-        if (i === segs.length - 1) return { kind: "container", children: next };
+      } else if (info.kind === "array") {
+        const idx = segs[i + 1];
+        if (idx === undefined || !isIndexSegment(idx)) return null;
+        i += 1; // 消费下标段
+        if (i === segs.length - 1) {
+          const map = info.elementType !== undefined ? typeChildren(info.elementType) : info.elementChildren;
+          return map == null ? null : { kind: "container", children: map };
+        }
+        const next = info.elementType !== undefined ? typeChildren(info.elementType) : info.elementChildren;
+        if (next == null) return null;
         children = next;
       } else {
         return null; // 穿越末端
@@ -267,9 +360,9 @@ export function createVarDeclModel({ template }) {
     return info;
   }
 
-  /** 类型内末端定位（写 formula 用；穿越嵌套 {type} 引用 = 抛错，到其类型上编辑）。 */
+  /** 类型内末端定位（写 formula 用；穿越引用类型数组元素 = 抛错，到其类型上编辑）。 */
   function typeDeclTerminalAt(typeName, path) {
-    const segs = splitPath(path);
+    const segs = splitVarPath(path);
     if (segs.length === 0) throw new Error("字段路径为空");
     const children = typeDeclContainerAt(typeName, segs.slice(0, -1).join("."));
     const key = segs[segs.length - 1];
@@ -290,7 +383,7 @@ export function createVarDeclModel({ template }) {
         if (typeof p !== "string" || p.trim() === "") throw new Error("union_attach paths 含空路径");
         const target = resolveInType(typeName, p);
         if (target === null) throw new Error(`union_attach 路径 "${p}" 在类型 "${typeName}" 内不可解析`);
-        if (target.kind === "terminal") throw new Error(`union_attach 路径 "${p}" 必须解析到容器声明`);
+        if (target.kind === "terminal") throw new Error(`union_attach 路径 "${p}" 必须解析到容器/数组声明`);
       }
       return;
     }
@@ -314,9 +407,9 @@ export function createVarDeclModel({ template }) {
   // ---- 视图模型构建 ---------------------------------------------------------
 
   /**
-   * 声明子树 → 视图节点（类型容器不展开——其字段到类型区编辑）。
+   * 声明子树 → 视图节点（引用类型数组不展开——元素字段到类型区编辑）。
    * system = 系统声明分支节点：system 标记（呈现层徽记）+ canDelete 强制 false，
-   * 容器子节点递归继承（系统容器内全禁）。
+   * 容器/内联数组子节点递归继承（系统容器内全禁）。
    */
   function buildNode(key, path, raw, canDelete, system = false) {
     const info = classifyRawDecl(raw);
@@ -334,8 +427,19 @@ export function createVarDeclModel({ template }) {
         system,
       };
     }
-    if (info.kind === "typeContainer") {
-      return { key, path, kind: "declTypeContainer", typeName: info.typeName, canDelete: canDelete && !system, system };
+    if (info.kind === "array") {
+      const node = {
+        key, path, kind: "declArray",
+        elementType: info.elementType ?? null,
+        canDelete: canDelete && !system,
+        system,
+      };
+      if (info.elementChildren !== undefined) {
+        node.children = Object.entries(info.elementChildren).map(([childKey, childRaw]) =>
+          buildNode(childKey, `${path}[*].${childKey}`, childRaw, true, system),
+        );
+      }
+      return node;
     }
     return {
       key, path, kind: "declContainer",
@@ -355,12 +459,13 @@ export function createVarDeclModel({ template }) {
       return spec.valueType; // 字符串简写
     }
     if (kind === "struct") return { children: {} };
-    if (kind === "typeContainer") {
-      if (typeof spec.typeName !== "string" || typeChildren(spec.typeName) === null) {
+    if (kind === "array") {
+      if (typeof spec.typeName !== "string" || typeChildren(spec.typeName) === null || Object.hasOwn(SYSTEM_CHAR_TYPES, spec.typeName)) {
         throw new Error(`类型 "${spec.typeName}" 未声明（可先在类型区新建）`);
       }
-      return { type: spec.typeName };
+      return { array: { type: spec.typeName } };
     }
+    if (kind === "arrayInline") return { array: { children: {} } };
     throw new Error(`未知种类 "${kind}"`);
   }
 
@@ -374,7 +479,7 @@ export function createVarDeclModel({ template }) {
         if (typeof p !== "string" || p.trim() === "") throw new Error("union_attach paths 含空路径");
         const target = resolveDeclPath(root, p);
         if (target === null) throw new Error(`union_attach 路径 "${p}" 在同根模板中不可解析`);
-        if (target.info.kind === "terminal") throw new Error(`union_attach 路径 "${p}" 必须解析到容器声明`);
+        if (target.info.kind === "terminal") throw new Error(`union_attach 路径 "${p}" 必须解析到容器/数组声明`);
       }
       return;
     }
@@ -403,13 +508,13 @@ export function createVarDeclModel({ template }) {
       return ROOTS.map((r) => ({ ...r }));
     },
 
-    /** 已声明类型名列表（多实例容器新增与类型区用）。 */
+    /** 已声明类型名列表（结构化数组引用与类型区用）。 */
     listTypeNames() {
       return Object.keys(rawTypes());
     },
 
     /**
-     * 构建根声明树视图：{root, children}（declTerminal/declContainer/declTypeContainer）。
+     * 构建根声明树视图：{root, children}（declTerminal/declContainer/declArray）。
      * character 根 = 系统声明分支（显示注入，system 标记 + 全操作禁，键序 = 呈现序）
      * + 作者子树（原序随后）；作者声明与系统键同名（服务端拒装的非法模板）同样按
      * 系统节点只读呈现，与写护栏口径一致。world 根不变。
@@ -432,7 +537,8 @@ export function createVarDeclModel({ template }) {
 
     /**
      * 构建类型区视图：{children} = 各类型根（kind: "typeRoot"），子节点为声明字段
-     * （typeDeclTerminal / typeDeclContainer / typeDeclTypeRef；path 为类型内点分路径）。
+     * （typeDeclTerminal / typeDeclContainer / typeDeclArray；path 为类型内路径，
+     * 内联数组元素字段经 `[*]` 段）。
      */
     buildTypesView() {
       const buildDeclNode = (typeName, key, path, raw) => {
@@ -446,8 +552,14 @@ export function createVarDeclModel({ template }) {
             formula: derived ? formulaViewOf(info.formula) : null,
           };
         }
-        if (info.kind === "typeContainer") {
-          return { key, path, kind: "typeDeclTypeRef", typeName, refTypeName: info.typeName };
+        if (info.kind === "array") {
+          const node = { key, path, kind: "typeDeclArray", typeName, elementType: info.elementType ?? null };
+          if (info.elementChildren !== undefined) {
+            node.children = Object.entries(info.elementChildren).map(([childKey, childRaw]) =>
+              buildDeclNode(typeName, childKey, `${path}[*].${childKey}`, childRaw),
+            );
+          }
+          return node;
         }
         return {
           key, path, kind: "typeDeclContainer", typeName,
@@ -469,9 +581,10 @@ export function createVarDeclModel({ template }) {
     },
 
     /**
-     * 普通容器下结构新增（只动声明，无实例联动）。系统分支容器路径护栏拒写；
-     * character 根与系统声明分支键同名 = 冲突拒绝。
-     * spec = {name, kind: "terminal"(缺省)|"struct"|"typeContainer", valueType?, typeName?}
+     * 普通容器/内联数组元素结构下结构新增（只动声明，无实例联动；数组目标路径以
+     * `[*]` 段结尾，如 items[*]）。系统分支路径护栏拒写；character 根与系统声明
+     * 分支键同名 = 冲突拒绝。
+     * spec = {name, kind: "terminal"(缺省)|"struct"|"array"|"arrayInline", valueType?, typeName?}
      */
     addDecl(root, containerPath, spec) {
       assertNotSystemDecl(root, containerPath);
@@ -486,22 +599,26 @@ export function createVarDeclModel({ template }) {
         throw new Error(`变量名 "${spec.name}" 与世界程序键冲突`);
       }
       const r = resolveDeclPath(root, containerPath);
-      if (r === null || r.info.kind !== "container") throw new Error(`路径 "${containerPath || "<根>"}" 不是普通容器`);
-      if (r.crossedType) throw new Error("类型声明不开放新增变量（请到类型区编辑该类型）");
-      if (Object.hasOwn(r.info.children, spec.name)) throw new Error(`变量 "${spec.name}" 已存在`);
+      if (r === null) throw new Error(`路径 "${containerPath || "<根>"}" 不是普通容器/内联元素结构`);
+      if (r.crossedElement) throw new Error("引用类型数组的元素结构不开放新增（请到类型区编辑该类型）");
+      let map = null;
+      if (r.info.kind === "container") map = r.info.children;
+      else if (r.info.kind === "array" && r.info.elementChildren !== undefined) map = r.info.elementChildren;
+      if (map === null) throw new Error(`路径 "${containerPath || "<根>"}" 不是普通容器/内联元素结构`);
+      if (Object.hasOwn(map, spec.name)) throw new Error(`变量 "${spec.name}" 已存在`);
       // character 根与系统声明分支键同名 = 冲突（服务端拒装，前端先报）
       if (root === "character" && containerPath === "" && SYSTEM_CHAR_KEYS.has(spec.name)) {
         throw new Error(`变量 "${spec.name}" 与系统声明分支同名冲突`);
       }
-      r.info.children[spec.name] = buildDeclForSpec(spec);
+      map[spec.name] = buildDeclForSpec(spec);
     },
 
-    /** 删除声明节点（character 根必需声明保护；系统分支路径拒删；类型声明内的节点不可删）。 */
+    /** 删除声明节点（character 根必需声明保护；系统分支路径拒删；引用类型数组元素内的节点不可删）。 */
     deleteDecl(root, path) {
       assertNotSystemDecl(root, path);
       const r = resolveDeclPath(root, path);
       if (r === null) throw new Error(`路径 "${path}" 不可解析`);
-      if (r.crossedType) throw new Error("类型声明内的节点不可删（请到类型区编辑该类型）");
+      if (r.crossedElement) throw new Error("引用类型数组元素内的节点不可删（请到类型区编辑该类型）");
       if (r.parent === null) throw new Error(`路径 "${path}" 不可解析`);
       if (root === "character" && path === r.parent.key && CHAR_ROOT_REQUIRED.has(r.parent.key)) {
         throw new Error(`character 根必需声明 "${r.parent.key}" 不可删`);
@@ -518,8 +635,8 @@ export function createVarDeclModel({ template }) {
     },
 
     /**
-     * 删除类型：前端预检引用（world/character 根与其它类型声明内的 {type} 引用）；
-     * 引用存在即拒删——服务端保存时严格解析仍是最终闸，错误原样展示。
+     * 删除类型：前端预检引用（world/character 根与其它类型声明内的 {type} 引用，
+     * 含数组元素引用）；引用存在即拒删——服务端保存时严格解析仍是最终闸，错误原样展示。
      */
     deleteType(name) {
       const types = rawTypes();
@@ -547,7 +664,7 @@ export function createVarDeclModel({ template }) {
 
     /** 类型字段删除：只摘声明（世界包编辑无实例可波及；存量存档由读档严格解析兜底）。 */
     removeTypeField(typeName, path) {
-      const segs = splitPath(path);
+      const segs = splitVarPath(path);
       if (segs.length === 0) throw new Error("字段路径为空");
       const children = typeDeclContainerAt(typeName, segs.slice(0, -1).join("."));
       const key = segs[segs.length - 1];
@@ -558,8 +675,8 @@ export function createVarDeclModel({ template }) {
     /**
      * 末端 formula 声明编辑/清空（formula = null 清空；只动声明层，简写声明升级为
      * {valueType, formula} 完整形）。校验：expr 仅 number 末端（binds 键 = 标识符、
-     * 值 = 同根 number 末端路径），union_attach 仅 string_list 末端（paths = 同根容器
-     * 路径）；character 根 attachtags 不得挂 formula、tags 必须保持 union_attach
+     * 值 = 同根 number 末端路径），union_attach 仅 string_list 末端（paths = 同根容器/
+     * 数组路径）；character 根 attachtags 不得挂 formula、tags 必须保持 union_attach
      * （模板契约保护）；系统分支路径拒写（显示注入，不落模板）。
      */
     setDeclFormula(root, path, formula) {
@@ -588,7 +705,7 @@ export function createVarDeclModel({ template }) {
     /**
      * 类型声明内末端 formula 编辑/清空（formula = null 清空；binds/paths 以类型根为
      * 基准校验——界面提示「类型内公式路径以类型为根」；服务端 rebase 已有，无需改）。
-     * 嵌套 {type} 引用内的末端不开放（到其类型上编辑）。
+     * 引用类型数组元素内的末端不开放（到其类型上编辑）。
      */
     setTypeDeclFormula(typeName, path, formula) {
       const r = typeDeclTerminalAt(typeName, path);

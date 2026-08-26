@@ -272,18 +272,18 @@ describe("编辑 = 重读整个输出并完整处理（changes.effects 整段反
 
     await session.continuePipeline(); // seq1 C1001 → 停等玩家
     assert.equal(session.pipelineInfo.kind, "character:C1001");
-    assert.deepEqual(charState(session, "C1001").relations, { C0: { name: "玩家", impression: "友好" } });
+    assert.deepEqual(charState(session, "C1001").relations, [{ cid: "C0", name: "玩家", impression: "友好" }]);
 
     // 编辑改印象：旧 relation 反向、新 relation 重放；acted 经重放保持置位
     session.editResult(
       JSON.stringify(decision({ dialogue: "改台词", relations: [{ target: "C0", name: "玩家", impression: "警惕" }] })),
     );
-    assert.deepEqual(charState(session, "C1001").relations, { C0: { name: "玩家", impression: "警惕" } });
+    assert.deepEqual(charState(session, "C1001").relations, [{ cid: "C0", name: "玩家", impression: "警惕" }]);
     assert.equal(charState(session, "C1001").acted, true, "普通步 acted 置位经重放保持");
 
     // 再编辑删掉 relations：重放为空 → relations 归空
     session.editResult(JSON.stringify(decision({ dialogue: "再改台词" })));
-    assert.deepEqual(charState(session, "C1001").relations, {});
+    assert.deepEqual(charState(session, "C1001").relations, []);
     assert.equal(charState(session, "C1001").acted, true);
   });
 });

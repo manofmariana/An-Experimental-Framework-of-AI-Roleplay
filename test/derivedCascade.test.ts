@@ -7,7 +7,7 @@ import { SessionHarness } from "./harness/session.js";
 
 // ---------------------------------------------------------------------------
 // 从动变量级联（GameSession 级出口测试）：写路径整根级联（expr 公式 + union_attach +
-// 类型容器 "*" 段实例枚举）、直编回归、回溯还原、成环拒装。
+// 结构化数组 "*" 段元素枚举）、直编回归、回溯还原、成环拒装。
 // 集成基建 = SessionHarness（临时世界设定集 + fake LLM + 确定性骰子）。
 // ---------------------------------------------------------------------------
 
@@ -24,7 +24,7 @@ const CASCADE_TEMPLATE_RAW = {
     children: {
       attachtags: "string_list",
       tags: { valueType: "string_list", formula: { op: "union_attach", paths: ["armor"] } },
-      armor: { type: "item" },
+      armor: { array: { type: "item" } },
       max_hp: "number",
       wounds: "number",
       hp: { valueType: "number", formula: { expr: "max_hp - wounds", binds: { max_hp: "max_hp", wounds: "wounds" } } },
@@ -56,7 +56,7 @@ h.setupWorld(
       name: "甲",
       location: "loc_A",
       timer: 0,
-      vars: { max_hp: 100, wounds: 0, armor: { sword: SWORD, shield: SHIELD } },
+      vars: { max_hp: 100, wounds: 0, armor: [SWORD, SHIELD] },
     },
   ],
   { varsTemplate: CASCADE_TEMPLATE_RAW },
@@ -110,36 +110,46 @@ function valueOf(node: unknown): unknown {
   return (node as { value: unknown }).value;
 }
 
-describe("从动级联：union_attach 装备穿脱 + 类型容器实例枚举", () => {
+describe("从动级联：union_attach 装备穿脱 + 结构化数组元素枚举", () => {
   it("初始池 = 装备 attachtags 并集；GM delta 脱一件 → 池同步移除；穿回 → 恢复", async () => {
     const { session, runId } = makeSession("equip", [
-      gmSkip([{ path: "characters.C1001.vars.armor", op: "=", value: { sword: SWORD } }]),
+      gmSkip([{ path: "characters.C1001.vars.armor", op: "=", value: [SWORD] }]),
     ]);
-    // 装配物化：池 = 自身 attachtags（空）∪ armor 子树（sword/shield）
+    // 装配物化：池 = 自身 attachtags（空）∪ armor 子树（两件装备）
     assert.deepEqual(valueOf(varsOf(session, "C1001")["tags"]), ["aud", "vis"]);
 
-    // 脱掉 shield：池同步移除 vis；sword.load 经 "*" 枚举重算（weight 3 → 6）
+    // 脱掉一件：池同步移除 vis；armor[0].load 经 "*" 枚举重算（weight 3 → 6）
     await runGmStep(session);
     assert.deepEqual(valueOf(varsOf(session, "C1001")["tags"]), ["aud"]);
-    const armor = varsOf(session, "C1001")["armor"] as Record<string, unknown>;
-    assert.equal(valueOf(armor["sword"] && (armor["sword"] as Record<string, unknown>)["load"]), 6);
+    const armor = varsOf(session, "C1001")["armor"] as Record<string, unknown>[];
+    assert.equal(valueOf(armor[0]?.["load"]), 6);
     const effects = currentEffects(runId);
     const pool = effects.find((c) => c.path === "characters.C1001.vars.tags");
     assert.ok(pool, "池重算追加 VarChange");
     assert.deepEqual(pool.after, { value: ["aud"], tags: [] });
     assert.deepEqual(pool.before, { value: ["aud", "vis"], tags: [] });
-    const load = effects.find((c) => c.path === "characters.C1001.vars.armor.sword.load");
-    assert.ok(load, "类型容器内从动末端经实例枚举重算");
+    const load = effects.find((c) => c.path === "characters.C1001.vars.armor.0.load");
+    assert.ok(load, "数组内从动末端经元素枚举重算");
     assert.deepEqual(load.after, { value: 6, tags: [] });
 
-    // 穿回 shield：池恢复并集；shield.load 物化（weight 5 → 10）
+    // 穿回：池恢复并集；armor[1].load 物化（weight 5 → 10）
     h.llm.gmQueue.push(
-      gmSkip([{ path: "characters.C1001.vars.armor", op: "=", value: { sword: SWORD, shield: SHIELD } }]),
+      gmSkip([{ path: "characters.C1001.vars.armor", op: "=", value: [SWORD, SHIELD] }]),
     );
     await runGmStep(session);
     assert.deepEqual(valueOf(varsOf(session, "C1001")["tags"]), ["aud", "vis"]);
-    const armor2 = varsOf(session, "C1001")["armor"] as Record<string, unknown>;
-    assert.equal(valueOf((armor2["shield"] as Record<string, unknown>)["load"]), 10);
+    const armor2 = varsOf(session, "C1001")["armor"] as Record<string, unknown>[];
+    assert.equal(valueOf(armor2[1]?.["load"]), 10);
+  });
+
+  it("GM delta 走 `键[数字]` 下标语法写数组元素末端", async () => {
+    const { session } = makeSession("index-write", [
+      gmSkip([{ path: "characters.C1001.vars.armor[1].weight", op: "=", value: 9 }]),
+    ]);
+    await runGmStep(session);
+    const armor = varsOf(session, "C1001")["armor"] as Record<string, unknown>[];
+    assert.equal(valueOf(armor[1]?.["weight"]), 9);
+    assert.equal(valueOf(armor[1]?.["load"]), 18, "元素内从动末端随下标写级联");
   });
 });
 

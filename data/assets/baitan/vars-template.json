@@ -12,21 +12,103 @@
           "paths": []
         }
       },
-      "items": {
-        "type": "item"
-      },
       "stats": {
         "children": {
           "HP": {
             "children": {
-              "HP_max": "number",
-              "HP_current": "number",
-              "HP_origin": "number"
+              "max": "number",
+              "current": "number",
+              "origin": "number"
+            }
+          },
+          "MP": {
+            "children": {
+              "max": "number",
+              "current": "number",
+              "origin": "number"
+            }
+          },
+          "ATKP": {
+            "children": {
+              "max": "number",
+              "current": "number",
+              "origin": "number"
+            }
+          },
+          "ATKM": {
+            "children": {
+              "max": "number",
+              "current": "number",
+              "origin": "number"
+            }
+          },
+          "DEFP": {
+            "children": {
+              "max": "number",
+              "current": "number",
+              "origin": "number"
+            }
+          },
+          "DEFM": {
+            "children": {
+              "max": "number",
+              "current": "number",
+              "origin": "number"
+            }
+          },
+          "PENP": {
+            "children": {
+              "max": "number",
+              "current": "number",
+              "origin": "number"
+            }
+          },
+          "PENM": {
+            "children": {
+              "max": "number",
+              "current": "number",
+              "origin": "number"
             }
           }
         }
       },
-      "A": "string_list"
+      "items": {
+        "array": {
+          "type": "item"
+        }
+      },
+      "equipments": {
+        "children": {
+          "head": {
+            "array": {
+              "type": "item"
+            }
+          },
+          "torso": {
+            "array": {
+              "type": "item"
+            }
+          },
+          "hands": {
+            "array": {
+              "type": "item"
+            }
+          },
+          "legs": {
+            "array": {
+              "type": "item"
+            }
+          },
+          "foot": {
+            "array": {
+              "type": "item"
+            }
+          }
+        }
+      },
+      "weapons": {
+        "children": {}
+      }
     }
   },
   "types": {
@@ -36,16 +118,14 @@
         "name": "string",
         "attachtags": "string_list",
         "buffs": {
-          "type": "buffs"
+          "children": {
+            "hp": "string",
+            "mp": "string",
+            "atk": "string",
+            "def": "string",
+            "pen": "number"
+          }
         }
-      }
-    },
-    "buffs": {
-      "children": {
-        "hpbuffs": "number",
-        "mpbuffs": "number",
-        "atkbuffs": "number",
-        "defbuffs": "number"
       }
     }
   }

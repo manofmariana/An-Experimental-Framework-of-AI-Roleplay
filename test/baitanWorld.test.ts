@@ -12,7 +12,7 @@ describe("白滩镇统一角色数据", () => {
     const files = [path.join(dir, "player.json"), ...fs.readdirSync(path.join(dir, "characters")).filter((file) => file.endsWith(".json")).sort().map((file) => path.join(dir, "characters", file))];
     const manifests = files.map((file) => CharacterManifestSchema.parse(JSON.parse(fs.readFileSync(file, "utf8"))));
     assert.deepEqual(manifests.map((item) => item.timer), [0, 0, 10, 60]);
-    for (const item of manifests) { assert.deepEqual(item.relations, {}); assert.equal("persona" in item, false); assert.equal("voice_anchor" in item, false); }
+    for (const item of manifests) { assert.deepEqual(item.relations, []); assert.equal("persona" in item, false); assert.equal("voice_anchor" in item, false); }
   });
   it("time.json start 是结构世界初始时间，支持年月日时段", () => {
     const config = loadWorldTime(resolveWorldDir("baitan")); assert.equal(renderTimeHeader(config.start, config), "0年1月1日·深夜");

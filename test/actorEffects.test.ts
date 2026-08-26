@@ -97,10 +97,10 @@ describe("planActorDecision（同一 DecisionPackage：正常与编辑重放产�
     const { changes } = planActorDecision(truth, { cid: "C1001", pkg, rollDice: diceQueue([]) });
     assert.deepEqual(
       changes.map((c) => c.path),
-      ["characters.C1001.relations.C0", "characters.C1001.acted"],
+      ["characters.C1001.relations.0", "characters.C1001.acted"],
     );
     assert.equal(truth.characters.get("C1001").acted, true);
-    assert.deepEqual(truth.characters.get("C1001").relations, { C0: { name: "玩家" } });
+    assert.deepEqual(truth.characters.get("C1001").relations, [{ cid: "C0", name: "玩家" }]);
     assert.deepEqual(truth.world.pipeline.working_set, [{ cid: "C1001", decision: pkg }]);
   });
 });

@@ -39,7 +39,7 @@ const manifest = (id: string, isPlayer = false, timer: number | null = 0): Chara
   level: 1,
   omniscience: 0,
   isPlayer,
-  relations: {},
+  relations: [],
   initial_memories: [],
   vars: {},
 });
@@ -117,7 +117,7 @@ describe("整数分钟与 simulator 分桶契约", () => {
     const state = {
       name: "甲", gender: "", age: "", personality: "谨慎", reaction: 0,
       location: { name: "测试地", level: 1 }, timer: 1.5, group: 0,
-      initiative: null, channel: null, acted: false, level: 1, isPlayer: false, relations: {}, long_term_memory: [], vars: {},
+      initiative: null, channel: null, acted: false, level: 1, isPlayer: false, relations: [], long_term_memory: [], vars: {},
     };
     assert.throws(() => CharactersFileSchema.parse({ schema_version: SAVE_SCHEMA_VERSION, characters: { C1001: state } }));
   });

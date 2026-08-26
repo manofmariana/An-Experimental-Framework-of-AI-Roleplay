@@ -144,7 +144,7 @@ describe("listRuns / readRunArtifact（存档 v7 Generation 布局）", () => {
       fs.writeFileSync(path.join(d, "CURRENT"), "000001");
       fs.writeFileSync(path.join(gen, "events.json"), `{"schema_version":${v},"events":[{"id":"evt_1","t":0,"seq":3}]}`);
       fs.writeFileSync(path.join(gen, "world.json"), `{"schema_version":${v},"world":{"time":{"y":1,"m":1,"d":1,"h":0,"min":5},"weather":"雾"},"pipeline":{"seq":3,"working_set":[],"current":null}}`);
-      fs.writeFileSync(path.join(gen, "characters.json"), `{"schema_version":${v},"characters":{"C1001":{"name":"林雾","gender":"女","age":"26","personality":"寡言谨慎。","tags":[],"reaction":0,"location":{"name":"灯塔","level":1},"timer":5,"group":0,"initiative":null,"channel":null,"acted":false,"level":1,"isPlayer":false,"relations":{},"long_term_memory":[],"vars":{}}}}`);
+      fs.writeFileSync(path.join(gen, "characters.json"), `{"schema_version":${v},"characters":{"C1001":{"name":"林雾","gender":"女","age":"26","personality":"寡言谨慎。","tags":[],"reaction":0,"location":{"name":"灯塔","level":1},"timer":5,"group":0,"initiative":null,"channel":null,"acted":false,"level":1,"isPlayer":false,"relations":[],"long_term_memory":[],"vars":{}}}}`);
       fs.writeFileSync(path.join(gen, "archive.json"), `{"schema_version":${v},"entries":[{"seq":1,"kind":"player","result":{"input":"你好"},"changes":{"setup":[],"effects":[]}}]}`);
       fs.writeFileSync(path.join(gen, "lore.json"), `{"schema_version":${v},"entries":[],"changelog":[]}`);
       fs.utimesSync(d, mtime, mtime);
@@ -283,7 +283,7 @@ describe("角色 manifest API/前端往返契约", () => {
     const base = {
       name: "玩家", gender: "未设定", age: "未设定", personality: "谨慎。", reaction: 0,
       location: { name: "起点", level: 1 }, timer: 0, group: 0, initiative: null, channel: null, acted: false,
-      level: 1, omniscience: 0, relations: {}, initial_memories: [], vars: {},
+      level: 1, omniscience: 0, relations: [], initial_memories: [], vars: {},
     };
     fs.writeFileSync(path.join(worldDir, "player.json"), JSON.stringify({ ...base, id: "C0", isPlayer: true }));
     fs.writeFileSync(path.join(worldDir, "characters", "C1001.json"), JSON.stringify({ ...base, id: "C1001", name: "甲", isPlayer: false }));
@@ -295,7 +295,7 @@ describe("角色 manifest API/前端往返契约", () => {
     const player = {
       id: "C0", name: "玩家", gender: "未设定", age: "未设定", personality: "谨慎。", reaction: 0,
       location: { name: "起点", level: 1 }, timer: 0, group: 0, initiative: null, channel: null, acted: false,
-      level: 1, omniscience: 0, isPlayer: true, relations: {}, initial_memories: [], vars: {},
+      level: 1, omniscience: 0, isPlayer: true, relations: [], initial_memories: [], vars: {},
     };
     assert.deepEqual(validateCharacterManifestForPath("C0", JSON.parse(JSON.stringify(player))), player);
     assert.throws(() => validateCharacterManifestForPath("C1001", player), /路径 id/);
@@ -307,7 +307,7 @@ describe("角色 manifest API/前端往返契约", () => {
     const manifest = CharacterManifestSchema.parse({
       id: "C1001", name: "林雾", gender: "女", age: "26", personality: "谨慎。", reaction: 5,
       location: { name: "塔顶", level: 2 }, timer: 30, group: 0, initiative: null, channel: null, acted: false, level: 1,
-      omniscience: 0, isPlayer: false, relations: {}, initial_memories: ["记忆"],
+      omniscience: 0, isPlayer: false, relations: [], initial_memories: ["记忆"],
       // 固有 TAG 写在 vars.attachtags（string_list 纯名集合；简写：数组即末端值）
       vars: { attachtags: ["灯塔"] },
     });

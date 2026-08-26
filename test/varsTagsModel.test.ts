@@ -1,11 +1,11 @@
 /**
  * web/views/vars-tags-model.js 单元测试（unit 层）：
  * TAG 附加文件（vars-tags.json）编辑（世界页包级编辑；按声明树投影，无实例列）。覆盖：
- * - 视图模型：tagsTerminal/tagsContainer/tagsTypeContainer 投影、已有条目读出、
- *   类型容器实例名形态 hasInstanceForm 标记；
+ * - 视图模型：tagsTerminal/tagsContainer/tagsArray 投影、已有条目读出、
+ *   数组 children 旧形态 hasLegacyChildren 标记；
  * - setNodeTags：沿途物化稀疏节点、嵌套路径、条目形状校验（name/category 恰居其一、
- *   level 1-7）、模板外路径拒绝、类型容器整型挂载（{tags, type} 形式）、
- *   实例名形态拒绝整型覆盖（不丢数据）；
+ *   level 1-7）、模板外路径拒绝、数组整型挂载（{tags, array} 形式，array = 元素类型名/
+ *   内联为 "*"）、children 旧形态拒绝整型覆盖（不丢数据）；
  * - 稀疏回剪：清空条目摘掉空节点链，有内容祖先保留；
  * - getPayload 返回编辑后的工作副本本体；
  * - 系统声明分支并入：character 根投影 = 系统分支 + 作者子树（系统节点可挂附加
@@ -15,9 +15,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   createVarsTagsModel,
+  type TagsArrayNode,
   type TagsContainerNode,
   type TagsTerminalNode,
-  type TagsTypeContainerNode,
   type VarsTagsModel,
   type VarsTagsNodeView,
 } from "../web/views/vars-tags-model.js";
@@ -40,7 +40,7 @@ function makeTemplate() {
         hp: "number",
         pool: "tag_list",
         loc: { children: { name: "string", items: "string_list" } },
-        bag: { type: "item" },
+        bag: { array: { type: "item" } },
       },
     },
     character: {
@@ -82,7 +82,7 @@ function childAt(view: { children: VarsTagsNodeView[] }, key: string): VarsTagsN
 // ---------------------------------------------------------------------------
 
 describe("vars-tags-model：视图模型", () => {
-  it("声明树投影：末端/容器/类型容器；已有条目读出", () => {
+  it("声明树投影：末端/容器/结构化数组；已有条目读出", () => {
     const m = modelOf(makeTemplate(), makeVarsTags());
     const view = m.buildRootView("world");
     assert.deepEqual(view.children.map((n) => n.key), ["hp", "pool", "loc", "bag"]);
@@ -97,17 +97,17 @@ describe("vars-tags-model：视图模型", () => {
     assert.deepEqual(loc.entries, [{ name: "场景", level: 2 }]);
     assert.deepEqual(loc.children.map((n) => n.key), ["name", "items"]);
 
-    const bag = childAt(view, "bag") as TagsTypeContainerNode;
-    assert.equal(bag.kind, "tagsTypeContainer");
-    assert.equal(bag.typeName, "item");
-    assert.equal(bag.hasInstanceForm, false);
+    const bag = childAt(view, "bag") as TagsArrayNode;
+    assert.equal(bag.kind, "tagsArray");
+    assert.equal(bag.elementType, "item");
+    assert.equal(bag.hasLegacyChildren, false);
   });
 
-  it("类型容器整型条目读出；实例名形态标记 hasInstanceForm 且不出条目表", () => {
+  it("数组整型条目读出；children 旧形态标记 hasLegacyChildren 且不出条目表", () => {
     const varsTags = {
       world: {
         children: {
-          bag: { tags: [{ name: "装备", level: 3 }], type: "item" },
+          bag: { tags: [{ name: "装备", level: 3 }], array: "item" },
         },
       },
       character: {
@@ -117,21 +117,21 @@ describe("vars-tags-model：视图模型", () => {
       },
     };
     const m = modelOf(makeTemplate(), varsTags);
-    const bag = childAt(m.buildRootView("world"), "bag") as TagsTypeContainerNode;
+    const bag = childAt(m.buildRootView("world"), "bag") as TagsArrayNode;
     assert.deepEqual(bag.entries, [{ name: "装备", level: 3 }]);
-    assert.equal(bag.hasInstanceForm, false);
+    assert.equal(bag.hasLegacyChildren, false);
 
     const attachtags = childAt(m.buildRootView("character"), "attachtags") as TagsTerminalNode;
     assert.deepEqual(attachtags.entries, [{ category: "cid", level: 1 }]);
 
-    // 实例名形态（children 子树）：不展开、不出条目表、保留不丢
-    const instVarsTags = {
-      world: { children: { bag: { children: { 铁剑: { tags: [{ name: "名剑", level: 5 }] } } } } },
+    // children 旧形态：不展开、不出条目表、保留不丢
+    const legacyVarsTags = {
+      world: { children: { bag: { children: { "0": { tags: [{ name: "名剑", level: 5 }] } } } } },
       character: {},
     };
-    const m2 = modelOf(makeTemplate(), instVarsTags);
-    const bag2 = childAt(m2.buildRootView("world"), "bag") as TagsTypeContainerNode;
-    assert.equal(bag2.hasInstanceForm, true);
+    const m2 = modelOf(makeTemplate(), legacyVarsTags);
+    const bag2 = childAt(m2.buildRootView("world"), "bag") as TagsArrayNode;
+    assert.equal(bag2.hasLegacyChildren, true);
     assert.deepEqual(bag2.entries, []);
   });
 });
@@ -170,27 +170,40 @@ describe("vars-tags-model：setNodeTags", () => {
     assert.throws(() => m.setNodeTags("world", "hp", "x" as never), /数组/);
   });
 
-  it("模板外路径拒绝（含穿越末端）", () => {
+  it("模板外路径拒绝（含穿越末端与数组）", () => {
     const m = modelOf(makeTemplate(), makeVarsTags());
     assert.throws(() => m.setNodeTags("world", "nosuch", [{ name: "x", level: 1 }]), /不可解析/);
     assert.throws(() => m.setNodeTags("world", "hp.sub", [{ name: "x", level: 1 }]), /不可解析/);
+    assert.throws(() => m.setNodeTags("world", "bag.count", [{ name: "x", level: 1 }]), /不可解析/, "数组不穿越");
   });
 
-  it("类型容器整型挂载（{tags, type} 形式）；实例名形态拒绝整型覆盖且不丢数据", () => {
+  it("数组整型挂载（{tags, array} 形式）；children 旧形态拒绝整型覆盖且不丢数据", () => {
     const t = makeTemplate();
     const v = makeVarsTags();
     const m = modelOf(t, v);
     m.setNodeTags("world", "bag", [{ name: "装备", level: 3 }]);
-    assert.deepEqual((v.world.children as any).bag, { tags: [{ name: "装备", level: 3 }], type: "item" });
+    assert.deepEqual((v.world.children as any).bag, { tags: [{ name: "装备", level: 3 }], array: "item" });
 
-    const instVarsTags = {
-      world: { children: { bag: { children: { 铁剑: { tags: [{ name: "名剑", level: 5 }] } } } } },
+    const legacyVarsTags = {
+      world: { children: { bag: { children: { "0": { tags: [{ name: "名剑", level: 5 }] } } } } },
       character: {},
     };
-    const m2 = modelOf(makeTemplate(), instVarsTags);
-    assert.throws(() => m2.setNodeTags("world", "bag", [{ name: "装备", level: 1 }]), /实例名形态/);
-    // 实例名子树原样保留
-    assert.deepEqual((instVarsTags.world.children.bag.children as any).铁剑, { tags: [{ name: "名剑", level: 5 }] });
+    const m2 = modelOf(makeTemplate(), legacyVarsTags);
+    assert.throws(() => m2.setNodeTags("world", "bag", [{ name: "装备", level: 1 }]), /旧形态/);
+    // 旧形态子树原样保留
+    assert.deepEqual((legacyVarsTags.world.children.bag.children as any)["0"], { tags: [{ name: "名剑", level: 5 }] });
+  });
+
+  it("内联元素结构数组整型挂载 array = \"*\"", () => {
+    const t = makeTemplate();
+    (t.world.children as any).pack = { array: { children: { n: "number" } } };
+    const v = makeVarsTags();
+    const m = modelOf(t, v);
+    m.setNodeTags("world", "pack", [{ name: "随行", level: 2 }]);
+    assert.deepEqual((v.world.children as any).pack, { tags: [{ name: "随行", level: 2 }], array: "*" });
+    const pack = childAt(m.buildRootView("world"), "pack") as TagsArrayNode;
+    assert.equal(pack.elementType, null);
+    assert.deepEqual(pack.entries, [{ name: "随行", level: 2 }]);
   });
 
   it("清空条目稀疏回剪：空节点链摘掉，有内容祖先保留；整型节点清空整体摘除", () => {
@@ -259,11 +272,11 @@ describe("vars-tags-model：系统声明分支并入", () => {
     assert.equal(location.kind, "tagsContainer");
     assert.deepEqual(location.children.map((n) => n.key), ["name", "level"]);
 
-    // relations = 系统类型容器（类型解析回退系统类型 relation）
-    const relations = childAt(view, "relations") as TagsTypeContainerNode;
-    assert.equal(relations.kind, "tagsTypeContainer");
-    assert.equal(relations.typeName, "relation");
-    assert.equal(relations.hasInstanceForm, false);
+    // relations = 系统结构化数组（元素类型解析回退系统类型 relation）
+    const relations = childAt(view, "relations") as TagsArrayNode;
+    assert.equal(relations.kind, "tagsArray");
+    assert.equal(relations.elementType, "relation");
+    assert.equal(relations.hasLegacyChildren, false);
 
     assert.deepEqual(m.buildRootView("world").children.map((n) => n.key), ["hp", "pool", "loc", "bag"]);
   });
@@ -277,7 +290,7 @@ describe("vars-tags-model：系统声明分支并入", () => {
     m.setNodeTags("character", "location.name", [{ name: "地名", level: 2 }]);
     assert.deepEqual((v.character as any).children.location.children.name, { tags: [{ name: "地名", level: 2 }] });
     m.setNodeTags("character", "relations", [{ category: "cid", level: 1 }]);
-    assert.deepEqual((v.character as any).children.relations, { tags: [{ category: "cid", level: 1 }], type: "relation" });
+    assert.deepEqual((v.character as any).children.relations, { tags: [{ category: "cid", level: 1 }], array: "relation" });
 
     // 视图读出既有条目；清空稀疏回剪不受影响
     const name = childAt(m.buildRootView("character"), "name") as TagsTerminalNode;

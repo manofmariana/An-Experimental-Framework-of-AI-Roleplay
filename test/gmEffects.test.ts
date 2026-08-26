@@ -329,10 +329,68 @@ describe("GM deltas 写入通道（applyVarDeltas：双根路由 + 模板校验�
       "characters.C1001.vars.name",
       "characters.C1001.vars.timer",
       "characters.C1001.vars.location.name",
-      "characters.C1001.vars.relations.C1002.name",
+      "characters.C1001.vars.relations[0].name",
       "characters.C1001.vars.long_term_memory",
     ]) {
       assert.throws(planWith([{ path, op: "=", value: "x" }]).plan, new RegExp(`系统字段走白名单专用通道`), path);
     }
+  });
+});
+
+describe("GM deltas 结构化数组写入（`键[数字]` 下标语法）", () => {
+  /** 含 items 数组的角色模板与 deps（元素结构 = {count, name}）。 */
+  function arrayDeps() {
+    const tpl = parseVarsTemplate({
+      world: { children: {} },
+      character: {
+        children: {
+          attachtags: "string_list",
+          tags: { valueType: "string_list", formula: { op: "union_attach", paths: [] as string[] } },
+          items: { array: { children: { count: "number", name: "string" } } },
+        },
+      },
+    });
+    return { template: tpl, registeredNames: new Set<string>(), categories: {} };
+  }
+
+  it("[数字] 精确下标写元素末端；元素结构错型 = 拒写", () => {
+    const truth = makeTruth();
+    const deps = arrayDeps();
+    applyVarDeltas(
+      truth,
+      [{ path: "characters.C1001.vars.items", op: "=", value: [{ count: 1, name: "剑" }, { count: 2, name: "盾" }] }],
+      deps,
+    );
+    applyVarDeltas(truth, [{ path: "characters.C1001.vars.items[1].count", op: "=", value: 5 }], deps);
+    const items = (truth.characters.get("C1001").vars as Record<string, unknown>)["items"] as Record<string, unknown>[];
+    assert.equal((items[1]!["count"] as { value: unknown }).value, 5);
+    assert.equal((items[0]!["count"] as { value: unknown }).value, 1, "兄弟元素不受影响");
+    // 元素结构错型拒写
+    assert.throws(
+      () => applyVarDeltas(truth, [{ path: "characters.C1001.vars.items[0].count", op: "=", value: "x" }], deps),
+      /类型错配/,
+    );
+    // 元素未声明字段拒写
+    assert.throws(
+      () => applyVarDeltas(truth, [{ path: "characters.C1001.vars.items[0].ghost", op: "=", value: 1 }], deps),
+      /不可解析/,
+    );
+  });
+
+  it("[*] 通配 / 非数组对象整体 / 缺下标 = 拒写", () => {
+    const truth = makeTruth();
+    const deps = arrayDeps();
+    assert.throws(
+      () => applyVarDeltas(truth, [{ path: "characters.C1001.vars.items[*].count", op: "=", value: 1 }], deps),
+      /\[\*\] 通配/,
+    );
+    assert.throws(
+      () => applyVarDeltas(truth, [{ path: "characters.C1001.vars.items", op: "=", value: { "0": { count: 1 } } }], deps),
+      /必须是数组/,
+    );
+    assert.throws(
+      () => applyVarDeltas(truth, [{ path: "characters.C1001.vars.items.count", op: "=", value: 1 }], deps),
+      /需要 \[数字\] 或 \[\*\] 下标/,
+    );
   });
 });
