@@ -15,7 +15,7 @@ import { cloneTruth, type TruthStores } from "../src/truth/stores.js";
 import { TimeStore } from "../src/truth/timeStore.js";
 import type { VarChange } from "../src/truth/varChanges.js";
 import { WorldStore } from "../src/truth/worldStore.js";
-import { buildManifest, buildVarsTemplate, buildWorldSysRaw } from "./builders/index.js";
+import { buildManifest, buildPromptsStore, buildVarsTemplate, buildWorldSysRaw } from "./builders/index.js";
 
 // ---------------------------------------------------------------------------
 // prepareNextCommand（unit：纯内存 draft + 注入回调，零 IO）——
@@ -37,6 +37,7 @@ function makeTruth(): TruthStores {
     archive: new ArchiveStore(),
     loreStore: LoreStore.initFrom([]),
     timeStore: new TimeStore({ schema_version: SAVE_SCHEMA_VERSION, start: START, periods: [{ key: "白天", from: 0, to: 24 }] }),
+    promptsStore: buildPromptsStore(),
   };
 }
 

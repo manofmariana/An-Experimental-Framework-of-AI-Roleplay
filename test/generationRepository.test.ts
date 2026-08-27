@@ -5,15 +5,17 @@ import { describe, it } from "node:test";
 import {
   GenerationRepository,
   formatRevision,
+  TRUTH_FILES,
   type RepoIo,
   type SaveSet,
 } from "../src/truth/generationRepository.js";
 import { SAVE_SCHEMA_VERSION } from "../src/truth/saveSchema.js";
 import { RevisionConflictError, SaveLoadError, type SaveLoadErrorKind } from "../src/truth/validation/errors.js";
+import { buildPromptsFile } from "./builders/index.js";
 import { tempDir } from "./harness/tempDir.js";
 
 // ---------------------------------------------------------------------------
-// GenerationRepository（存档 v6：CURRENT + generations/{rev}/ 六文件，单一写盘屏障；
+// GenerationRepository（CURRENT + generations/{rev}/ 七文件，单一写盘屏障；
 // 原子提交 = 临时目录 → 重读校验 → rename → CURRENT.tmp rename；灾备回退上一代）。
 // contract 层：真实临时文件系统 + RepoIo 故障注入。
 // ---------------------------------------------------------------------------
@@ -29,6 +31,7 @@ function sampleSave(marker: string): SaveSet {
     archive: [],
     lore: { schema_version: SAVE_SCHEMA_VERSION, entries: [], changelog: [] },
     time: { schema_version: SAVE_SCHEMA_VERSION, start: START, periods: [{ key: "白天", from: 6, to: 18 }] },
+    prompts: buildPromptsFile(),
   };
 }
 
@@ -143,7 +146,7 @@ describe("GenerationRepository（布局与提交）", () => {
     assert.equal(rev1, 1);
     assert.equal(fs.readFileSync(path.join(dir, "CURRENT"), "utf8"), "000001");
     assert.equal(formatRevision(7), "000007");
-    for (const file of ["world.json", "characters.json", "events.json", "archive.json", "lore.json", "time.json"]) {
+    for (const file of TRUTH_FILES) {
       assert.ok(fs.existsSync(path.join(dir, "generations", "000001", file)), `缺 ${file}`);
     }
 
@@ -154,7 +157,7 @@ describe("GenerationRepository（布局与提交）", () => {
     assert.equal(repo.exists(), true);
   });
 
-  it("loadCurrent 六文件回环（SaveSet 逐字段一致；信封版本统一）", () => {
+  it("loadCurrent 七文件回环（SaveSet 逐字段一致；信封版本统一）", () => {
     const dir = tempDir("airp-gen-");
     const repo = new GenerationRepository(dir);
     const save = sampleSave("回环");
@@ -164,8 +167,8 @@ describe("GenerationRepository（布局与提交）", () => {
     assert.equal(loaded.revision, 1);
     assert.equal(loaded.recoveredFrom, undefined, "正常加载无灾备标记");
     assert.deepEqual(loaded.save, save);
-    // 信封：Generation 内六文件均带统一 schema_version
-    for (const file of ["world.json", "characters.json", "events.json", "archive.json", "lore.json", "time.json"]) {
+    // 信封：Generation 内七文件均带统一 schema_version
+    for (const file of TRUTH_FILES) {
       const raw = JSON.parse(
         fs.readFileSync(path.join(dir, "generations", "000001", file), "utf8"),
       ) as { schema_version: unknown };
@@ -173,7 +176,7 @@ describe("GenerationRepository（布局与提交）", () => {
     }
   });
 
-  it("旧平铺布局（六文件之一在 run 根且无 CURRENT）→ version（提示新建会话）", () => {
+  it("旧平铺布局（平铺真相文件之一在 run 根且无 CURRENT）→ version（提示新建会话）", () => {
     const dir = tempDir("airp-gen-");
     fs.writeFileSync(path.join(dir, "world.json"), JSON.stringify({ schema_version: 5 }));
     const repo = new GenerationRepository(dir);
@@ -192,7 +195,7 @@ describe("原子提交（RepoIo 故障注入）", () => {
     repo.commit(0, sampleSave("一"));
     const before = snapshotRun(dir);
 
-    failing.arm({ method: "writeFileSync", onCall: 3 }); // 六文件的第 3 个写入失败
+    failing.arm({ method: "writeFileSync", onCall: 3 }); // 七文件的第 3 个写入失败
     expectKind(() => repo.commit(1, sampleSave("二")), "io");
     failing.disarm();
 
@@ -365,15 +368,15 @@ describe("loadCurrent 灾备回退", () => {
     expectKind(() => repo.loadCurrent(), "version", /核心文件版本混合/);
   });
 
-  it("旧版本存档拒装：v9 档（结构化数组前的关系库对象形态）整代拒载", () => {
-    const dir = tempDir("airp-gen-v9-");
+  it("旧版本存档拒装：v10 档（prompts.json 前的六文件布局末版）整代拒载", () => {
+    const dir = tempDir("airp-gen-v10-");
     const repo = new GenerationRepository(dir);
     repo.commit(0, sampleSave("一"));
-    // 把整代六文件改写成 v9（上一版本号），模拟旧档
-    for (const name of ["world.json", "characters.json", "events.json", "archive.json", "lore.json", "time.json"]) {
+    // 把整代七文件改写成 v10（上一版本号），模拟旧档；版本号钉死字面量，勿随存档版本更新
+    for (const name of TRUTH_FILES) {
       const file = path.join(dir, "generations", "000001", name);
       const raw = JSON.parse(fs.readFileSync(file, "utf8")) as { schema_version: number };
-      raw.schema_version = 9;
+      raw.schema_version = 10;
       fs.writeFileSync(file, JSON.stringify(raw));
     }
     expectKind(() => repo.loadCurrent(), "version", /请新建会话\/重启服务/);
@@ -466,7 +469,7 @@ describe("validateSaveSet 默认接入（B4 两级校验）", () => {
     repo.commit(0, sampleSave("一"));
     const before = snapshotRun(dir);
 
-    // 六文件 codec 各自合法，但 current=null 时 archive 非空（跨文件不变量矛盾）
+    // 七文件 codec 各自合法，但 current=null 时 archive 非空（跨文件不变量矛盾）
     const broken = sampleSave("二");
     broken.archive = [{ seq: 1, kind: "gm", result: null, changes: { setup: [], effects: [] } }];
     expectKind(() => repo.commit(1, broken), "invariant", /archive 必须为空/);

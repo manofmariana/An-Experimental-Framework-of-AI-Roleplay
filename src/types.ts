@@ -13,6 +13,12 @@ export const EventKindSchema = z.enum([
 ]);
 export type EventKind = z.infer<typeof EventKindSchema>;
 
+/** 内容侧单条 TAG 挂载：{TAG 名, 等级 1-7}；等级范围由 schema 机检，名称合法性由写入层对档内注册表校验。 */
+export const TagMountRefSchema = z
+  .object({ name: z.string().min(1), level: z.number().int().min(1).max(7) })
+  .strict();
+export type TagMountRef = z.infer<typeof TagMountRefSchema>;
+
 export const EventSchema = z.object({
   /** 稳定 ID（排序、引用用，如 evt_0001） */
   id: z.string(),
@@ -21,13 +27,13 @@ export const EventSchema = z.object({
   /** 产生本事件的 GM 步骤 seq（回溯截断锚） */
   seq: z.number(),
   kind: EventKindSchema,
-  /** 事件发生地点名（叙事记录用；感知过滤不含地点成分，known_by 唯一通道） */
+  /** 事件发生地点名（叙事记录用；感知过滤不含地点成分） */
   location: z.string().optional(),
   /**
-   * 统一标签（与 Lorebook tags 同一套体系）。
-   * 可见性 = tags 含 `known_by:{读者CID}`；私密事件 = 可见标签仅含自己。
+   * 内容侧 TAG 挂载（{name, level}[]，与 Lorebook tags 同一套体系）：
+   * 可见性 = 按读者有效 TAG 集求值通过；私密事件 = 只挂自身 cid 类 TAG。
    */
-  tags: z.array(z.string()),
+  tags: z.array(TagMountRefSchema),
   /** 事件内容（@ID 占位的第三人称真相描述，渲染时按读者做身份替换） */
   payload: z.string(),
 });
@@ -39,18 +45,13 @@ export const PLAYER_CID = "C0";
 /** CID 字面量（@ 前缀可选，落库时归一化为去 @ 形式）。 */
 export const CID_PATTERN = /^@?C(?:0|[1-9]\d*)$/;
 
-/** 可见性标签：事件 tags 含 known_by:{cid} → 该 cid 可见（统一标签约定）。 */
-export function knownByTag(cid: string): string {
-  return `known_by:${cid}`;
-}
-
 // ---------------------------------------------------------------------------
 // 调度层：模拟调度器与运行时编排器的唯一接口
 // ---------------------------------------------------------------------------
 
 /** 感知包：唤醒角色时喂给它的事件窗口（编译器负责转写为第一人称）。 */
 export const PerceptionBriefSchema = z.object({
-  /** 该角色可见的事件（已按 time ≤ 唤醒时刻 ∧ known_by 过滤、按 id 排序） */
+  /** 该角色可见的事件（已按 time ≤ 唤醒时刻 ∧ TAG 过滤、按 id 排序） */
   events: z.array(EventSchema),
   /** 唤醒原因（叙事性说明，如 "player_spoke_to_you"） */
   reason: z.string(),
@@ -125,7 +126,8 @@ export type Initiative = z.infer<typeof InitiativeSchema>;
 
 /**
  * 标记：角色/玩家输出中的结构化指令位（DecisionPackage 可选 markers 数组）。
- * 标记不进工作集、不进任何注入——解析后只有即时程序作用（调度/组别/timer 变更），即抛。
+ * 标记本身即抛、不直入工作集；程序在消费点为 gm_request/leave/recall/contact
+ * 生成系统通知条目入工作集（注入镜像，confirm 是应答本身不生成）。
  */
 export const MarkerSchema = z.discriminatedUnion("type", [
   /** GM 请求：同先攻批全员行动完后 GM 立即激活（与 leave 互斥） */
@@ -174,8 +176,13 @@ export const DecisionPackageSchema = z.object({
   dialogue: z.string().min(1).optional(),
   /** 人际关系库更新：本轮真实得知名字或印象实际变化时登记 */
   relations: z.array(RelationUpdateSchema).min(1).optional(),
-  /** 标记：结构化指令位；不进工作集/注入，解析后只有即时程序作用 */
+  /** 标记：结构化指令位；解析后只有即时程序作用（通知条目镜像由程序生成，见工作集） */
   markers: z.array(MarkerSchema).min(1).optional(),
+  /**
+   * 可见域（缺省 = 组内全体）：A = 只对同频道（经频道工具）；B = 只对同地。
+   * 条目级 TAG 挂载由程序按焊死映射安插（渲染时派生），本字段只是 LLM 的域声明。
+   */
+  visibility: z.enum(["A", "B"]).optional(),
 }).strict().refine((pkg) => pkg.action !== undefined || pkg.dialogue !== undefined, {
   message: "dialogue 与 action 至少其一",
 }).refine((pkg) => {
@@ -210,10 +217,10 @@ export const AdjudicationEventSchema = z.object({
   /** 事件正文（@ID 占位，台词逐字引用原文） */
   text: z.string(),
   /**
-   * 可见性标签（known_by 唯一通道）；
-   * 空数组 = 缺省本轮全部参与者可见（程序侧补全）。
+   * 内容侧 TAG 挂载（{name, level}[]；感知过滤按读者有效 TAG 集求值）；
+   * 空数组 = 程序补全本轮全部行动者的 cid 类 TAG（level 1）。
    */
-  tags: z.array(z.string()),
+  tags: z.array(TagMountRefSchema),
   /** 叙事记录用地点名（跨场景对话事件置空；不参与感知过滤） */
   location: z.string().optional(),
 });
@@ -273,8 +280,8 @@ export type CacheStat = z.infer<typeof CacheStatSchema>;
 
 export const LoreEntrySchema = z.object({
   id: z.string(),
-  /** 统一标签（扁平字符串 + 冒号分层约定）：可见性与 lore 激活共用一套 */
-  tags: z.array(z.string()),
+  /** 内容侧 TAG 挂载（{name, level}[]）：激活与可见性统一按读者有效 TAG 集求值 */
+  tags: z.array(TagMountRefSchema),
   content: z.string(),
   /** 管理界面用开关（不参与激活逻辑，仅元数据） */
   enabled: z.boolean().optional(),

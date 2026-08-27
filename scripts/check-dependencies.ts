@@ -116,9 +116,9 @@ interface Exception {
 
 const EXCEPTIONS: Exception[] = [
   {
-    from: "src/compile/compiler.ts",
+    from: "src/compile/render.ts",
     to: "src/llm/chatPort.ts",
-    reason: "compiler 仅 type-import ChatMessage（编译期依赖，无运行时边）",
+    reason: "render 仅 type-import ChatMessage（编译期依赖，无运行时边）",
     exit: "阶段 B/C 将 PromptMessage/ChatMessage 契约迁往 contracts/ 后移除此例外",
   },
   {

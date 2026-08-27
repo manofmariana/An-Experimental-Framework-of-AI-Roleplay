@@ -241,7 +241,7 @@ describe("编辑 = 重读整个输出并完整处理（changes.effects 整段反
     let result = current.result as {
       invitation?: { contactSeq: number; inviter: string; channel: string; preInviteTimer: number | null };
     };
-    assert.equal(current.changes?.setup.length, 2, "setup（时钟跳转 + timer 弹出）保留在反向范围外");
+    assert.equal(current.changes?.setup.length, 3, "setup（时钟跳转 + 前台在场位置位 + timer 弹出）保留在反向范围外");
     assert.ok(result !== null && !("effects_from" in result) && !("markers_from" in result), "下标定位字段已删除");
     assert.deepEqual(result.invitation, { contactSeq: 1, inviter: "C1001", channel: "电话", preInviteTimer: 60 });
 

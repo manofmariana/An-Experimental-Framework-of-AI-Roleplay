@@ -3,9 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { CharacterManifestSchema, type CharacterManifest } from "../src/agents/character.js";
-import { PROSE_PLACEHOLDERS, type ProseContext } from "../src/agents/prose.js";
-import { compilePrompt, type PlaceholderRegistry } from "../src/compile/compiler.js";
-import type { PromptTemplate } from "../src/compile/template.js";
+import { parsePlaceholders } from "../src/compile/placeholders.js";
+import { renderPrompt, type RenderHost } from "../src/compile/render.js";
 import { readRecent, recordRecent } from "../src/llm/recent.js";
 import { resumeGameSession } from "../src/application/sessionFactory.js";
 import { reconcileGroups } from "../src/scheduler/simulator.js";
@@ -15,7 +14,13 @@ import { SAVE_SCHEMA_VERSION } from "../src/truth/saveSchema.js";
 import { SaveLoadError, type SaveLoadErrorKind } from "../src/truth/validation/errors.js";
 import { WorldStore } from "../src/truth/worldStore.js";
 import { DecisionPackageSchema, SpanSchema, type LoreEntry } from "../src/types.js";
-import { buildVarsTemplate, buildWorldSysRaw } from "./builders/index.js";
+import {
+  buildCharacterState,
+  buildProjectionHost,
+  buildTruthStores,
+  buildVarsTemplate,
+  buildWorldSysRaw,
+} from "./builders/index.js";
 import { tempDir } from "./harness/tempDir.js";
 
 const DECL = buildVarsTemplate().characterVars;
@@ -131,7 +136,7 @@ describe("整数分钟与 simulator 分桶契约", () => {
   });
 });
 
-describe("Recent upsert 与按需提示词 provider", () => {
+describe("Recent upsert 与投影层按需取数", () => {
   it("recordRecent 对同 seq 原位更新且不产生重复项", () => {
     const dir = temp("airp-audit-recent-");
     recordRecent("t", "gm", { seq: 4, messages: ["old"], reasoning: "old" }, dir);
@@ -139,24 +144,38 @@ describe("Recent upsert 与按需提示词 provider", () => {
     assert.deepEqual(readRecent("t", "gm", dir), [{ seq: 4, messages: ["new"], reasoning: "new" }]);
   });
 
-  it("prose 的空动态 provider 返回纯数据空串", () => {
-    const context: ProseContext = {
-      toneCard: "", worldLore: "", recentEvents: [], cast: [], triggeredLore: "",
-      lastProse: "", gmEvent: "", currentScene: "",
-    };
-    assert.equal(PROSE_PLACEHOLDERS.recent_events!.provide(context), "");
-    assert.equal(PROSE_PLACEHOLDERS.triggered_lore!.provide(context), "");
+  it("空真相下 prose 读者的动态源取数为空/空串", () => {
+    const truth = buildTruthStores({ characters: { C1001: buildCharacterState({ name: "林雾" }) } });
+    const host = buildProjectionHost({ kind: "prose" }, truth, {
+      adjudication: { events: [], narrativity: "skip", deltas: [], durations: [], location: [] },
+      currentScene: "",
+      participantCids: ["C1001"],
+    });
+    assert.deepEqual(host.entries("events"), []);
+    assert.equal(host.entries("lore")[0]!.content, "");
   });
 
-  it("compilePrompt 只执行模板实际引用的 provider", () => {
-    let unusedCalls = 0;
-    const registry: PlaceholderRegistry<{}> = {
-      used: { description: "used", provide: () => "ok" },
-      unused: { description: "unused", provide: () => { unusedCalls += 1; throw new Error("不应执行"); } },
+  it("renderPrompt 懒求值：未引用的占位符不取数", () => {
+    const catalog = parsePlaceholders({
+      used: { description: "used", source: "setting", segments: [{ kind: "entry", pass: { template: "{_content}" } }] },
+      unused: { description: "unused", source: "tone_card", segments: [{ kind: "entry", pass: { template: "{_content}" } }] },
+    });
+    const host: RenderHost = {
+      reader: { kind: "gm" },
+      readerLabel: "GM",
+      entries: (source) => {
+        if (source === "tone_card") throw new Error("不应执行");
+        return [{ content: "ok" }];
+      },
+      vars: () => {
+        throw new Error("不应执行");
+      },
+      renderIdentity: (text) => text,
     };
-    const template: PromptTemplate = { id: "audit", modules: [{ key: "m", role: "system", content: "{{used}}" }] };
-    assert.deepEqual(compilePrompt(template, registry, {}), [{ role: "system", content: "ok" }]);
-    assert.equal(unusedCalls, 0);
+    assert.deepEqual(
+      renderPrompt({ id: "audit", modules: [{ key: "m", role: "system", content: "{{used}}" }] }, catalog, host),
+      [{ role: "system", content: "ok" }],
+    );
   });
 });
 
@@ -184,10 +203,10 @@ describe("Decision relations 与 CharactersStore 初始化不变量", () => {
   });
 });
 
-describe("Generation 内六核心文件 schema_version 一致性（存档 v6）", () => {
+describe("Generation 内七核心文件 schema_version 一致性", () => {
   const cfg = { apiKey: "dummy", baseURL: "http://127.0.0.1:9", model: "m", jsonMode: false };
   const configs = { character: cfg, gm: cfg, prose: cfg };
-  const coreFiles = ["world.json", "events.json", "characters.json", "lore.json", "time.json", "archive.json"];
+  const coreFiles = ["world.json", "events.json", "characters.json", "lore.json", "time.json", "archive.json", "prompts.json"];
 
   /** 新档 → 返回 {dir, genDir}（genDir = CURRENT 指向的 Generation 目录）。 */
   function initializedDir(): { dir: string; genDir: string } {
@@ -197,7 +216,7 @@ describe("Generation 内六核心文件 schema_version 一致性（存档 v6）"
     return { dir, genDir: path.join(dir, "generations", revision) };
   }
 
-  it("Generation 布局：CURRENT + generations/{rev}/ 六文件，续档不再推进 revision", () => {
+  it("Generation 布局：CURRENT + generations/{rev}/ 七文件，续档不再推进 revision", () => {
     const { dir, genDir } = initializedDir();
     assert.equal(fs.readFileSync(path.join(dir, "CURRENT"), "utf8"), "000001");
     for (const file of coreFiles) {
@@ -222,12 +241,13 @@ describe("Generation 内六核心文件 schema_version 一致性（存档 v6）"
     );
   }
 
-  it("六个核心文件任一版本混入均明确拒绝（version 类，保留新建会话措辞）", () => {
+  it("旧档（存档 v10）任一核心文件版本均明确拒绝（version 类，保留新建会话措辞；版本号钉死字面量）", () => {
     for (const file of coreFiles) {
       const { dir, genDir } = initializedDir();
       const filePath = path.join(genDir, file);
       const data = JSON.parse(fs.readFileSync(filePath, "utf8")) as { schema_version: number };
-      fs.writeFileSync(filePath, JSON.stringify({ ...data, schema_version: SAVE_SCHEMA_VERSION - 1 }));
+      // legacy fixture：固定旧版本号 10（存档 v10 = 六文件布局末版），勿随存档版本更新
+      fs.writeFileSync(filePath, JSON.stringify({ ...data, schema_version: 10 }));
       expectResumeError(dir, "version", /核心文件版本混合/);
     }
   });
@@ -238,7 +258,7 @@ describe("Generation 内六核心文件 schema_version 一致性（存档 v6）"
     expectResumeError(dir, "incomplete", /缺核心文件/);
   });
 
-  it("六核心文件版本一致时可纯数据续档", () => {
+  it("七核心文件版本一致时可纯数据续档", () => {
     const { dir } = initializedDir();
     const resumed = resumeGameSession(configs, "audit", undefined, { baseDir: dir, proseWindowTurns: 5, rollDice: () => 10 });
     assert.equal(resumed.turnCount, 0);

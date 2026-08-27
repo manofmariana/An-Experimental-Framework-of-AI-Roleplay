@@ -17,7 +17,7 @@
  *   系统末端写侧车、vars 末端写外壳；附加来源 tags（模型 attachTags）以「附加」徽记
  *   只读 chip 并入同一 chips 区（无 ×、不出添加控件），tags 钮计数 `n+m`；
  * - attachtags/tags 池 = string_list 纯名集合：名称 chips（无等级列；池只读从动）；
- * - 系统五字段值只读 +「系统」徽记（tags 仍可编）；从动末端只读值 + formula 只读
+ * - 系统调度字段值只读 +「系统」徽记（tags 仍可编）；从动末端只读值 + formula 只读
  *   标注 +「从动」徽记（formula 结构编辑在世界页变量结构区，此处不开放）；
  * - initiative 为 null 时子字段显示空输入，两值齐全才整体写回对象（不清空回 null）。
  *

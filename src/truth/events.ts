@@ -1,5 +1,7 @@
 import { z } from "zod";
-import { EventSchema, knownByTag, type Event } from "../types.js";
+import { evaluateTagFilter, type ReaderScope } from "../tags/evaluate.js";
+import type { TagRegistry } from "../tags/registry.js";
+import { EventSchema, type Event } from "../types.js";
 import { SAVE_SCHEMA_VERSION } from "./saveSchema.js";
 
 export const EventsFileSchema = z.object({ schema_version: z.literal(SAVE_SCHEMA_VERSION), events: z.array(EventSchema) });
@@ -34,7 +36,17 @@ export class EventsStore {
   append(event: Event): void { this.events = [...this.events, EventSchema.parse(event)]; }
   readAll(): Event[] { return [...this.events].sort((a, b) => a.t - b.t || a.id.localeCompare(b.id)); }
   readWindow(n: number): Event[] { const all = this.readAll(); return all.slice(Math.max(0, all.length - n)); }
-  readVisibleTo(observerCid: string, at: number): Event[] { const tag = knownByTag(observerCid); return this.readAll().filter((event) => event.t <= at && event.tags.includes(tag)); }
+  /**
+   * 读者可见事件（time ≤ at ∧ TAG 过滤放行）：读者有效 TAG 集/权重/类别实例与
+   * 档内注册表全部由调用方注入。
+   */
+  readVisibleTo(reader: ReaderScope, at: number, registry: TagRegistry): Event[] {
+    return this.readAll().filter(
+      (event) =>
+        event.t <= at &&
+        evaluateTagFilter({ content: event, tags: event.tags }, reader, registry).status === "pass",
+    );
+  }
   truncateToSeq(targetSeq: number): void { this.events = truncateEvents(this.events, targetSeq); }
   /** 整体替换事件表（状态栏直接编辑用）：先全量校验，失败抛错不变更。 */
   replaceAll(events: unknown): void { this.events = z.array(EventSchema).parse(events); }

@@ -24,6 +24,8 @@ export const CharacterStateSchema = z.object({
   /** 全知权重（0-6；恒定系统字段，不开放白名单写通道） */
   omniscience: z.number().int().min(0).max(6).default(0),
   isPlayer: z.boolean(), relations: RelationsDataSchema,
+  /** 在场位（程序维护：组弹出前台/入组 = true，结算进后台/离组 = false；vars 源对 false 者的全部末端虚拟挂载 fappear 六级） */
+  appearance: z.boolean().default(false),
   long_term_memory: z.array(z.string()),
   /** 系统末端内容侧 TAG 侧车（系统分支末端路径 → {name, level}[]；只经直编修改，装配/直编时校验） */
   systemTags: z.record(z.string(), z.array(TagMountSchema)).default({}),
@@ -53,6 +55,7 @@ function fromManifest(manifest: CharacterManifest, startMinutes: number, charact
     timer: manifest.timer === null ? null : startMinutes + manifest.timer,
     group: manifest.group, initiative: manifest.initiative, channel: manifest.channel, acted: manifest.acted,
     level: manifest.level, omniscience: manifest.omniscience, isPlayer: manifest.isPlayer, relations: manifest.relations,
+    appearance: false,
     long_term_memory: [...manifest.initial_memories], systemTags: {}, vars,
   };
 }

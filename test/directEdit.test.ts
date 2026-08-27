@@ -89,7 +89,7 @@ describe("applyDirectEdit（状态栏直接编辑）", () => {
   it("整体替换 events：事件表生效，下一次激活注入即读新事件集（无状态 activation，无缓存可重建）", async () => {
     const { session, dir } = makeSession("events");
     const events = [
-      { id: "evt_e1", t: 0, seq: 1, kind: "world", tags: ["known_by:C1001"], payload: "替换后的事件" },
+      { id: "evt_e1", t: 0, seq: 1, kind: "world", tags: [{ name: "C1001", level: 1 }], payload: "替换后的事件" },
     ];
 
     session.applyDirectEdit({ events });

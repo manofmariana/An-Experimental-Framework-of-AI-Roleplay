@@ -4,16 +4,16 @@
  * 布局：
  *   save/{runId}/
  *     CURRENT                     文本文件，内容 = 6 位零填充 revision（如 "000007"）
- *     generations/{revision}/     world.json characters.json events.json archive.json lore.json time.json
+ *     generations/{revision}/     world.json characters.json events.json archive.json lore.json time.json prompts.json
  *     meta.json / cache-stats.jsonl / llm-recent/ / save-meta.json   旁路产物，留 run 根，不进 Generation
  *
  * 磁盘写入从"每次变异立即写单文件"收敛为"步边界一次写整 Generation"：
- * 六个 Store 是纯内存容器（saveData() 供收集），本类是唯一写盘出口。
+ * 七个 Store 是纯内存容器（saveData() 供收集），本类是唯一写盘出口。
  *
  * 原子提交流程：
  *   ① baseRevision 闸：≠ 当前 revision → RevisionConflictError（乐观并发）；
- *   ② 六文件信封序列化写入 generations/.tmp-{next}/；
- *   ③ 重读临时目录六文件并过 codec + validateSaveSet（跨文件不变量，B4；可构造注入替换）；
+ *   ② 七文件信封序列化写入 generations/.tmp-{next}/；
+ *   ③ 重读临时目录七文件并过 codec + validateSaveSet（跨文件不变量，B4；可构造注入替换）；
  *   ④ renameSync(.tmp-{next} → {next}) 确认正式 Generation；
  *   ⑤ 写 CURRENT.tmp → renameSync 覆盖 CURRENT（Node Windows rename 有替换语义）——
  *      外部只能观察到提交前或提交后的完整状态；
@@ -24,7 +24,7 @@
  * console.warn 报告）；上一代也坏则抛原始错误。loadPrevious() 公开为显式灾备读取。
  *
  * 错误一律为类型化 SaveLoadError（validation/errors.ts，分类口径见其文档）。
- * 旧平铺档（存档 v5 及更早）拒载：run 根存在六平铺文件之一但无 CURRENT → version（不迁移，请新建会话）。
+ * 旧平铺档（存档 v5 及更早）拒载：run 根存在平铺真相文件之一但无 CURRENT → version（不迁移，请新建会话）。
  * runDir 由调用方注入（禁 import src/config.ts，truth 层依赖纪律）；
  * io 端口可注入 fake（故障注入测试用），默认 node fs。
  */
@@ -35,6 +35,7 @@ import { ArchiveFileSchema, type ArchiveEntry } from "./archive.js";
 import { CharactersFileSchema, type CharacterState } from "./charactersStore.js";
 import { EventsFileSchema } from "./events.js";
 import { LoreFileSchema, type LoreFile } from "./loreStore.js";
+import { PromptsFileSchema, type PromptsFile } from "./promptsStore.js";
 import { INCOMPATIBLE_SAVE_MESSAGE, SAVE_SCHEMA_VERSION } from "./saveSchema.js";
 import { deepFreeze } from "./snapshot.js";
 import { TimeFileSchema, type TimeAnchor, type TimeFile } from "./timeStore.js";
@@ -42,8 +43,8 @@ import { RevisionConflictError, SaveLoadError } from "./validation/errors.js";
 import { validateSaveSet } from "./validation/saveSet.js";
 import { WorldFileSchema, type Pipeline, type StateTree, type WorldState } from "./worldStore.js";
 
-/** 六真相文件名（Generation 目录内）。 */
-export const TRUTH_FILES = ["world.json", "characters.json", "events.json", "archive.json", "lore.json", "time.json"] as const;
+/** 七真相文件名（Generation 目录内）。 */
+export const TRUTH_FILES = ["world.json", "characters.json", "events.json", "archive.json", "lore.json", "time.json", "prompts.json"] as const;
 
 const CURRENT_FILE = "CURRENT";
 const GENERATIONS_DIR = "generations";
@@ -55,7 +56,7 @@ export function formatRevision(revision: number): string {
   return String(revision).padStart(REVISION_DIGITS, "0");
 }
 
-/** 一代存档的完整数据（六文件载荷；信封 {schema_version, ...} 由本类组装/解析）。 */
+/** 一代存档的完整数据（七文件载荷；信封 {schema_version, ...} 由本类组装/解析）。 */
 export interface SaveSet {
   /** world 变量树（含 time 锚与 _sys 程序分支） */
   world: WorldState & StateTree;
@@ -65,6 +66,7 @@ export interface SaveSet {
   archive: ArchiveEntry[];
   lore: LoreFile;
   time: TimeFile;
+  prompts: PromptsFile;
 }
 
 export interface LoadedGeneration {
@@ -154,7 +156,7 @@ export class GenerationRepository {
     return Number(raw);
   }
 
-  /** 旧平铺档判据：run 根存在六平铺文件之一但无 CURRENT → version（存档 v5 及更早，不迁移）。 */
+  /** 旧平铺档判据：run 根存在平铺真相文件之一但无 CURRENT → version（存档 v5 及更早，不迁移）。 */
   assertNoLegacyFlat(): void {
     if (this.io.existsSync(this.currentFile())) return;
     for (const file of TRUTH_FILES) {
@@ -207,14 +209,14 @@ export class GenerationRepository {
     }
     const save = this.readSaveSet(dir);
     this.validateSaveSet(save);
-    // 恒冻结（不可变 Snapshot）：调用方（GameSession 六 Store 构造）深拷贝后使用，
+    // 恒冻结（不可变 Snapshot）：调用方（GameSession 七 Store 构造）深拷贝后使用，
     // 此处冻结让"直接改 loadCurrent 结果"的越界写入立刻抛 TypeError
     deepFreeze(save);
     return { revision, save };
   }
 
   /**
-   * 原子提交（流程见文件头注释）：临时目录写六文件 → 重读校验 → rename 确认 →
+   * 原子提交（流程见文件头注释）：临时目录写七文件 → 重读校验 → rename 确认 →
    * CURRENT.tmp → rename 切换 → best-effort 清理更旧代。返回新 revision。
    */
   commit(baseRevision: number, save: SaveSet): number {
@@ -224,10 +226,10 @@ export class GenerationRepository {
     const next = current + 1;
     const tmpDir = path.join(this.runDir, GENERATIONS_DIR, `${TMP_PREFIX}${formatRevision(next)}`);
     try {
-      // ② 六文件信封序列化写入临时目录（目标 Generation 此刻对外不可见）
+      // ② 七文件信封序列化写入临时目录（目标 Generation 此刻对外不可见）
       this.io.mkdirSync(tmpDir, { recursive: true });
       this.writeEnvelope(tmpDir, save);
-      // ③ 重读临时目录六文件 + codec 校验 + validateSaveSet（两级校验同一口径）
+      // ③ 重读临时目录七文件 + codec 校验 + validateSaveSet（两级校验同一口径）
       this.validateSaveSet(this.readSaveSet(tmpDir));
       // ④ 临时目录确认为正式 Generation
       this.io.renameSync(tmpDir, this.generationDir(next));
@@ -301,6 +303,7 @@ export class GenerationRepository {
     write("archive.json", { schema_version: SAVE_SCHEMA_VERSION, entries: save.archive });
     write("lore.json", save.lore);
     write("time.json", save.time);
+    write("prompts.json", save.prompts);
   }
 
   /** 逐文件读 + codec：缺文件 → incomplete；JSON 截断/结构校验失败 → corrupt；schema_version 不符 → version。 */
@@ -338,6 +341,7 @@ export class GenerationRepository {
     const archive = read("archive.json", (raw) => ArchiveFileSchema.parse(raw));
     const lore = read("lore.json", (raw) => LoreFileSchema.parse(raw));
     const time = read("time.json", (raw) => TimeFileSchema.parse(raw));
+    const prompts = read("prompts.json", (raw) => PromptsFileSchema.parse(raw));
     return {
       world: world.world,
       pipeline: world.pipeline,
@@ -346,6 +350,7 @@ export class GenerationRepository {
       archive: archive.entries,
       lore,
       time,
+      prompts,
     };
   }
 }

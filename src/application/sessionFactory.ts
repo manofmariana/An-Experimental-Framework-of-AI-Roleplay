@@ -1,8 +1,9 @@
 /**
  * 会话装配工厂：
  * 给定 configs/runId/options/worldSetId → 装配好的 GameSession 内核实例。
- * 职责 = ChatPort/adapter 装配、提示词模板启动校验、世界设定集读取、存档
- * meta.json（world_set）读写、六真相 Store 初始/续档装载、无状态 activation 装配
+ * 职责 = ChatPort/adapter 装配、提示词模板档内副本装载（新档拷自世界包、续档读档）、
+ * 世界设定集读取、存档
+ * meta.json（world_set）读写、七真相 Store 初始/续档装载、无状态 activation 装配
  * （三个 activation 各持对应 kind 的 ChatPort；上下文由 builder 逐调用现算）。
  * 命令串行/会话切换在 sessionCoordinator.ts；内核步编排在 gameSession.ts。
  */
@@ -10,14 +11,18 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import {
-  CHARACTER_PLACEHOLDERS,
   CharacterActivation,
   CharacterManifestSchema,
   type CharacterManifest,
 } from "../agents/character.js";
-import { GM_INCIDENT_PLACEHOLDERS, GM_PLACEHOLDERS, GmActivation } from "../agents/gm.js";
-import { PROSE_PLACEHOLDERS, ProseActivation } from "../agents/prose.js";
-import { loadTemplate } from "../compile/template.js";
+import { GmActivation } from "../agents/gm.js";
+import { ProseActivation } from "../agents/prose.js";
+import {
+  parsePlaceholders,
+  validatePlaceholders,
+  type PlaceholderCatalog,
+} from "../compile/placeholders.js";
+import { loadTemplate, type PromptTemplate } from "../compile/template.js";
 import {
   AGENT_KINDS,
   CONFIG_FILE,
@@ -46,6 +51,7 @@ import { EventsStore } from "../truth/events.js";
 import { GenerationRepository } from "../truth/generationRepository.js";
 import { Lorebook } from "../truth/lorebook.js";
 import { LoreStore } from "../truth/loreStore.js";
+import { PromptsStore } from "../truth/promptsStore.js";
 import { SAVE_SCHEMA_VERSION } from "../truth/saveSchema.js";
 import { loadWorldTime, TimeStore, worldTimeToMinutes } from "../truth/timeStore.js";
 import { cascadeDerived, parseWorldSys, varWriteDepsOf, type ParsedWorldSys } from "../truth/varWrite.js";
@@ -86,6 +92,33 @@ function loadVarsPackFiles(worldDir: string): { tagRegistry: unknown; varsTempla
     return JSON.parse(readText(file));
   };
   return { tagRegistry: read("tags.json"), varsTemplate: read("vars-template.json"), varsTags: read("vars-tags.json") };
+}
+
+/**
+ * 世界包占位符目录（prompts/placeholders.json）：缺文件/校验失败即拒装
+ * （loadVarsPackFiles 先例）；zod 形状 + 分支记号集规范化在 parsePlaceholders，
+ * 语义机检（vars 路径/置后同轴/分支记号）在装配点经 validatePlaceholders 对档内模板与注册表。
+ */
+export function loadPackPlaceholders(worldDir: string): PlaceholderCatalog {
+  const file = path.join(packPromptsDir(worldDir), "placeholders.json");
+  if (!fs.existsSync(file)) throw new Error(`世界设定集缺少占位符目录: ${file}`);
+  return parsePlaceholders(JSON.parse(readText(file)));
+}
+
+/**
+ * 世界包四份提示词模板（prompts/{character,gm,prose,gm-incident}.prompt.json）：
+ * 缺文件即拒装（loadVarsPackFiles 先例）；逐份按占位符目录键集过 validateTemplate
+ * + id 与文件名一致校验（loadTemplate），新会话拷入档内 PromptsStore。
+ */
+export function loadPackPrompts(worldDir: string, catalog: PlaceholderCatalog): PromptTemplate[] {
+  const dir = packPromptsDir(worldDir);
+  const keys = Object.keys(catalog);
+  const load = (agent: string): PromptTemplate => {
+    const file = path.join(dir, `${agent}.prompt.json`);
+    if (!fs.existsSync(file)) throw new Error(`世界设定集缺少提示词模板: ${file}`);
+    return loadTemplate(agent, keys, dir);
+  };
+  return [load("character"), load("gm"), load("prose"), load("gm-incident")];
 }
 
 function readWorldSet(runId: string, baseDir?: string): string {
@@ -168,15 +201,6 @@ export function createGameSession(
   const dir = options?.baseDir ?? runDir(runId);
   writeWorldSet(runId, worldSet, dir);
 
-  // 提示词模板：包内 prompts/（每世界包一份完整副本，续档与新会话同一口径——
-  // 都按本会话世界包解析）；装配时加载一次做启动校验，运行期每轮激活前热加载（见各 agent）。
-  // 四份：三 activation + gm-incident 突发变体（同一 GM 身份的不同功能提示词组）。
-  const promptsDir = packPromptsDir(worldDir);
-  loadTemplate("character", Object.keys(CHARACTER_PLACEHOLDERS), promptsDir);
-  loadTemplate("gm", Object.keys(GM_PLACEHOLDERS), promptsDir);
-  loadTemplate("prose", Object.keys(PROSE_PLACEHOLDERS), promptsDir);
-  loadTemplate("gm-incident", Object.keys(GM_INCIDENT_PLACEHOLDERS), promptsDir);
-
   const setting = readText(path.join(worldDir, "setting.md"));
   const toneCard = readText(path.join(worldDir, "tone-card.md"));
   const worldLoreEntries = Lorebook.load(path.join(worldDir, "lorebook.json")).all();
@@ -196,6 +220,9 @@ export function createGameSession(
   // 变量体系三文件（tags/vars-template/vars-tags）：装配时读取（缺文件即拒装）；
   // 新会话解析校验后拷入 world._sys，续档改从档内 _sys 读（校验同理）
   const packVars = loadVarsPackFiles(worldDir);
+  // 占位符目录 + 四份模板（缺文件/校验失败即拒装；语义机检在 sys 解析后）
+  const packPlaceholders = loadPackPlaceholders(worldDir);
+  const packTemplates = loadPackPrompts(worldDir, packPlaceholders);
   let sys: ParsedWorldSys;
   let revision: number;
   let world: WorldStore;
@@ -204,6 +231,7 @@ export function createGameSession(
   let loreStore: LoreStore;
   let timeStore: TimeStore;
   let archive: ArchiveStore;
+  let promptsStore: PromptsStore;
   if (repo.exists()) {
     // 续档：loadCurrent 逐文件 parse（类型化 SaveLoadError；当前代损坏自动回退上一代）
     const loaded = repo.loadCurrent();
@@ -238,6 +266,9 @@ export function createGameSession(
     loreStore = new LoreStore(save.lore);
     timeStore = new TimeStore(save.time);
     archive = new ArchiveStore(save.archive);
+    // 续档：提示词模板与占位符目录从档内副本恢复（不再读世界包）+ 语义机检（同新档口径）
+    promptsStore = new PromptsStore(save.prompts);
+    validatePlaceholders(promptsStore.placeholders(), { template: sys.template, registry: sys.tagRegistry });
   } else {
     // 新档：内存组装初始状态（首次写盘 = GameSession 构造尾的 init 提交 → Generation 1）
     repo.assertNoLegacyFlat();
@@ -250,15 +281,19 @@ export function createGameSession(
     loreStore = LoreStore.initFrom(worldLoreEntries);
     timeStore = new TimeStore({ schema_version: SAVE_SCHEMA_VERSION, start: worldTime.start, periods: worldTime.periods });
     archive = new ArchiveStore();
+    // 新档：世界包四份模板 + 占位符目录（缺文件/校验失败即拒装）拷入档内副本，随 init 提交落 Generation 1
+    validatePlaceholders(packPlaceholders, { template: sys.template, registry: sys.tagRegistry });
+    promptsStore = PromptsStore.initFrom(packTemplates, packPlaceholders);
   }
   characters.ensurePlayer(playerInitial, startMinutes, sys.template.characterVars);
 
-  // 无状态 activation：三个调用规则各持对应 kind 的 ChatPort，单一 CharacterActivation
-  // 服务全部 NPC；cast/lore/事件等上下文由 ActivationContextBuilder 逐调用从真相现算，
+  // 无状态 activation：三个调用规则各持对应 kind 的 ChatPort + 档内 PromptsStore（每轮
+  // 激活读档内模板副本与占位符目录），单一 CharacterActivation
+  // 服务全部 NPC；cast/lore/事件等注入内容由投影层（activationContexts.ts）逐调用从真相现算，
   // 不在装配期固化（动态改名/lore 编辑下一次调用即生效）。
-  const character = new CharacterActivation(ports.character, promptsDir);
-  const gm = new GmActivation(ports.gm, promptsDir);
-  const prose = new ProseActivation(ports.prose, promptsDir);
+  const character = new CharacterActivation(ports.character, promptsStore);
+  const gm = new GmActivation(ports.gm, promptsStore);
+  const prose = new ProseActivation(ports.prose, promptsStore);
 
   return new GameSession({
     runId,
@@ -271,6 +306,7 @@ export function createGameSession(
     loreStore,
     timeStore,
     archive,
+    promptsStore,
     statics: { setting, toneCard },
     proseWindowTurns: options?.proseWindowTurns ?? DEFAULT_PROSE_WINDOW_TURNS,
     gmIntervalCycles: options?.gmIntervalCycles ?? DEFAULT_GM_INTERVAL_CYCLES,
@@ -285,7 +321,7 @@ export function createGameSession(
 
 /**
  * 续档：从 save/{runId}/ 的落盘数据重建会话运行态（世界设定集按 meta.json）。
- * 数据经 GenerationRepository.loadCurrent 一次读入六 Store；本方法只转发 createGameSession。
+ * 数据经 GenerationRepository.loadCurrent 一次读入七 Store；本方法只转发 createGameSession。
  * 不触发任何 LLM 调用（纯数据操作）。
  */
 export function resumeGameSession(

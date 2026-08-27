@@ -23,6 +23,8 @@
   ],
   "vars": {
     "attachtags": [
+      "aud",
+      "vis",
       "白滩镇：常识"
     ]
   }

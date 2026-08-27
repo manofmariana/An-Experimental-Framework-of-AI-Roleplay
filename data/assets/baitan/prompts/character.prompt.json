@@ -14,12 +14,12 @@
     {
       "key": "lore",
       "role": "user",
-      "content": "# 世界知识\n{{activated_lore}}"
+      "content": "# 世界知识\n{{lore}}"
     },
     {
       "key": "recent_events",
       "role": "user",
-      "content": "# 近期事件\n{{recent_events}}"
+      "content": "# 近期事件\n{{events}}"
     },
     {
       "key": "prose_window",
@@ -29,7 +29,7 @@
     {
       "key": "snapshots",
       "role": "system",
-      "content": "# 世界快照（这是你的传感器反馈给你的关于世界状态）\n{{world_snapshot}}\n\n# 你的完整角色快照（你看到了自己的信息面板）\n你是 @{{cid}}（{{name}}）。\n{{character_snapshot}}"
+      "content": "# 世界快照（这是你的传感器反馈给你的关于世界状态）\n{{world_snapshot}}\n\n# 你的完整角色快照（你看到了自己的信息面板）\n你是 @{{cid}}（{{name}}）。\n{{snapshot}}"
     },
     {
       "key": "contacts",

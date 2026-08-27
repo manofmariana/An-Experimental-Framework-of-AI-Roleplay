@@ -72,7 +72,7 @@ function matchPattern(pattern: string, pathSegs: string[]): Record<string, strin
 /**
  * 组装 /api/* 处理器。返回 true = 已处理（/api/* 路径），false = 非 API 路径（交静态服务）。
  * 写操作生效规则：config/secrets/presets 域走配置事务热应用立即生效；world/character 域
- * markStale 后下次 new_session 生效；prompts 域热加载下一轮生效。
+ * markStale 后下次 new_session 生效；prompts 域档内副本下一轮激活生效（包基线新会话生效）。
  */
 export function createApiHandler(
   deps: ApiDeps,

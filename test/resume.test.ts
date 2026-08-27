@@ -21,7 +21,7 @@ h.setupWorld("baitan", [
 const options = (runId: string) => h.sessionOptions(runId, { rollDice: () => 10 });
 
 describe("resumeGameSession 新版存档", () => {
-  it("空目录初始化 Generation 布局（CURRENT + generations/000001/ 六文件），随后可纯数据 resume", () => {
+  it("空目录初始化 Generation 布局（CURRENT + generations/000001/ 七文件），随后可纯数据 resume", () => {
     const runId = `test-resume-${process.pid}-new`;
     const dir = path.join(h.saveDir, runId);
     fs.mkdirSync(dir, { recursive: true });
@@ -29,7 +29,7 @@ describe("resumeGameSession 新版存档", () => {
     const resumed = resumeGameSession(h.configs, runId, undefined, options(runId));
     assert.equal(resumed.worldTime, createdSession.worldTime); assert.equal(resumed.turnCount, 0); assert.equal(resumed.getEvents().length, 0);
     assert.equal(fs.readFileSync(path.join(dir, "CURRENT"), "utf8"), "000001");
-    for (const file of ["world.json", "events.json", "characters.json", "lore.json", "time.json", "archive.json"]) {
+    for (const file of ["world.json", "events.json", "characters.json", "lore.json", "time.json", "archive.json", "prompts.json"]) {
       const data = JSON.parse(h.readGenerationFile(runId, "current", file)) as { schema_version: unknown };
       assert.equal(typeof data.schema_version, "number");
     }

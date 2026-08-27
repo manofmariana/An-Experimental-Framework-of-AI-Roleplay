@@ -18,7 +18,7 @@ function evt(partial: Partial<Event> & { id: string }): Event {
     t: 0,
     seq: 1,
     kind: "world",
-    tags: ["known_by:C0"],
+    tags: [{ name: "C0", level: 1 }],
     payload: `payload-${partial.id}`,
     ...partial,
   };
@@ -245,22 +245,56 @@ describe("orderGroups（同刻多组串行：组内最高先攻降序，同值�
   });
 });
 
-describe("visibleEvents（known_by 唯一通道，ADR 0002）", () => {
-  it("tags 含 known_by:{cid} 即可见；location 不参与过滤", () => {
+describe("visibleEvents（TAG 过滤，无地点成分）", () => {
+  it("cid 类挂载命中读者有效 TAG 集即可见；location 不参与过滤；跨级 = 与", () => {
     const events = [
-      evt({ id: "evt_1", tags: ["known_by:C0", "known_by:C1001"], location: "灯塔" }),
-      evt({ id: "evt_2", tags: ["known_by:C0"] }), // C1001 不可见
-      evt({ id: "evt_3", tags: ["known_by:C1001"], location: "白滩镇" }), // 异地仍可见（无地点成分）
+      evt({
+        id: "evt_1",
+        tags: [
+          { name: "C0", level: 1 },
+          { name: "C1001", level: 1 },
+        ],
+        location: "灯塔",
+      }),
+      evt({ id: "evt_2", tags: [{ name: "C0", level: 1 }] }), // C1001 不可见
+      evt({ id: "evt_3", tags: [{ name: "C1001", level: 1 }], location: "白滩镇" }), // 异地仍可见（无地点成分）
+      evt({
+        id: "evt_4",
+        tags: [
+          { name: "C1001", level: 1 },
+          { name: "灯塔：秘密", level: 2 },
+        ],
+      }), // 跨级 = 与：持 C1001 但未持 灯塔：秘密 → 不可见
     ];
+    const c1001 = { tags: new Set(["C1001"]) };
     assert.deepEqual(
-      visibleEvents(events, "C1001").map((e) => e.id),
+      visibleEvents(events, c1001, {}).map((e) => e.id),
       ["evt_1", "evt_3"],
     );
     assert.deepEqual(
-      visibleEvents(events, "C0").map((e) => e.id),
+      visibleEvents(events, { tags: new Set(["C0"]) }, {}).map((e) => e.id),
       ["evt_1", "evt_2"],
     );
-    assert.deepEqual(visibleEvents(events, "C9999"), []);
+    assert.deepEqual(
+      visibleEvents(events, { tags: new Set(["C1001", "灯塔：秘密"]) }, {}).map((e) => e.id),
+      ["evt_1", "evt_3", "evt_4"],
+    );
+    assert.deepEqual(visibleEvents(events, { tags: new Set(["C9999"]) }, {}), []);
+  });
+
+  it("全知权重虚拟覆盖：权重 6 恒见；无 TAG 事件 = 广播恒通过", () => {
+    const events = [
+      evt({ id: "evt_1", tags: [{ name: "C0", level: 1 }] }),
+      evt({ id: "evt_2", tags: [] }),
+    ];
+    assert.deepEqual(
+      visibleEvents(events, { tags: new Set<string>(), omniscienceWeight: 6 }, {}).map((e) => e.id),
+      ["evt_1", "evt_2"],
+    );
+    assert.deepEqual(
+      visibleEvents(events, { tags: new Set(["C9999"]) }, {}).map((e) => e.id),
+      ["evt_2"],
+    );
   });
 });
 

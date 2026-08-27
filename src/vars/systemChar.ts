@@ -3,12 +3,13 @@
  * 出边——template.ts 解析期并入本模块常量，反向运行时会成环）。
  *
  * 角色顶层字段（name/gender/age/personality/reaction/level/omniscience/location/
- * initiative/relations/long_term_memory + 五调度字段 acted/group/channel/timer/isPlayer）
+ * initiative/relations/long_term_memory + 调度字段 acted/group/channel/timer/isPlayer/appearance）
  * 与 vars 树呈现为同一棵树的标准末端：本模块持有系统声明子树（代码常量，不进世界包
  * 模板文件），parseVarsTemplate 解析时并入 character 根（与世界作者声明同名 = 拒装），
- * 物理布局不变（调度器继续消费类型化字段）。五调度字段的声明节点带 system 元数据
+ * 物理布局不变（调度器继续消费类型化字段）。调度字段的声明节点带 system 元数据
  * （值只读语义，呈现层徽记）；relations = 结构化数组（元素 = 系统类型 relation
- * {cid, name, impression}，消费侧按元素的 cid 字段匹配）。
+ * {cid, name, impression}，消费侧按元素的 cid 字段匹配）。appearance = 在场位
+ * （组弹出前台/入组 = true、结算进后台/离组 = false），程序维护、结构编辑只展示。
  *
  * projectCharacterTree = 投影：系统分支的值从类型化字段读出（timer/channel 可 null——
  * 系统分支特判，null 原样呈现不走 valueType 校验；initiative null = 容器无实例；
@@ -39,7 +40,7 @@ export const SYSTEM_CHAR_TYPES: Readonly<Record<string, ContainerDecl>> = {
   relation: container({ cid: terminal("string"), name: terminal("string"), impression: terminal("string") }),
 };
 
-/** character 根系统声明子树（键序 = 投影呈现序；仅五调度字段带 system 元数据）。 */
+/** character 根系统声明子树（键序 = 投影呈现序；调度字段带 system 元数据）。 */
 export const SYSTEM_CHAR_CHILDREN: Readonly<Record<string, DeclNode>> = {
   name: terminal("string"),
   gender: terminal("string"),
@@ -61,6 +62,7 @@ export const SYSTEM_CHAR_CHILDREN: Readonly<Record<string, DeclNode>> = {
   channel: terminal("number", true),
   timer: terminal("number", true),
   isPlayer: terminal("boolean", true),
+  appearance: terminal("boolean", true),
 };
 
 /** 系统分支键集（实例 normalize 拒收、varWrite 拒写判定、侧车路径判定用）。 */
@@ -88,6 +90,8 @@ export interface CharacterProjectionInput {
   channel: number | null;
   timer: number | null;
   isPlayer: boolean;
+  /** 在场位（程序维护：组弹出前台/入组 = true，结算进后台/离组 = false；默认 false） */
+  appearance: boolean;
   vars: Readonly<Record<string, unknown>>;
   /** 系统末端内容侧 TAG 侧车（系统分支末端路径 → 挂载表） */
   systemTags?: Readonly<Record<string, readonly TagMount[]>> | undefined;
@@ -128,6 +132,7 @@ export function projectCharacterTree(state: CharacterProjectionInput): InstanceN
     channel: shell(state.channel, "channel"),
     timer: shell(state.timer, "timer"),
     isPlayer: shell(state.isPlayer, "isPlayer"),
+    appearance: shell(state.appearance, "appearance"),
   };
   if (state.initiative !== null) {
     out["initiative"] = {

@@ -33,11 +33,15 @@ import {
   type SessionTransition,
 } from "./transitionProjection.js";
 
-/** 状态栏直接编辑载荷（world/characters/events 三域整体替换）。 */
+/** 状态栏直接编辑载荷（world/characters/events 三域整体替换 + prompts 单份模板/占位符目录替换）。 */
 export interface DirectEditPayload {
   world?: unknown;
   characters?: unknown;
   events?: unknown;
+  /** 提示词编辑通道（PUT /api/prompts/:agent 档内模式）：单份 PromptTemplate，按 id 整体替换 */
+  prompts?: unknown;
+  /** 占位符目录编辑通道（PUT /api/prompts/placeholders 档内模式）：整份目录替换 */
+  placeholders?: unknown;
 }
 
 /**
@@ -116,6 +120,11 @@ export class SessionCoordinator {
   /** 活跃会话当前 world 冻结视图（含 `_sys`；HTTP 结构编辑档内模式取数用）。无会话 = null。 */
   activeWorld(): ReturnType<GameSession["getState"]>["world"] | null {
     return this.session?.getState().world ?? null;
+  }
+
+  /** 活跃会话档内提示词模板冻结视图（HTTP 提示词编辑档内模式取数用）。无会话 = null。 */
+  activePrompts(): ReturnType<GameSession["snapshot"]>["prompts"] | null {
+    return this.session?.snapshot().prompts ?? null;
   }
 
   /** 是否有待生效的资源修改（前端提示用）。 */

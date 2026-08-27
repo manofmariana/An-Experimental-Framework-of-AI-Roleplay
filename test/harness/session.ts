@@ -10,12 +10,26 @@ import fs from "node:fs";
 import path from "node:path";
 import { AGENT_KINDS, resolveWorldDir, type AgentKind, type LLMConfig } from "../../src/config.js";
 import type { GameSession } from "../../src/application/gameSession.js";
-import { createGameSession, resumeGameSession, type SessionOptions } from "../../src/application/sessionFactory.js";
+import {
+  createGameSession,
+  loadPackPlaceholders,
+  loadPackPrompts,
+  resumeGameSession,
+  type SessionOptions,
+} from "../../src/application/sessionFactory.js";
 import { packPromptsDir } from "../../src/resources/worldRepository.js";
 import type { CharacterState } from "../../src/truth/charactersStore.js";
+import { PromptsStore } from "../../src/truth/promptsStore.js";
 import { buildManifest, buildTagRegistryRaw, TEST_VARS_TEMPLATE_RAW } from "../builders/index.js";
 import { FakeChatScript, type RecordedCall } from "../fakes/chatPort.js";
 import { tempDir } from "./tempDir.js";
+
+/** 出厂四份模板 + 占位符目录 → PromptsStore（activation 直构造测试注入用；读真实默认包）。 */
+export function factoryPromptsStore(): PromptsStore {
+  const worldDir = resolveWorldDir();
+  const catalog = loadPackPlaceholders(worldDir);
+  return PromptsStore.initFrom(loadPackPrompts(worldDir, catalog), catalog);
+}
 
 /** 世界构图单元：一个角色。isPlayer 的进 player.json（恰一个），其余入 characters/。 */
 export interface CharSpec {
@@ -78,14 +92,15 @@ export class SessionHarness {
     fs.writeFileSync(path.join(dir, "setting.md"), "测试世界设定\n");
     fs.writeFileSync(path.join(dir, "tone-card.md"), "测试基调\n");
     fs.writeFileSync(path.join(dir, "lorebook.json"), "[]\n");
-    // 包内提示词四副本（三 activation + gm-incident 突发变体）：从真实默认包拷贝
-    // （activation 热加载与装配启动校验都读包内 prompts/）
+    // 包内提示词四副本（三 activation + gm-incident 突发变体）+ 占位符目录：从真实默认包拷贝
+    // （新档装配读取校验后拷入档内 prompts.json）
     const from = packPromptsDir(resolveWorldDir());
     const to = packPromptsDir(dir);
     fs.mkdirSync(to, { recursive: true });
     for (const agent of [...AGENT_KINDS, "gm-incident"]) {
       fs.copyFileSync(path.join(from, `${agent}.prompt.json`), path.join(to, `${agent}.prompt.json`));
     }
+    fs.copyFileSync(path.join(from, "placeholders.json"), path.join(to, "placeholders.json"));
     // 突发公式配置（装配启动校验必需）
     fs.writeFileSync(path.join(dir, "incident.json"), JSON.stringify(DEFAULT_INCIDENT_CONFIG, null, 2) + "\n");
     // 变量体系三文件（装配启动校验必需）：tags.json = system 条目（含 cid/channel/location
@@ -111,7 +126,7 @@ export class SessionHarness {
         level: spec.level ?? 1,
         timer: spec.timer === undefined ? 0 : spec.timer,
         isPlayer: spec.isPlayer === true,
-        vars: spec.vars ?? {},
+        vars: spec.vars ?? { attachtags: ["aud", "vis"] }, // 测试世界角色默认可听可视（感知 TAG = 内容侧持有）
       })));
     }
   }
@@ -178,7 +193,7 @@ export class SessionHarness {
     return this.readGenerationFile(runId, "current", file);
   }
 
-  /** 写一代 Generation（generations/{rev}/ 六文件 JSON + CURRENT 指向；fixture 迁移一次性收口）。 */
+  /** 写一代 Generation（generations/{rev}/ 七文件 JSON + CURRENT 指向；fixture 迁移一次性收口）。 */
   writeGeneration(dir: string, rev: number, files: Record<string, unknown>): void {
     const name = String(rev).padStart(6, "0");
     const genDir = path.join(dir, "generations", name);

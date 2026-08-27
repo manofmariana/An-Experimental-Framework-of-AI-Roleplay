@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import type { ReaderScope } from "../src/tags/evaluate.js";
 import { EventsStore, truncateEvents } from "../src/truth/events.js";
 import type { Event } from "../src/types.js";
 
@@ -7,7 +8,10 @@ function evt(partial: Partial<Event> & { id: string; seq: number }): Event {
   return {
     t: 0,
     kind: "world",
-    tags: ["known_by:C0", "known_by:C1001"],
+    tags: [
+      { name: "C0", level: 1 },
+      { name: "C1001", level: 1 },
+    ],
     payload: `payload-${partial.id}`,
     ...partial,
   };
@@ -27,15 +31,16 @@ describe("EventsStore（纯内存容器；落盘归 GenerationRepository）", ()
     assert.deepEqual(new EventsStore(store.saveData()).readAll().map((e) => e.id), ids);
   });
 
-  it("readWindow / readVisibleTo（known_by 标签 ∧ time，无地点成分，ADR 0002）", () => {
+  it("readWindow / readVisibleTo（TAG 过滤 ∧ time，无地点成分）", () => {
     const store = new EventsStore();
     store.append(evt({ id: "evt_0001", seq: 1, t: 1, location: "loc_lighthouse" }));
-    store.append(evt({ id: "evt_0002", seq: 2, t: 2, tags: ["known_by:C0"] })); // C1001 不可见
+    store.append(evt({ id: "evt_0002", seq: 2, t: 2, tags: [{ name: "C0", level: 1 }] })); // C1001 不可见
     store.append(evt({ id: "evt_0003", seq: 3, t: 9, location: "loc_baitan" })); // t > at
     store.append(evt({ id: "evt_0004", seq: 4, t: 4, location: "loc_baitan" })); // 异地仍可见
 
     assert.deepEqual(store.readWindow(2).map((e) => e.id), ["evt_0004", "evt_0003"]);
-    const visible = store.readVisibleTo("C1001", 5);
+    const reader: ReaderScope = { tags: new Set(["C1001"]) };
+    const visible = store.readVisibleTo(reader, 5, {});
     assert.deepEqual(visible.map((e) => e.id), ["evt_0001", "evt_0004"]);
   });
 

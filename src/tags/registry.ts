@@ -15,11 +15,15 @@ export const TAG_CATEGORIES = ["cid", "channel", "location"] as const;
 export type TagCategory = (typeof TAG_CATEGORIES)[number];
 
 /** 程序化 TAG 代码常量（注册表 system 条目的校验基准；末三条 = 开放类别同名条目）。 */
-export const SYSTEM_TAG_NAMES = ["aud", "vis", "A", "V", "全知", "强制全知", ...TAG_CATEGORIES] as const;
+export const SYSTEM_TAG_NAMES = ["aud", "vis", "A", "V", "fappear", "全知", "强制全知", ...TAG_CATEGORIES] as const;
 
 /** 虚拟全知挂载记号（求值时按非空等级组追加，不落盘）。 */
 export const OMNISCIENT_TAG = "全知";
 export const FORCE_OMNISCIENT_TAG = "强制全知";
+/** 后台角色末端的虚拟挂载 TAG（不落盘；对象侧持纯名 = 感知后台 escape hatch）。 */
+export const FAPPEAR_TAG = "fappear";
+/** fappear 虚拟挂载的焊死等级（权重 6 全知覆盖、权重 1-5 全知不可见）。 */
+export const FAPPEAR_LEVEL = 6;
 
 const ConditionOpSchema = z.enum(["eq", "ne", "lt", "le", "gt", "ge", "between", "contains"]);
 

@@ -11,7 +11,7 @@ import type { TruthStores } from "../src/truth/stores.js";
 import { TimeStore } from "../src/truth/timeStore.js";
 import type { VarChange } from "../src/truth/varChanges.js";
 import { WorldStore } from "../src/truth/worldStore.js";
-import { buildManifest, buildVarsTemplate, buildWorldSysRaw } from "./builders/index.js";
+import { buildManifest, buildPromptsStore, buildVarsTemplate, buildWorldSysRaw } from "./builders/index.js";
 import { parseVarsTemplate } from "../src/vars/template.js";
 import { AdjudicationPackageSchema, type AdjudicationPackage } from "../src/types.js";
 
@@ -39,6 +39,7 @@ function makeTruth(): TruthStores {
     archive: new ArchiveStore(),
     loreStore: LoreStore.initFrom([]),
     timeStore: new TimeStore({ schema_version: SAVE_SCHEMA_VERSION, start: START, periods: [{ key: "白天", from: 0, to: 24 }] }),
+    promptsStore: buildPromptsStore(),
   };
   truth.world.setPipeline({ working_set: [{ cid: "C0" }, { cid: "C1001" }] });
   return truth;
@@ -85,7 +86,7 @@ const fullPkg = () =>
     location: [{ cid: "C1001", location: { name: "loc_A", level: 2 } }],
     events: [
       { text: "事件一", tags: [] },
-      { text: "事件二", tags: ["known_by:C0"], location: "灯塔" },
+      { text: "事件二", tags: [{ name: "C0", level: 1 }], location: "灯塔" },
     ],
   });
 
@@ -146,7 +147,10 @@ describe("planGmAdjudication（提交形状）", () => {
       t: clock,
       seq: 9,
       kind: "world",
-      tags: ["known_by:C0", "known_by:C1001"],
+      tags: [
+        { name: "C0", level: 1 },
+        { name: "C1001", level: 1 },
+      ],
       payload: "事件一",
     });
     assert.deepEqual(committed[1], {
@@ -155,7 +159,7 @@ describe("planGmAdjudication（提交形状）", () => {
       seq: 9,
       kind: "world",
       location: "灯塔",
-      tags: ["known_by:C0"],
+      tags: [{ name: "C0", level: 1 }],
       payload: "事件二",
     });
     assert.deepEqual(truth.events.readAll(), committed, "事件已写入事件库");

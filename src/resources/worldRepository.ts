@@ -5,7 +5,8 @@
  * （incident.json）、变量体系文件（tags.json 注册表只读 + vars-template.json / vars-tags.json 可写，
  * 缺文件读 → null 由路由层给缺省空结构）、角色 manifest
  * （player.json + characters/*.json）、包内提示词模板（prompts/{agent}.prompt.json，每包一份
- * 完整副本，无全局默认；三 activation + gm-incident 突发变体）的读写，以及世界设定集列表/目录解析（canonical 实现——config.ts 的
+ * 完整副本，无全局默认；三 activation + gm-incident 突发变体）与占位符目录
+ * （prompts/placeholders.json，可写）的读写，以及世界设定集列表/目录解析（canonical 实现——config.ts 的
  * listWorldSets/resolveWorldDir 委托到此处，消除两份实现的漂移）。
  *
  * 全部函数显式接收目录参数（组成根经 UserDirectories 注入），本模块不 import config。
@@ -174,6 +175,16 @@ export function packPromptsDir(worldDir: string): string {
 /** 读模板文件全文（缺失 → 原生 fs 错误，HTTP 层 500）。 */
 export function readPromptFile(promptsDir: string, agent: string): string {
   return fs.readFileSync(path.join(promptsDir, `${safeSegment(agent)}.prompt.json`), "utf8");
+}
+
+/** 读包内占位符目录全文（prompts/placeholders.json；缺失 → 原生 fs 错误，HTTP 层 500）。 */
+export function readPlaceholdersFile(promptsDir: string): string {
+  return fs.readFileSync(path.join(promptsDir, "placeholders.json"), "utf8");
+}
+
+/** 写包内占位符目录（原样覆盖；调用方已完成结构 + 语义机检）。 */
+export function writePlaceholdersFile(promptsDir: string, content: string): void {
+  fs.writeFileSync(path.join(promptsDir, "placeholders.json"), content, "utf8");
 }
 
 /** 写模板文件（调用方已完成结构 + 占位符校验）。 */

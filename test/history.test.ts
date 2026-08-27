@@ -17,7 +17,16 @@ const decision = {
   dialogue: "雾大，路滑。",
 };
 const adjudication = {
-  events: [{ text: "@C1001 打量 @C0，神色戒备", tags: ["known_by:C0", "known_by:C1001"], location: "灯塔" }],
+  events: [
+    {
+      text: "@C1001 打量 @C0，神色戒备",
+      tags: [
+        { name: "C0", level: 1 },
+        { name: "C1001", level: 1 },
+      ],
+      location: "灯塔",
+    },
+  ],
   narrativity: "full" as const,
   deltas: [],
   durations: [
@@ -47,7 +56,7 @@ function round(seq0: number, prose: string): ArchiveEntry[] {
 }
 
 function evt(id: string, payload: string): Event {
-  return { id, t: 0, seq: 1, kind: "world", tags: ["known_by:C0"], payload };
+  return { id, t: 0, seq: 1, kind: "world", tags: [{ name: "C0", level: 1 }], payload };
 }
 
 describe("buildHistory（按轮分组——一轮 = 若干 actor 步 + gm 步（+prose 步））", () => {

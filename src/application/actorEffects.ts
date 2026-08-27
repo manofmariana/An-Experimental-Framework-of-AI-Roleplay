@@ -5,8 +5,9 @@
  * NPC LLM + schema 校验），随后统一进入 planActorDecision；编辑重放 = 在 draft 上
  * 反转旧 effects 后用同一规划器生成新 effects（见 gameSession.ts editResult）。
  *
- * 统一处理：working set 追加、relations、普通行动 acted、邀请接受/拒绝（confirm/
- * 还原 timer + 清频道）、markers（gm_request/leave/recall/contact；游离 confirm 忽略）。
+ * 统一处理：working set 追加（言行条目 + 标记派生的系统通知条目）、relations、普通行动
+ * acted、邀请接受/拒绝（confirm/还原 timer + 清频道）、markers（gm_request/leave/recall/
+ * contact；游离 confirm 忽略）。
  *
  * 规划器只变异传入的 draft（或 live）视图并返回常规 VarChange[]（StepChanges.effects
  * 段），永不持久化；提交由调用方负责。
@@ -17,6 +18,7 @@ import { groupLocation } from "../scheduler/simulator.js";
 import { normalizeCid } from "../truth/identity.js";
 import type { TruthStores } from "../truth/stores.js";
 import type { VarChange } from "../truth/varChanges.js";
+import { appendNotices, noticesOfMarkers } from "../truth/workingSet.js";
 import type { DecisionPackage, Marker } from "../types.js";
 import {
   cleanupChannels,
@@ -24,6 +26,7 @@ import {
   playableCharacters,
   playerCidOf,
   rederiveGroups,
+  setAppearance,
   simCharsOf,
 } from "./scheduleEffects.js";
 
@@ -58,7 +61,8 @@ function setGmTrigger(truth: TruthStores, cid: string): VarChange[] {
 }
 
 /**
- * 标记执行（程序即时作用，全部走 VarChange；标记不进工作集、不进任何注入）。
+ * 标记执行（程序即时作用，全部走 VarChange；标记本身即抛、不直入工作集——注入镜像 =
+ * planActorDecision 里 noticesOfMarkers 生成的系统通知条目，与本函数的程序作用并行）。
  * confirm 不在此处理——它只在邀请应答步生效（applyInvitationAnswer），游离 confirm 忽略。
  */
 function applyMarkers(truth: TruthStores, cid: string, markers: Marker[], rollDice: DicePort): VarChange[] {
@@ -69,9 +73,10 @@ function applyMarkers(truth: TruthStores, cid: string, markers: Marker[], rollDi
         changes.push(...setGmTrigger(truth, cid));
         break;
       case "leave": {
-        // 离开标记对所有角色（含玩家）统一程序化：组归 0 + timer 置 null（无计时器，待 GM 结算）+ 清频道，绝不触发 GM
+        // 离开标记对所有角色（含玩家）统一程序化：组归 0 + timer 置 null（无计时器，待 GM 结算）+ 清频道 + 在场位复位，绝不触发 GM
         const oldGroup = truth.characters.get(cid).group;
         changes.push(...truth.characters.setVars(cid, { group: 0, timer: null, channel: null }));
+        changes.push(...setAppearance(truth, cid, false));
         // 减员至单人 = 新的独奏节奏起点：幸存者 acted 重置（本周期已行动也重来）+ 周期计数 X 归 0，
         // 独奏周期（前台仅 1 人阈值恒为 1）从下一次单人行动起计
         if (oldGroup !== 0) {
@@ -97,10 +102,11 @@ function applyMarkers(truth: TruthStores, cid: string, markers: Marker[], rollDi
           console.warn(`召回标记指向未知角色 ${target}，已忽略`);
           break;
         }
-        // 未结算离开集合：group=0 且 timer=null；timer 归当前 clock（组原到期时刻）、按进组规则归组
+        // 未结算离开集合：group=0 且 timer=null；timer 归当前 clock（组原到期时刻）、按进组规则归组 + 在场位置位
         if (state.group === 0 && state.timer === null) {
           changes.push(...truth.characters.setVars(target, { timer: truth.world.clock }));
           changes.push(...rederiveGroups(truth, rollDice));
+          changes.push(...setAppearance(truth, target, true));
         } else {
           console.warn(`召回标记目标 ${target} 不在未结算离开集合，已忽略`);
         }
@@ -153,7 +159,8 @@ function applyReject(truth: TruthStores, cid: string, preTimer: number | null): 
 /**
  * 接受（confirm + 首轮回复）：并入邀请者组（邀请者单人则配对成新组并补投），
  * 先攻 = 已存值组编号对上则复用、否则单独补投；位置 ≠ 组位置 → 先攻 -1；
- * timer 归当前时钟（立即到期）待 GM 重设；首轮回复计入已行动（acted=true）。
+ * timer 归当前时钟（立即到期）待 GM 重设；首轮回复计入已行动（acted=true）；
+ * 入组（含远程，按组籍）在场位置位。
  */
 function applyConfirm(truth: TruthStores, cid: string, contactSeq: number, rollDice: DicePort): VarChange[] {
   const current = truth.world.pipeline.current;
@@ -188,6 +195,7 @@ function applyConfirm(truth: TruthStores, cid: string, contactSeq: number, rollD
   const gl = groupLocation(simCharsOf(truth), g);
   if (gl !== null && truth.characters.get(cid).location.name !== gl) value -= 1;
   changes.push(...truth.characters.setVars(cid, { initiative: { value, group: g }, timer: truth.world.clock, acted: true }));
+  changes.push(...setAppearance(truth, cid, true));
   return changes;
 }
 
@@ -199,8 +207,12 @@ function applyConfirm(truth: TruthStores, cid: string, contactSeq: number, rollD
 export function planActorDecision(draft: TruthStores, ctx: ActorDecisionContext): StepEffects {
   const changes: VarChange[] = [];
   if (ctx.pkg.relations?.length) changes.push(...draft.characters.updateRelations(ctx.cid, ctx.pkg.relations));
+  // 决策入工作集 + 标记派生的系统通知条目（纯函数镜像；同 type 固定 ID 复用，后来者居上）
   draft.world.setPipeline({
-    working_set: [...draft.world.pipeline.working_set, { cid: ctx.cid, decision: ctx.pkg }],
+    working_set: appendNotices(
+      [...draft.world.pipeline.working_set, { cid: ctx.cid, decision: ctx.pkg }],
+      noticesOfMarkers(ctx.cid, ctx.pkg.markers ?? []),
+    ),
   });
   if (ctx.invitation === undefined) changes.push(...draft.characters.setVars(ctx.cid, { acted: true }));
   else changes.push(...applyInvitationAnswer(draft, ctx.cid, ctx.pkg, ctx.invitation, ctx.rollDice));

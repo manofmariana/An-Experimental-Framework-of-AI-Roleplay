@@ -98,7 +98,7 @@ export function deleteRun(runsDir: string, id: string, activeRunId: string | nul
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
-export type RunArtifactKind = "events" | "world" | "characters" | "archive" | "lore" | "stats";
+export type RunArtifactKind = "events" | "world" | "characters" | "archive" | "lore" | "prompts" | "stats";
 
 const TRUTH_FILES: Record<Exclude<RunArtifactKind, "stats">, string> = {
   events: "events.json",
@@ -106,6 +106,7 @@ const TRUTH_FILES: Record<Exclude<RunArtifactKind, "stats">, string> = {
   characters: "characters.json",
   archive: "archive.json",
   lore: "lore.json",
+  prompts: "prompts.json",
 };
 
 function readJsonl(file: string, id: string): unknown[] {
@@ -123,7 +124,7 @@ function readJsonl(file: string, id: string): unknown[] {
 
 /**
  * 读历史会话产物（回放用；纯读取不校验版本）。
- * 存档 v7：events/world/characters/archive/lore 读 CURRENT 指向的 Generation 目录；
+ * 存档 v7：events/world/characters/archive/lore/prompts 读 CURRENT 指向的 Generation 目录；
  * stats 仍读 run 根 cache-stats.jsonl（旁路产物，不进 Generation，缺文件 = 空）。
  * D3 清理（原 api.ts readJson fallback 与平铺回落已删）：
  * - 存档目录不存在 → RUN_NOT_FOUND；

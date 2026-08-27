@@ -12,7 +12,7 @@
  * 每步：seq++ → 归档上一步（world.json 流水线 current → archive.json）→
  * 执行本步（效果统一经效果规划器：planActorDecision/planGmAdjudication）→
  * 结果 + StepChanges（setup/effects 分段）写流水线 current → 步边界整代提交
- * （存档 v7：六 Store 纯内存，提交经 CommitExecutor → GenerationRepository 一次写整
+ * （存档 v7：七 Store 纯内存，提交经 CommitExecutor → GenerationRepository 一次写整
  * Generation，唯一写盘出口）。
  */
 import { z } from "zod";
@@ -61,6 +61,7 @@ import { EventsStore, scanEventWatermark } from "../truth/events.js";
 import type { GenerationRepository, SaveSet } from "../truth/generationRepository.js";
 import { normalizeCid } from "../truth/identity.js";
 import { LoreStore } from "../truth/loreStore.js";
+import { PromptsStore } from "../truth/promptsStore.js";
 import { SAVE_SCHEMA_VERSION } from "../truth/saveSchema.js";
 import { deepFreeze, type DeepReadonly } from "../truth/snapshot.js";
 import { adoptTruth, cloneTruth, collectSave, type TruthStores } from "../truth/stores.js";
@@ -70,7 +71,7 @@ import { diffStateTrees } from "../truth/varDiff.js";
 import { applyVarDeltas, cascadeDerived, parseWorldSys, varWriteDepsOf } from "../truth/varWrite.js";
 import { normalizeInstance, validateSystemTags } from "../vars/tree.js";
 import { DisposedSessionError } from "../truth/validation/errors.js";
-import { renderScene, renderSpeech, type WorkingSetEntry } from "../truth/workingSet.js";
+import { isNoticeEntry, renderScene, renderSpeech, type WorkingSetEntry } from "../truth/workingSet.js";
 import {
   emptyStepChanges,
   flatChanges,
@@ -90,7 +91,7 @@ import {
   type Event,
 } from "../types.js";
 import { planActorDecision, type ActorInvitationContext } from "./actorEffects.js";
-import { ActivationContextBuilder, remoteCidsOf, type ActivationStatics } from "./activationContexts.js";
+import { ProjectionBuilder, remoteCidsOf, type ActivationStatics } from "./activationContexts.js";
 import { planGmAdjudication } from "./gmEffects.js";
 import {
   type ArchivedProseResult,
@@ -108,6 +109,7 @@ import {
   playableCharacters,
   playerCidOf,
   rederiveGroups,
+  setAppearance,
   simCharsOf,
 } from "./scheduleEffects.js";
 import { projectWorkingSet } from "./workingSetProjection.js";
@@ -143,7 +145,7 @@ export interface PauseOptions {
 const AUTO_CONTINUE: PauseOptions = { everyStep: false, beforeGm: false, afterGm: false, afterProse: false };
 
 /**
- * 六真相 Store 成组视图 TruthStores + cloneTruth/adoptTruth/collectSave 已公共化至
+ * 七真相 Store 成组视图 TruthStores + cloneTruth/adoptTruth/collectSave 已公共化至
  * src/truth/stores.ts（session 内核与效果规划器共用）；本类只保留 liveTruth() 视图。
  */
 
@@ -160,6 +162,7 @@ export interface GameSessionDeps {
   loreStore: LoreStore;
   timeStore: TimeStore;
   archive: ArchiveStore;
+  promptsStore: PromptsStore;
   /** 世界设定集静态文本（activation 上下文 builder 的静态部分）。 */
   statics: ActivationStatics;
   proseWindowTurns: number;
@@ -184,8 +187,9 @@ export class GameSession {
   private readonly loreStore: LoreStore;
   private readonly timeStore: TimeStore;
   private readonly archive: ArchiveStore;
-  /** activation 上下文构建器（激活点逐调用现算 Context，无 agent 侧缓存）。 */
-  private readonly contexts: ActivationContextBuilder;
+  private readonly promptsStore: PromptsStore;
+  /** 内容源投影装配器（激活点逐调用现算 RenderHost，无 agent 侧缓存）。 */
+  private readonly contexts: ProjectionBuilder;
   private proseWindowTurns: number;
   private gmIntervalCycles: number;
   private readonly rollDice: DicePort;
@@ -193,7 +197,7 @@ export class GameSession {
   private readonly repo: GenerationRepository;
   private currentRevision: number;
   private readonly display: Display | undefined;
-  /** 提交执行器（唯一提交入口；六条写盘路径全部经它，见 commitGeneration/commitTruth）。 */
+  /** 提交执行器（唯一提交入口；写盘路径全部经它，见 commitGeneration/commitTruth）。 */
   private readonly executor: CommitExecutor;
   /** 各 agent kind 的 OpenAI adapter（装配时建立，注入 fake 的 kind 无此项）：配置事务保存后经 applyResolvedConfig 热更新。 */
   private readonly adapters: Partial<Record<AgentKind, OpenAIChatAdapter>>;
@@ -216,7 +220,8 @@ export class GameSession {
     this.loreStore = deps.loreStore;
     this.timeStore = deps.timeStore;
     this.archive = deps.archive;
-    this.contexts = new ActivationContextBuilder(deps.statics);
+    this.promptsStore = deps.promptsStore;
+    this.contexts = new ProjectionBuilder(deps.statics);
     this.proseWindowTurns = deps.proseWindowTurns;
     this.gmIntervalCycles = deps.gmIntervalCycles;
     this.rollDice = deps.rollDice;
@@ -228,7 +233,13 @@ export class GameSession {
     this.executor = new CommitExecutor(deps.repo);
     this.committedRoots = this.currentRoots();
     const isNew = this.currentRevision === 0;
-    if (isNew) this.rederiveGroups(this.liveTruth(), false);
+    if (isNew) {
+      const truth = this.liveTruth();
+      this.rederiveGroups(truth, false);
+      // 新档初始前台组在场位置位（init 初始状态的一部分，同开局组派生不产生变更记录）
+      const sel = selectFront(this.schedulerChars(truth), truth.world.clock);
+      if (sel !== null) for (const cid of sel.front) setAppearance(truth, cid, true);
+    }
     this.restoreFromDisk();
     if (isNew) this.commitGeneration("init", []);
     this.freezeTruth();
@@ -277,7 +288,7 @@ export class GameSession {
   }
 
 
-  /** live 六 Store 的 TruthStores 视图（正常步路径的显式 truth 实参）。 */
+  /** live 七 Store 的 TruthStores 视图（正常步路径的显式 truth 实参）。 */
   private liveTruth(): TruthStores {
     return {
       world: this.world,
@@ -286,6 +297,7 @@ export class GameSession {
       archive: this.archive,
       loreStore: this.loreStore,
       timeStore: this.timeStore,
+      promptsStore: this.promptsStore,
     };
   }
 
@@ -297,6 +309,7 @@ export class GameSession {
     deepFreeze(this.archive.saveData());
     deepFreeze(this.loreStore.saveData());
     deepFreeze(this.timeStore.saveData());
+    deepFreeze(this.promptsStore.saveData());
   }
 
   /** 当前三域根引用（提交差分的 next；恒冻结后引用即不可变快照）。 */
@@ -327,7 +340,7 @@ export class GameSession {
   }
 
   /**
-   * 步边界整代提交（存档 v7 唯一写盘出口，live 路径）：六 Store 内存态 →
+   * 步边界整代提交（存档 v7 唯一写盘出口，live 路径）：七 Store 内存态 →
    * CommitPlan → CommitExecutor → 新 Generation + CURRENT 前移 → live 数据冻结。
    * 调用点：finishStep 尾 / handleStepError interrupted 分支 / create 新档首次（init）。
    * 编辑/回溯/直编不走这里——它们在 draft 上操作后经 commitTruth 提交（失败零副作用）。
@@ -363,7 +376,7 @@ export class GameSession {
 
   /**
    * 错误再同步（步内非 abort 失败 → 内存可能已偏离磁盘）：
-   * 从 CURRENT Generation 重建六 Store 数据（**对象身份保持**——GameSession 持有
+   * 从 CURRENT Generation 重建七 Store 数据（**对象身份保持**——GameSession 持有
    * Store 引用，用数据替换而非换新实例）。activation 无状态，无缓存需重建。
    */
   private rehydrate(): void {
@@ -376,8 +389,9 @@ export class GameSession {
     this.archive.restoreData(save.archive);
     this.loreStore.restoreData(save.lore);
     this.timeStore.restoreData(save.time);
+    this.promptsStore.restoreData(save.prompts);
     this.eventSeq = scanEventWatermark(this.events.readAll());
-    // 邀请投影重建（派生缓存：内存可能已偏离磁盘，与六 Store 同步重推）
+    // 邀请投影重建（派生缓存：内存可能已偏离磁盘，与七 Store 同步重推）
     this.invitations = this.rebuildInvitationProjection();
     this.freezeTruth();
   }
@@ -389,9 +403,10 @@ export class GameSession {
     // 流水线断点（工作集未清/有未归档步骤）：提示，按现算 phase 继续
     const p = this.world.pipeline;
     if (p.working_set.length > 0 || p.current !== null) {
+      const pending = p.working_set.flatMap((e) => (isNoticeEntry(e) ? [] : [e.cid])).length;
       this.display?.summary(
         "session",
-        `流水线断点恢复：seq=${p.seq} phase=${phaseOf(this.deriveCommand(this.liveTruth()))}（未裁决言行 ${p.working_set.length} 条将并入后续裁决）`,
+        `流水线断点恢复：seq=${p.seq} phase=${phaseOf(this.deriveCommand(this.liveTruth()))}（未裁决言行 ${pending} 条将并入后续裁决）`,
       );
     }
     // 邀请投影全量重建（读档：从 archive + current 重推；派生缓存不落盘）
@@ -667,7 +682,7 @@ export class GameSession {
 
   /**
    * 本轮 #当前场景（角色视角）与远程成员集：纯派生逻辑已迁至 activationContexts.ts
-   * （sceneForCid/remoteCidsOf，truth 显式入参），角色/GM 上下文逐调用现算。
+   * （batchIsolatedWorkingSet/remoteCidsOf，truth 显式入参），角色/GM 上下文逐调用现算。
    */
 
   /** 角色轮。 */
@@ -679,15 +694,17 @@ export class GameSession {
     // 邀请应答激活：timer 置当前时钟弹出（立即到期；setup 段 before = 邀请前值，拒绝时据此还原）
     if (invitation !== undefined) setup.push(...truth.characters.setVars(cid, { timer: truth.world.clock }));
     const kind = `character:${cid}`;
-    // 无状态 activation：全量上下文逐调用现算（含被联系通知——仅邀请应答步注入）
-    const context = this.contexts.character({
-      truth,
-      cid,
-      proseWindowTurns: this.proseWindowTurns,
-      ...(invitation !== undefined
-        ? { invitation: { inviter: invitation.inviter, channel: invitation.channel } }
-        : {}),
-    });
+    // 无状态 activation：注入内容逐调用现算（含被联系通知——仅邀请应答步注入）
+    const host = this.contexts.for(
+      { kind: "character", cid },
+      {
+        truth,
+        proseWindowTurns: this.proseWindowTurns,
+        ...(invitation !== undefined
+          ? { invitation: { inviter: invitation.inviter, channel: invitation.channel } }
+          : {}),
+      },
+    );
     const name = truth.characters.get(cid).name;
     const activationId = `${this.runId}:act:${++this.activationSeq}`;
     this.activeActivationId = activationId;
@@ -695,7 +712,7 @@ export class GameSession {
     const controller = new AbortController();
     this.activationController = controller;
     try {
-      const { raw, pkg } = await this.character.decide(context, seq, controller.signal, this.display);
+      const { raw, pkg } = await this.character.decide(host, seq, controller.signal, this.display);
       // 统一效果规划器（与玩家步/编辑重放同一入口）：relations + 工作集 + acted/邀请应答 + 标记
       const effects = planActorDecision(truth, { cid, pkg, ...(invitation !== undefined ? { invitation } : {}), rollDice: this.rollDice });
       // 邀请应答步另记邀请上下文（contactSeq/inviter/channel/preInviteTimer）——编辑重放的应答输入
@@ -778,7 +795,8 @@ export class GameSession {
   private async stepGm(cmd: GmCommand): Promise<void> {
     const truth = this.liveTruth();
     const workingSet = truth.world.pipeline.working_set;
-    const roundCids = [...new Set(workingSet.map((e) => e.cid))];
+    // 本轮行动者 = 言行条目作者（系统通知条目无 cid，不计入行动者）
+    const roundCids = [...new Set(workingSet.flatMap((e) => (isNoticeEntry(e) ? [] : [e.cid])))];
     this.validateWorkingSetRound(roundCids);
     // roundCids（工作集行动者）语义不变；durations 契约基准另算（中途 GM 含同步组全体未行动成员）
     const durationCids = this.expectedGmDurationCids(truth, roundCids);
@@ -789,14 +807,17 @@ export class GameSession {
     );
     // 良恶/程度：所有 GM 激活前的固定判定（常规 GM 用前台组的 D；现投现注入，重跑自然重投）
     const fortune = rollFortune(this.incidentConfig, this.adjudicatedD(truth, roundCids), this.rollDice);
-    // 无状态 activation：GM 上下文逐调用现算（lore 档内副本逐调用渲染）
-    const context = this.contexts.gm({
-      truth,
-      proseWindowTurns: this.proseWindowTurns,
-      sceneText: renderScene(workingSet, undefined, remoteCidsOf(truth)),
-      roundScenes,
-      fortune: renderFortune(fortune),
-    });
+    // 无状态 activation：GM 注入内容逐调用现算（lore 档内副本逐调用渲染）
+    const host = this.contexts.for(
+      { kind: "gm" },
+      {
+        truth,
+        proseWindowTurns: this.proseWindowTurns,
+        sceneText: renderScene(workingSet, undefined, remoteCidsOf(truth)),
+        roundScenes,
+        fortune: renderFortune(fortune),
+      },
+    );
     const gmActivationId = `${this.runId}:act:${++this.activationSeq}`;
     this.activeActivationId = gmActivationId;
     this.display?.agentStart(this.gm.agentName, `── GM 裁决 ──`, seq, gmActivationId);
@@ -806,9 +827,10 @@ export class GameSession {
     let settledDurations: string[] | null = null;
     try {
       const { raw, pkg } = await this.gm.adjudicate(
-        context,
+        host,
         seq,
         durationCids,
+        varWriteDepsOf(parseWorldSys(truth.world.world._sys), new Set(Object.keys(this.playable(truth)))),
         controller.signal,
         this.display,
       );
@@ -867,14 +889,17 @@ export class GameSession {
     if (gmStep === undefined) throw new Error("正文轮找不到本轮 GM 场景元数据");
     const scenes = (gmStep.result as { round_scenes: Record<string, number> }).round_scenes;
     const adjudication = this.currentAdjudication();
-    // 无状态 activation：正文上下文（近期事件/触发 lore/上轮正文/演员表）逐调用现算
-    const context = this.contexts.prose({
-      truth,
-      proseWindowTurns: this.proseWindowTurns,
-      adjudication,
-      currentScene: speech,
-      participantCids: roundCids,
-    });
+    // 无状态 activation：正文注入内容（近期事件/触发 lore/上轮正文/演员表）逐调用现算
+    const host = this.contexts.for(
+      { kind: "prose" },
+      {
+        truth,
+        proseWindowTurns: this.proseWindowTurns,
+        adjudication,
+        currentScene: speech,
+        participantCids: roundCids,
+      },
+    );
     const proseActivationId = `${this.runId}:act:${++this.activationSeq}`;
     this.activeActivationId = proseActivationId;
     this.display?.agentStart(this.prose.agentName, `── 正文 ──`, seq, proseActivationId);
@@ -884,7 +909,7 @@ export class GameSession {
     // 正文步正常完成（提交成功）才突发评估：中断/失败时不得在半状态上投骰
     let settledDurations: string[] | null = null;
     try {
-      proseText = await this.prose.render(context, seq, controller.signal, this.display);
+      proseText = await this.prose.render(host, seq, controller.signal, this.display);
       const result: ArchivedProseResult = {
         raw: proseText,
         prose: proseText,
@@ -1033,14 +1058,17 @@ export class GameSession {
     const seq = this.startStep();
     // 良恶/程度：所有 GM 激活前的固定判定（突发 GM 用命中组的 D，现投现注入）
     const fortune = rollFortune(this.incidentConfig, hit.D, this.rollDice);
-    const context = this.contexts.gmIncident({ truth, hit, fortune: renderFortune(fortune) });
+    const host = this.contexts.for(
+      { kind: "gm" },
+      { truth, proseWindowTurns: this.proseWindowTurns, hit, fortune: renderFortune(fortune) },
+    );
     const activationId = `${this.runId}:act:${++this.activationSeq}`;
     this.activeActivationId = activationId;
     this.display?.agentStart(this.gm.agentName, `── 突发 GM ──`, seq, activationId);
     const controller = new AbortController();
     this.activationController = controller;
     try {
-      const { raw, pkg } = await this.gm.adjudicateIncident(context, seq, controller.signal, this.display);
+      const { raw, pkg } = await this.gm.adjudicateIncident(host, seq, controller.signal, this.display);
       const effects = applyVarDeltas(
         truth,
         pkg.deltas,
@@ -1262,9 +1290,12 @@ export class GameSession {
       // interrupted 步 effects 为空段，反向为无操作）
       const setup = [...(current.changes?.setup ?? [])];
       this.revertVarChanges(draft, current.changes?.effects ?? []);
-      // 编辑 = 重读整个输出完整重放：旧工作集条目移除后与正常路径同一 planner（追加同位置语义）
+      // 编辑 = 重读整个输出完整重放：旧工作集条目移除后与正常路径同一 planner（追加同位置语义）；
+      // 该角色旧决策标记派生的通知条目一并摘除（重放按新决策重新生成）
       draft.world.setPipeline({
-        working_set: draft.world.pipeline.working_set.filter((entry) => entry.cid !== cid),
+        working_set: draft.world.pipeline.working_set.filter((entry) =>
+          isNoticeEntry(entry) ? entry.notice.actor !== cid : entry.cid !== cid,
+        ),
       });
       const effects = planActorDecision(draft, {
         cid,
@@ -1291,7 +1322,9 @@ export class GameSession {
       const setup = [...(current.changes?.setup ?? [])];
       if (current.interrupted === true) {
         // 暂停态：效应从未应用（effects 空段）——直接按编辑包补做（工作集仍是 GM 前的完整轮）
-        const roundCids = [...new Set(draft.world.pipeline.working_set.map((e) => e.cid))];
+        const roundCids = [
+          ...new Set(draft.world.pipeline.working_set.flatMap((e) => (isNoticeEntry(e) ? [] : [e.cid]))),
+        ];
         validateAdjudicationRound(pkg, this.expectedGmDurationCids(draft, roundCids));
         const roundScenes = previous?.round_scenes ?? Object.fromEntries(roundCids.map((cid) => [cid, draft.characters.get(cid).group]));
         const allocator = this.eventIdAllocator(scanEventWatermark(draft.events.readAll()));
@@ -1309,7 +1342,7 @@ export class GameSession {
         // draft 上先整体反向（变量倒序 + 事件按 seq 截断）、后校验编辑包：
         // 校验失败 → draft 整体丢弃，live 内存/CURRENT/磁盘三不变。
         const preSet = projectWorkingSet(draft.archive.readAll(), this.playerCid(draft));
-        const roundCids = [...new Set(preSet.map((e) => e.cid))];
+        const roundCids = [...new Set(preSet.flatMap((e) => (isNoticeEntry(e) ? [] : [e.cid])))];
         // 变量反向先行（setup 保留：编辑不触碰调度落账）：状态回到 GM 前后才能按 GM 前视角派生 durations 覆盖契约
         this.revertVarChanges(draft, current.changes?.effects ?? []);
         validateAdjudicationRound(pkg, this.expectedGmDurationCids(draft, roundCids));
@@ -1430,7 +1463,7 @@ export class GameSession {
   }
 
   /**
-   * 当前真相只读快照：六 Store 数据视图，commit 后恒冻结。
+   * 当前真相只读快照：七 Store 数据视图，commit 后恒冻结。
    * 查询/注入/广播共享同一 revision 根；写入会在运行期抛 TypeError（编译期由 DeepReadonly 挡）。
    */
   snapshot(): DeepReadonly<SaveSet> {
@@ -1497,11 +1530,13 @@ export class GameSession {
   }
 
   /**
-   * 直接编辑真相层（状态栏编辑）：整体替换 world 变量树 / characters 全表 / events 全表。
+   * 直接编辑真相层（状态栏编辑）：整体替换 world 变量树 / characters 全表 / events 全表 /
+   * prompts 单份模板 / placeholders 占位符目录（提示词编辑通道复用本入口）。
    * 纪律：不经过 GM 裁决。两个变量域（world/characters）的编辑差异经 diffStateTrees
    * 净额并入当前步 StepChanges.effects 段（手动编辑不是独立变更，而是该步窗口内的又一次改写：
    * 同路径改写末条 after，新路径尾部追加），回溯随该步一并还原——语义见前端警告；
-   * events 域维持 replaceAll、不进变更记录（回溯本来按 seq 截断事件，两域口径不同）。
+   * events 域维持 replaceAll、不进变更记录（回溯本来按 seq 截断事件，两域口径不同）；
+   * prompts 域同样不进变更记录（模板不是变量路径，回溯不反向）。
    * 闸与原子性：LLM 在途拒绝；**draft 机制**——任一域校验失败 draft 直接丢弃，
    * live 内存/CURRENT/磁盘 Generation 三不变（连内存都不动）。
    * 角色集合必须与当前一致（只改内容，不增删角色——cast 由 builder 逐调用现建，无需同步）。
@@ -1510,7 +1545,7 @@ export class GameSession {
    * commit 成功后重建派生态：邀请投影全量重建 + prepareNextCommand 刷新；
    * phase 不落盘（pipelineInfo 现算，直编改调度变量后下一次查询即反映）。
    */
-  applyDirectEdit(payload: { world?: unknown; characters?: unknown; events?: unknown }): void {
+  applyDirectEdit(payload: { world?: unknown; characters?: unknown; events?: unknown; prompts?: unknown; placeholders?: unknown }): void {
     if (this.llmBusy) throw new Error("LLM 运行中：请等待当前生成结束后再直接编辑");
     if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
       throw new Error("直接编辑载荷必须是对象");
@@ -1561,6 +1596,12 @@ export class GameSession {
       });
     }
     if (payload.events !== undefined) draft.events.replaceAll(payload.events);
+    // prompts 域：整体替换某一份模板（结构与 id 校验在 store 内；占位符合法性由调用方路由层校验），
+    // 不进变更记录（与 events 域同口径——模板不是变量路径，回溯不反向）
+    if (payload.prompts !== undefined) draft.promptsStore.replaceTemplate(payload.prompts);
+    // placeholders 域：整体替换占位符目录（形状 + 分支规范化在 store 内；语义机检由调用方路由层
+    // 按模式供给上下文），同样不进变更记录
+    if (payload.placeholders !== undefined) draft.promptsStore.replacePlaceholders(payload.placeholders);
     // 替换后两域全量从动级联（world 根 + 全角色；被直编的从动值回归计算值，
     // 级联结果随下方 diff 净额并入当前步 changes）
     cascadeDerived(draft, { kind: "world" }, editDeps);

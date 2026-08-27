@@ -1,5 +1,7 @@
 import fs from "node:fs";
 import { z } from "zod";
+import { evaluateTagFilter, type ReaderScope } from "../tags/evaluate.js";
+import type { TagRegistry } from "../tags/registry.js";
 import { LoreEntrySchema, type LoreEntry } from "../types.js";
 
 const LorebookFileSchema = z.array(LoreEntrySchema);
@@ -42,12 +44,13 @@ export class Lorebook {
   }
 
   /**
-   * 按标签取条目（角色固定标签自动激活用）。
-   * 命中任一标签即收录；返回按 ID 排序（铁律：列表按稳定 ID 排序）。
+   * 按读者求值取条目（TAG 过滤）：逐条目 evaluateTagFilter，放行即收录；
+   * 无挂载条目 = 恒通过（广播语义）。返回按 ID 排序（铁律：列表按稳定 ID 排序）。
    */
-  getByTags(tags: string[]): LoreEntry[] {
-    const want = new Set(tags);
-    return this.all().filter((e) => e.tags.some((t) => want.has(t)));
+  getByTags(reader: ReaderScope, registry: TagRegistry): LoreEntry[] {
+    return this.all().filter(
+      (entry) => evaluateTagFilter({ content: entry, tags: entry.tags }, reader, registry).status === "pass",
+    );
   }
 
   /** 全部条目（按 ID 排序），供 GM 提示词列出可选 ID。 */

@@ -53,7 +53,7 @@ export function cycleCountOf(truth: TruthStores): number {
 
 /**
  * 轮首步的调度落账：时钟跳转到弹出时刻 + 维护性变更（周期计数 X+1、后台/周期完成
- * acted 清零）——产出 StepChanges.setup 段，回溯天然可逆。
+ * acted 清零、前台组成员在场位置位）——产出 StepChanges.setup 段，回溯天然可逆。
  */
 export function applyScheduleSetup(truth: TruthStores, setup: ScheduleSetup): VarChange[] {
   const changes: VarChange[] = [];
@@ -65,7 +65,19 @@ export function applyScheduleSetup(truth: TruthStores, setup: ScheduleSetup): Va
     changes.push(truth.world.writeRaw("_sys.cycles_since_gm", cycleCountOf(truth) + 1));
   }
   for (const cid of setup.actedClears) changes.push(...truth.characters.setVars(cid, { acted: false }));
+  for (const cid of setup.foreground) changes.push(...setAppearance(truth, cid, true));
   return changes;
+}
+
+/**
+ * 在场位置位唯一写口（writeRaw 白名单通道，随 changes 落账，回溯可逆）：
+ * appearance = 角色是否在场（组弹出前台/入组 = true；结算进后台/离组 = false），
+ * vars 源对不在场角色的全部末端虚拟挂载 fappear 六级。未知角色/值已到位 = 空。
+ */
+export function setAppearance(truth: TruthStores, cid: string, value: boolean): VarChange[] {
+  const state = truth.characters.all()[cid];
+  if (state === undefined || state.appearance === value) return [];
+  return [truth.characters.writeRaw(cid, "appearance", value)];
 }
 
 /**
@@ -140,6 +152,7 @@ export function cleanupChannels(truth: TruthStores): VarChange[] {
     const gl = groupLocation(sim, g);
     if (gl !== null && truth.characters.get(cid).location.name !== gl) {
       changes.push(...truth.characters.setVars(cid, { group: 0, timer: null }));
+      changes.push(...setAppearance(truth, cid, false));
     }
   }
   return changes;

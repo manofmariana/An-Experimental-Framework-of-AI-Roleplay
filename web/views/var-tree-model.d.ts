@@ -27,7 +27,7 @@ interface NodeBase {
   path: string;
 }
 
-/** 末端节点：按 valueType 分派控件；derived = 从动只读；system = 系统五字段只读徽记（tags 仍可编）。 */
+/** 末端节点：按 valueType 分派控件；derived = 从动只读；system = 系统调度字段只读徽记（tags 仍可编）。 */
 export interface TerminalNode extends NodeBase {
   kind: "terminal";
   valueType: ValueType;

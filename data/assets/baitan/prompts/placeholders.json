@@ -1,0 +1,117 @@
+{
+  "setting": {
+    "description": "世界设定全文",
+    "source": "setting",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+  },
+  "tone_card": {
+    "description": "世界基调卡全文",
+    "source": "tone_card",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+  },
+  "lore": {
+    "description": "世界知识（角色 = 自身标签激活；GM = Lorebook 全文；正文 = 本轮参与者标签触发）",
+    "source": "lore",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+  },
+  "events": {
+    "description": "已裁决事件（角色 = 可见事件按读者身份替换；GM = 全量 @CID 原文；正文 = 近期窗口按演员表渲染）",
+    "source": "events",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" }, "separator": "\n" }]
+  },
+  "current_scene": {
+    "description": "本轮未裁决言行（角色视角带同值批隔离与突发前缀）",
+    "source": "working_set",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+  },
+  "prose_window": {
+    "description": "正文滑窗（角色 = 同场景连续窗；GM = 连续场景窗；正文 = 全量连续文风窗）",
+    "source": "prose_window",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" }, "separator": "\n\n" }]
+  },
+  "last_prose": {
+    "description": "上一轮正文",
+    "source": "last_prose",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+  },
+  "time": {
+    "description": "结构时间机械渲染文本",
+    "source": "clock",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+  },
+  "cast": {
+    "description": "演员表（@CID ↔ 显示名；角色视角自身标「我」）",
+    "source": "cast",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" }, "separator": "\n" }]
+  },
+  "contacts": {
+    "description": "可联系对象列表（后台且未持有频道；角色自身持频道或待答邀请时整体不可见）",
+    "source": "contacts",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" }, "separator": "\n" }]
+  },
+  "departure_notices": {
+    "description": "本组未结算离场成员列表（可用 recall 标记召回）",
+    "source": "departure_notices",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" }, "separator": "\n" }]
+  },
+  "incoming_contact": {
+    "description": "待答邀请通知（邀请者 + 途径 + 接受/拒绝方式）",
+    "source": "incoming_contact",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+  },
+  "timers": {
+    "description": "各角色 timer 剩余时间",
+    "source": "timers",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" }, "separator": "\n" }]
+  },
+  "fortune": {
+    "description": "良恶/程度判定（机械渲染）",
+    "source": "fortune",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+  },
+  "gm_event": {
+    "description": "本轮 GM 事件包",
+    "source": "gm_event",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+  },
+  "target_group": {
+    "description": "突发目标组（成员/地点/level/剩余休眠时长/错位度）",
+    "source": "incident_target",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+  },
+  "world_snapshot": {
+    "description": "世界内容快照（纯 JSON，不含 pipeline）",
+    "source": "world_snapshot",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+  },
+  "snapshot": {
+    "description": "角色完整状态快照（纯 JSON；角色 = 自身，GM = 全体）",
+    "source": "snapshot",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+  },
+  "group_members": {
+    "description": "同组角色表（CID/名字/地点；自身标「你」）",
+    "source": "group_members",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" }, "separator": "\n" }]
+  },
+  "long_term_memory": {
+    "description": "本角色长期记忆",
+    "source": "long_term_memory",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" }, "separator": "\n" }]
+  },
+  "name": {
+    "description": "角色名",
+    "source": "self_name",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+  },
+  "cid": {
+    "description": "角色 CID",
+    "source": "self_cid",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+  },
+  "location": {
+    "description": "当前地点名",
+    "source": "location",
+    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+  }
+}

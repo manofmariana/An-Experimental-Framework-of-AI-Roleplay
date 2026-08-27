@@ -15,6 +15,7 @@
  * 纯函数零 IO；依赖方向 = truth 内部（SaveSet 类型经 type-import，无运行时环）。
  */
 import type { SaveSet } from "../generationRepository.js";
+import { isNoticeEntry } from "../workingSet.js";
 import { SaveLoadError } from "./errors.js";
 
 /** 角色表键：C0 或 C+非零编号（去 @ 归一化后的落盘形态）。 */
@@ -78,11 +79,15 @@ function checkEvents(save: SaveSet): void {
   }
 }
 
-/** ④ 引用闭包：working_set 每条 cid 与 archive 角色步 cid 都必须存在于角色表。 */
+/** ④ 引用闭包：working_set 言行条目 cid / 通知条目 actor 与 archive 角色步 cid 都必须存在于角色表。 */
 function checkReferences(save: SaveSet): void {
   const known = new Set(Object.keys(save.characters));
   for (const entry of save.pipeline.working_set) {
-    if (!known.has(entry.cid)) invariant(`working_set 引用未知角色: ${entry.cid}`);
+    if (isNoticeEntry(entry)) {
+      if (!known.has(entry.notice.actor)) invariant(`working_set 通知条目引用未知角色: ${entry.notice.actor}`);
+    } else if (!known.has(entry.cid)) {
+      invariant(`working_set 引用未知角色: ${entry.cid}`);
+    }
   }
   for (const entry of save.archive) {
     if (!entry.kind.startsWith(CHARACTER_KIND_PREFIX)) continue;

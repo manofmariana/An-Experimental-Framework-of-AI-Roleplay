@@ -43,6 +43,7 @@ function state(overrides?: Partial<CharacterProjectionInput>): CharacterProjecti
     channel: null,
     timer: null,
     isPlayer: false,
+    appearance: false,
     vars: { hp: { value: 10, tags: [] } },
     systemTags: {},
     ...overrides,
@@ -70,7 +71,7 @@ describe("系统声明分支并入", () => {
     assert.equal(TPL.resolve("character", "relations[*].cid").kind, "terminal");
   });
 
-  it("五调度字段带 system 元数据；其余系统末端不带", () => {
+  it("调度字段带 system 元数据；其余系统末端不带", () => {
     for (const key of ["acted", "group", "channel", "timer", "isPlayer"]) {
       assert.equal((TPL.character.children[key] as TerminalDecl).system, true, key);
     }

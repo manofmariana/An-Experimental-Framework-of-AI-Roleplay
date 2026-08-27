@@ -26,7 +26,7 @@ import {
 const SYSTEM_KEYS = [
   "name", "gender", "age", "personality", "reaction", "level", "omniscience",
   "location", "initiative", "relations", "long_term_memory",
-  "acted", "group", "channel", "timer", "isPlayer",
+  "acted", "group", "channel", "timer", "isPlayer", "appearance",
 ];
 
 // ---------------------------------------------------------------------------

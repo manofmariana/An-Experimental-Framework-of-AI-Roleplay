@@ -19,7 +19,7 @@
     {
       "key": "lore",
       "role": "user",
-      "content": "# Lorebook\n{{lore_full}}"
+      "content": "# Lorebook\n{{lore}}"
     },
     {
       "key": "events",
@@ -34,7 +34,7 @@
     {
       "key": "tail",
       "role": "user",
-      "content": "时间：{{time}}\n\n# 世界快照\n{{world_snapshot}}\n\n# 全部角色快照\n{{characters_snapshot}}\n\n# 目标组（突发事件降临的对象）\n{{target_group}}\n\n# 良恶程度判定（机械判定结果，必须服从）\n{{fortune}}\n\n只输出突发 JSON（各字段含义见突发协议；人物一律 @CID，禁止真名）："
+      "content": "时间：{{time}}\n\n# 世界快照\n{{world_snapshot}}\n\n# 全部角色快照\n{{snapshot}}\n\n# 目标组（突发事件降临的对象）\n{{target_group}}\n\n# 良恶程度判定（机械判定结果，必须服从）\n{{fortune}}\n\n只输出突发 JSON（各字段含义见突发协议；人物一律 @CID，禁止真名）："
     },
     {
       "key": "推理",

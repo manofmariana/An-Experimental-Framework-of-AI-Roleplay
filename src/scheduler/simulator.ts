@@ -8,7 +8,9 @@
  * 铁律不变：纯逻辑，无 IO、无 LLM、无网络——不 import 任何 fs/net 模块；
  * test/simulator.test.ts 的元测试守护保留。
  */
-import { knownByTag, type Event } from "../types.js";
+import { evaluateTagFilter, type ReaderScope } from "../tags/evaluate.js";
+import type { TagRegistry } from "../tags/registry.js";
+import { type Event } from "../types.js";
 import { defaultDice, rollDice, type DicePort } from "../ports.js";
 
 /** 调度视图中的角色（单 group 分组变量；initiative 结构化 {value, group}）。 */
@@ -279,13 +281,14 @@ export function orderGroups(chars: Record<string, SimChar>, cids: readonly strin
 }
 
 /**
- * 角色可见事件（known_by 唯一通道）：
- * tags 含 `known_by:{cid}` 即可见——GM 标记时已推理过可视性，无地点成分、无其他限制。
+ * 角色可见事件（TAG 过滤）：读者有效 TAG 集/权重/类别实例与注册表经参数注入，
+ * 逐事件求值判定式，放行即可见——无地点成分、无其他限制。
  * 保持输入顺序（调用方先按 (t, id) 排序）。
  */
-export function visibleEvents(events: Event[], cid: string): Event[] {
-  const tag = knownByTag(cid);
-  return events.filter((e) => e.tags.includes(tag));
+export function visibleEvents(events: Event[], reader: ReaderScope, registry: TagRegistry): Event[] {
+  return events.filter(
+    (e) => evaluateTagFilter({ content: e, tags: e.tags }, reader, registry).status === "pass",
+  );
 }
 
 export interface InitiativeMember {

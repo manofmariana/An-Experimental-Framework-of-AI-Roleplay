@@ -54,7 +54,7 @@ function makeSession(
   return { session, dir: path.join(h.saveDir, runId) };
 }
 
-/** 三不变快照：内存（state/events/pipeline current）+ CURRENT + 当前 Generation 六文件原文。 */
+/** 三不变快照：内存（state/events/pipeline current）+ CURRENT + 当前 Generation 七文件原文。 */
 function captureTruth(session: GameSession, dir: string) {
   const revision = fs.readFileSync(path.join(dir, "CURRENT"), "utf8").trim();
   const genDir = path.join(dir, "generations", revision);
@@ -138,7 +138,7 @@ describe("rollback 提交语义", () => {
     await session.continuePipeline(); // seq1 C1001 → 停等玩家
     await session.handlePlayerInput("玩家行动"); // seq2 玩家 → GM 前停
     assert.equal(session.turnCount, 2);
-    // 回滚目标态 = 当前 Generation（seq2 刚完成）六文件原文
+    // 回滚目标态 = 当前 Generation（seq2 刚完成）七文件原文
     const targetRev = fs.readFileSync(path.join(dir, "CURRENT"), "utf8").trim();
     const targetDir = path.join(dir, "generations", targetRev);
     const targetFiles = TRUTH_FILES.map((f) => fs.readFileSync(path.join(targetDir, f), "utf8"));

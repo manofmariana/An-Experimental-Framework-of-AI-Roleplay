@@ -150,6 +150,20 @@ describe("validateSaveSet（引用闭包与角色表）", () => {
     expectInvariant(save, /working_set 引用未知角色: C9999/);
   });
 
+  it("working_set 通知条目引用未知 actor → invariant", () => {
+    const save = runningSave();
+    save.pipeline.working_set = [
+      { cid: "C0" },
+      {
+        id: "notice:leave",
+        author: "system",
+        notice: { type: "leave", actor: "C9999", targets: [] },
+        tags: [{ name: "vis", level: 1 }],
+      },
+    ];
+    expectInvariant(save, /working_set 通知条目引用未知角色: C9999/);
+  });
+
   it("archive 角色步引用未知 cid → invariant", () => {
     const save = runningSave({
       archive: [{ seq: 1, kind: "character:C9999", result: null, changes: { setup: [], effects: [] } }],

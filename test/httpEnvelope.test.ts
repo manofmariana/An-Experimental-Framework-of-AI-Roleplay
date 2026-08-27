@@ -465,19 +465,180 @@ describe("sessions 域：产物读取错误矩阵", () => {
 });
 
 describe("prompts 域", () => {
-  it("placeholders 目录 200；?set= 定位包内 prompts/（缺包 404；模板缺失 500）", async (t) => {
+  it("placeholders 目录 200（entries 平铺 + sources 封闭枚举）；?set= 定位包内 prompts/（缺包 404；模板缺失 500）", async (t) => {
     const h = await serverHarness(t);
-    const catalog = okData<{ agent: string }[]>(await callApi(h.port, "GET", "/api/prompts/placeholders"));
-    assert.deepEqual(catalog.map((c) => c.agent), ["character", "gm", "prose"]);
-    // ?set=w 命中 harness 包（setupWorld 已拷入三份模板）→ 200 三模板
+    // 声明式目录（全对象共享、读者无关，包基线取自包内 placeholders.json）：
+    // entries = 条目名 + description + source + 段列全文；sources = source 封闭枚举清单（前端下拉候选）
+    const ph = okData<{
+      entries: { key: string; description: string; source: string; segments: unknown[] }[];
+      sources: string[];
+    }>(await callApi(h.port, "GET", "/api/prompts/placeholders?set=w"));
+    const catalog = ph.entries;
+    assert.ok(catalog.length > 0);
+    for (const p of catalog) {
+      assert.ok(p.key.length > 0 && p.description.length > 0 && p.source.length > 0);
+      assert.ok(Array.isArray(p.segments) && p.segments.length > 0);
+      assert.ok(ph.sources.includes(p.source), `${p.key} 的 source 应在封闭枚举内`);
+    }
+    assert.ok(ph.sources.includes("vars") && ph.sources.includes("events"));
+    assert.ok(catalog.some((p) => p.key === "events" && p.source === "events"));
+    // 缺省包（baitan）不在 harness 资产根 → 404 WORLD_SET_NOT_FOUND
+    failCode(await callApi(h.port, "GET", "/api/prompts/placeholders"), 404, "WORLD_SET_NOT_FOUND");
+    // ?set=w 命中 harness 包（setupWorld 已拷入四份模板）→ 200 四模板（含 gm-incident 突发变体）
     const templates = okData<{ id: string }[]>(await callApi(h.port, "GET", "/api/prompts?set=w"));
-    assert.deepEqual(templates.map((tpl) => tpl.id), ["character", "gm", "prose"]);
+    assert.deepEqual(templates.map((tpl) => tpl.id), ["character", "gm", "prose", "gm-incident"]);
     // 不存在的包 → 404 WORLD_SET_NOT_FOUND
     failCode(await callApi(h.port, "GET", "/api/prompts?set=nope"), 404, "WORLD_SET_NOT_FOUND");
     // 包存在但无 prompts/ 模板文件 → 未预期 fs 错误映射 500（不再一律 400）
     fs.mkdirSync(path.join(h.dirs.assetsDir, "bare"), { recursive: true });
     failCode(await callApi(h.port, "GET", "/api/prompts?set=bare"), 500, "INTERNAL_ERROR");
     failCode(await callApi(h.port, "PUT", "/api/prompts/npc?set=w", { id: "npc", modules: [] }), 400, "VALIDATION_ERROR");
+  });
+
+  it("有活跃会话：GET 读档内副本、PUT 经直编通道写档内（revision 前移 + transition 广播）；gm-incident 可读写", async (t) => {
+    const h = await serverHarness(t);
+    const ws = await h.connect();
+    ws.send({ type: "new_session", worldSetId: "w", requestId: "r-new" });
+    await ws.waitFor((m) => m.type === "snapshot");
+
+    // GET 档内副本（四份齐备，与包基线同源拷入）
+    const before = okData<{ id: string; modules: { key: string }[] }[]>(await callApi(h.port, "GET", "/api/prompts"));
+    assert.deepEqual(before.map((tpl) => tpl.id), ["character", "gm", "prose", "gm-incident"]);
+    const revisionBefore = h.coordinator.currentRevision;
+
+    // PUT gm-incident：走 mutation 通道落档内副本（包基线文件不变）
+    const incident = before.find((tpl) => tpl.id === "gm-incident")!;
+    const edited = { ...incident, modules: [...incident.modules, { key: "added", role: "system", content: "追加模块" }] };
+    const put = await callApi(h.port, "PUT", "/api/prompts/gm-incident", edited);
+    assert.equal(put.status, 200);
+    assert.ok((h.coordinator.currentRevision ?? 0) > (revisionBefore ?? 0), "档内写入应推进 revision");
+    await ws.waitFor((m) => m.type === "transition" && m.reason === "admin_edit");
+
+    const after = okData<{ id: string; modules: { key: string }[] }[]>(await callApi(h.port, "GET", "/api/prompts"));
+    const afterIncident = after.find((tpl) => tpl.id === "gm-incident")!;
+    assert.ok(afterIncident.modules.some((m) => m.key === "added"), "档内副本已更新");
+    // 包基线文件未被污染
+    const packRaw = JSON.parse(
+      fs.readFileSync(path.join(h.dirs.assetsDir, "w", "prompts", "gm-incident.prompt.json"), "utf8"),
+    ) as { modules: { key: string }[] };
+    assert.ok(!packRaw.modules.some((m) => m.key === "added"), "包基线不被档内编辑污染");
+
+    // PUT 未知占位符 → 400（档内模式同样过注册表校验）
+    failCode(
+      await callApi(h.port, "PUT", "/api/prompts/gm", { id: "gm", modules: [{ key: "m", role: "system", content: "{{nope}}" }] }),
+      400,
+      "VALIDATION_ERROR",
+    );
+    ws.close();
+  });
+
+  it("PUT placeholders 档内模式：整份替换档内目录（往返一致 + revision 前移 + 广播），机检 400 零落盘，包基线不变", async (t) => {
+    const h = await serverHarness(t);
+    const ws = await h.connect();
+    ws.send({ type: "new_session", worldSetId: "w", requestId: "r-new" });
+    await ws.waitFor((m) => m.type === "snapshot");
+
+    const got = okData<{ entries: { key: string; description: string; source: string; segments: unknown[] }[] }>(
+      await callApi(h.port, "GET", "/api/prompts/placeholders"),
+    );
+    const baseCatalog = () =>
+      Object.fromEntries(got.entries.map((e) => [e.key, { description: e.description, source: e.source, segments: e.segments }]));
+
+    // 档内模式机检 400（档内注册表口径：未知分支记号）→ 零落盘（revision 不前移）
+    const badToken = baseCatalog();
+    badToken["bad_token"] = {
+      description: "d",
+      source: "events",
+      segments: [
+        { kind: "entry", pass: { template: "{_content}", branches: [{ tokens: ["不存在记号"], template: "x" }] } },
+      ],
+    };
+    const revisionBefore = h.coordinator.currentRevision;
+    failCode(await callApi(h.port, "PUT", "/api/prompts/placeholders", badToken), 400, "VALIDATION_ERROR");
+    assert.equal(h.coordinator.currentRevision, revisionBefore, "机检失败不得推进 revision");
+
+    // 合法整份提交（新增一个静态段条目）→ 200 附 revision，下一轮可见 = Store 已更新
+    const catalog = baseCatalog();
+    catalog["test_ph"] = { description: "测试新增", source: "setting", segments: [{ kind: "static", text: "测试文本" }] };
+    const put = await callApi(h.port, "PUT", "/api/prompts/placeholders", catalog);
+    assert.equal(put.status, 200);
+    const data = okData<{ note: string; revision: number }>(put);
+    assert.ok(data.revision > (revisionBefore ?? 0), "档内写入应推进 revision");
+    await ws.waitFor((m) => m.type === "transition" && m.reason === "admin_edit");
+
+    const after = okData<{ entries: { key: string; description: string }[] }>(
+      await callApi(h.port, "GET", "/api/prompts/placeholders"),
+    );
+    assert.ok(after.entries.some((e) => e.key === "test_ph" && e.description === "测试新增"), "档内副本往返一致");
+    // 包基线文件未被污染
+    const packRaw = JSON.parse(
+      fs.readFileSync(path.join(h.dirs.assetsDir, "w", "prompts", "placeholders.json"), "utf8"),
+    ) as Record<string, unknown>;
+    assert.ok(!("test_ph" in packRaw), "包基线不被档内编辑污染");
+    ws.close();
+  });
+
+  it("PUT placeholders 包基线模式：写包文件新会话生效；机检 400 三连 + 未知 source 全部零落盘；未知包 404", async (t) => {
+    const h = await serverHarness(t); // 不开会话 = 包基线模式
+    const packFile = path.join(h.dirs.assetsDir, "w", "prompts", "placeholders.json");
+    const got = okData<{ entries: { key: string; description: string; source: string; segments: unknown[] }[] }>(
+      await callApi(h.port, "GET", "/api/prompts/placeholders?set=w"),
+    );
+    const baseCatalog = () =>
+      Object.fromEntries(got.entries.map((e) => [e.key, { description: e.description, source: e.source, segments: e.segments }]));
+    const fileBefore = fs.readFileSync(packFile, "utf8");
+
+    // 机检 400 ① 置后不同轴（characters[*] 轴 vs 无轴）
+    const badAxis = baseCatalog();
+    badAxis["bad_axis"] = {
+      description: "d",
+      source: "vars",
+      segments: [
+        { kind: "entry", pass: { template: "{characters[*].attachtags}" }, order: "post" },
+        { kind: "entry", pass: { template: "{world.omen}" }, order: "post" },
+      ],
+    };
+    failCode(await callApi(h.port, "PUT", "/api/prompts/placeholders?set=w", badAxis), 400, "VALIDATION_ERROR");
+
+    // 机检 400 ② 路径不到末端（world.region = 容器）
+    const badPath = baseCatalog();
+    badPath["bad_path"] = {
+      description: "d",
+      source: "vars",
+      segments: [{ kind: "entry", pass: { template: "{world.region}" } }],
+    };
+    failCode(await callApi(h.port, "PUT", "/api/prompts/placeholders?set=w", badPath), 400, "VALIDATION_ERROR");
+
+    // 机检 400 ③ 未知分支记号（包 tags.json 注册表口径）
+    const badToken = baseCatalog();
+    badToken["bad_token"] = {
+      description: "d",
+      source: "events",
+      segments: [
+        { kind: "entry", pass: { template: "{_content}", branches: [{ tokens: ["不存在记号"], template: "x" }] } },
+      ],
+    };
+    failCode(await callApi(h.port, "PUT", "/api/prompts/placeholders?set=w", badToken), 400, "VALIDATION_ERROR");
+
+    // 未知 source（封闭枚举，zod 拦截）
+    const badSource = baseCatalog();
+    badSource["bad_source"] = { description: "d", source: "nope", segments: [{ kind: "static", text: "x" }] };
+    failCode(await callApi(h.port, "PUT", "/api/prompts/placeholders?set=w", badSource), 400, "VALIDATION_ERROR");
+
+    // 全部失败零落盘
+    assert.equal(fs.readFileSync(packFile, "utf8"), fileBefore, "机检失败不得写包文件");
+
+    // 合法整份提交 → 200 写包文件（新会话生效）
+    const catalog = baseCatalog();
+    catalog["pack_added"] = { description: "包基线新增", source: "clock", segments: [{ kind: "static", text: "T" }] };
+    const put = await callApi(h.port, "PUT", "/api/prompts/placeholders?set=w", catalog);
+    assert.equal(put.status, 200);
+    assert.match(okData<{ note: string }>(put).note, /新会话生效/);
+    const packRaw = JSON.parse(fs.readFileSync(packFile, "utf8")) as Record<string, { description: string }>;
+    assert.equal(packRaw["pack_added"]?.description, "包基线新增", "包基线文件已写入");
+
+    // 未知包 → 404 WORLD_SET_NOT_FOUND
+    failCode(await callApi(h.port, "PUT", "/api/prompts/placeholders?set=nope", catalog), 404, "WORLD_SET_NOT_FOUND");
   });
 });
 

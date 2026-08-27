@@ -65,7 +65,7 @@ export interface TerminalDecl {
   kind: "terminal";
   valueType: ValueType;
   formula?: FormulaDecl | undefined;
-  /** 系统只读元数据（仅系统声明分支的五调度字段为 true；值走专用通道，不开放变量写）。 */
+  /** 系统只读元数据（仅系统声明分支的调度字段为 true；值走专用通道，不开放变量写）。 */
   system?: boolean | undefined;
 }
 

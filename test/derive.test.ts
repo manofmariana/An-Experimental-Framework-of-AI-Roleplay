@@ -47,7 +47,7 @@ function snap(
   };
 }
 
-const NO_SETUP: ScheduleSetup = { actedClears: [], cycleIncrement: false };
+const NO_SETUP: ScheduleSetup = { actedClears: [], cycleIncrement: false, foreground: [] };
 const invitation = (target: string): PendingInvitationView => ({
   contactSeq: 1,
   inviter: "C1001",
@@ -135,20 +135,20 @@ describe("deriveNext：分支序全谱（快照字面量 → NextCommand）", ()
     assert.deepEqual(deriveNext(snap(chars)), {
       type: "character",
       cid: "C1001",
-      setup: { due: 10, actedClears: [], cycleIncrement: false },
+      setup: { due: 10, actedClears: [], cycleIncrement: false, foreground: ["C1001", "C1002"] },
     } satisfies NextCommand);
     // C1001 已行动 → C1002
     assert.deepEqual(deriveNext(snap({ ...chars, C1001: ch({ ...chars.C1001, acted: true }) })), {
       type: "character",
       cid: "C1002",
-      setup: { due: 10, actedClears: [], cycleIncrement: false },
+      setup: { due: 10, actedClears: [], cycleIncrement: false, foreground: ["C1001", "C1002"] },
     } satisfies NextCommand);
     // 弹出时刻 ≤ 当前时钟（连续轮）→ setup 不带 due
     const atClock = deriveNext(snap(chars, { clock: 10 }));
     assert.deepEqual(atClock, {
       type: "character",
       cid: "C1001",
-      setup: { actedClears: [], cycleIncrement: false },
+      setup: { actedClears: [], cycleIncrement: false, foreground: ["C1001", "C1002"] },
     } satisfies NextCommand);
   });
 
@@ -162,7 +162,7 @@ describe("deriveNext：分支序全谱（快照字面量 → NextCommand）", ()
     assert.deepEqual(cmd, {
       type: "player",
       reason: "turn",
-      setup: { due: 10, actedClears: [], cycleIncrement: false },
+      setup: { due: 10, actedClears: [], cycleIncrement: false, foreground: ["C0", "C1001"] },
     } satisfies NextCommand);
   });
 
@@ -178,7 +178,7 @@ describe("deriveNext：分支序全谱（快照字面量 → NextCommand）", ()
     assert.deepEqual(cmd, {
       type: "character",
       cid: "C1001",
-      setup: { due: 10, actedClears: ["C1004"], cycleIncrement: false },
+      setup: { due: 10, actedClears: ["C1004"], cycleIncrement: false, foreground: ["C1001", "C1002"] },
     } satisfies NextCommand);
   });
 
@@ -190,7 +190,7 @@ describe("deriveNext：分支序全谱（快照字面量 → NextCommand）", ()
     // 批（先攻 25）= 仅 C1001，已行动 → GM（C1002 未行动也不挡）
     assert.deepEqual(deriveNext(snap(chars, { gmTrigger: true, gmTriggerBatch: 25 })), {
       type: "gm",
-      setup: { due: 5, actedClears: [], cycleIncrement: false },
+      setup: { due: 5, actedClears: [], cycleIncrement: false, foreground: ["C1001", "C1002"] },
     } satisfies NextCommand);
     // 批未完成（C1001 未行动）→ 正常顺序 C1001
     assert.deepEqual(
@@ -198,7 +198,7 @@ describe("deriveNext：分支序全谱（快照字面量 → NextCommand）", ()
       {
         type: "character",
         cid: "C1001",
-        setup: { due: 5, actedClears: [], cycleIncrement: false },
+        setup: { due: 5, actedClears: [], cycleIncrement: false, foreground: ["C1001", "C1002"] },
       } satisfies NextCommand,
     );
     // gmTriggerBatch 缺失（null）→ 哨兵批 = 无先攻值者
@@ -222,7 +222,7 @@ describe("deriveNext：分支序全谱（快照字面量 → NextCommand）", ()
     assert.deepEqual(cmd, {
       type: "character",
       cid: "C1002",
-      setup: { due: 5, actedClears: [], cycleIncrement: false },
+      setup: { due: 5, actedClears: [], cycleIncrement: false, foreground: ["C1001"] },
       invitation: invitation("C1002"),
     } satisfies NextCommand);
   });
@@ -240,7 +240,7 @@ describe("deriveNext：分支序全谱（快照字面量 → NextCommand）", ()
     assert.deepEqual(cmd, {
       type: "player",
       reason: "turn",
-      setup: { due: 5, actedClears: [], cycleIncrement: false },
+      setup: { due: 5, actedClears: [], cycleIncrement: false, foreground: ["C1001"] },
       invitation: invitation("C0"),
     } satisfies NextCommand);
   });
@@ -253,13 +253,13 @@ describe("deriveNext：分支序全谱（快照字面量 → NextCommand）", ()
     // 周期末硬保险（cycleCount+1 >= gmIntervalCycles）→ GM
     assert.deepEqual(deriveNext(snap(chars, { cycleCount: 2, gmIntervalCycles: 3 })), {
       type: "gm",
-      setup: { due: 10, actedClears: [], cycleIncrement: false },
+      setup: { due: 10, actedClears: [], cycleIncrement: false, foreground: ["C1001", "C1002"] },
     } satisfies NextCommand);
     // 未达 N → 下一周期首行动者（先攻最高者），cycleIncrement + 清前台全员 acted
     assert.deepEqual(deriveNext(snap(chars, { cycleCount: 0, gmIntervalCycles: 3 })), {
       type: "character",
       cid: "C1001",
-      setup: { due: 10, actedClears: ["C1001", "C1002"], cycleIncrement: true },
+      setup: { due: 10, actedClears: ["C1001", "C1002"], cycleIncrement: true, foreground: ["C1001", "C1002"] },
     } satisfies NextCommand);
   });
 
@@ -268,7 +268,7 @@ describe("deriveNext：分支序全谱（快照字面量 → NextCommand）", ()
     const solo = { C1001: ch({ timer: 10, initiative: { value: 25, group: 0 }, acted: true }) };
     assert.deepEqual(deriveNext(snap(solo, { cycleCount: 0, gmIntervalCycles: 3 })), {
       type: "gm",
-      setup: { due: 10, actedClears: [], cycleIncrement: false },
+      setup: { due: 10, actedClears: [], cycleIncrement: false, foreground: ["C1001"] },
     } satisfies NextCommand);
     // 多人组的最后一名在场成员（组员 timer=null 已离场）同样按单人计
     const remnant = {
@@ -277,7 +277,7 @@ describe("deriveNext：分支序全谱（快照字面量 → NextCommand）", ()
     };
     assert.deepEqual(deriveNext(snap(remnant, { cycleCount: 0, gmIntervalCycles: 3 })), {
       type: "gm",
-      setup: { due: 10, actedClears: ["C1002"], cycleIncrement: false },
+      setup: { due: 10, actedClears: ["C1002"], cycleIncrement: false, foreground: ["C1001"] },
     } satisfies NextCommand);
     // 多人前台：阈值不变（未达 N → 下一周期）
     const multi = {
@@ -301,7 +301,7 @@ describe("deriveNext：分支序全谱（快照字面量 → NextCommand）", ()
     assert.deepEqual(cmd, {
       type: "character",
       cid: "C1001",
-      setup: { due: 10, actedClears: ["C1004", "C1001", "C1002"], cycleIncrement: true },
+      setup: { due: 10, actedClears: ["C1004", "C1001", "C1002"], cycleIncrement: true, foreground: ["C1001", "C1002"] },
     } satisfies NextCommand);
   });
 });

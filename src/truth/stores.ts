@@ -1,5 +1,5 @@
 /**
- * 六真相 Store 成组视图：
+ * 七真相 Store 成组视图：
  * session 内核（loop.ts）与效果规划器（src/application/）共用同一组纯类型 + 纯函数。
  *
  * live 与 draft 同形。draft = cloneTruth 产出的工作副本：编辑/回溯/直编/规划器的
@@ -12,6 +12,7 @@ import { CharactersStore } from "./charactersStore.js";
 import { EventsStore } from "./events.js";
 import type { SaveSet } from "./generationRepository.js";
 import { LoreStore } from "./loreStore.js";
+import { PromptsStore } from "./promptsStore.js";
 import { SAVE_SCHEMA_VERSION } from "./saveSchema.js";
 import { TimeStore } from "./timeStore.js";
 import { WorldStore } from "./worldStore.js";
@@ -23,9 +24,10 @@ export interface TruthStores {
   archive: ArchiveStore;
   loreStore: LoreStore;
   timeStore: TimeStore;
+  promptsStore: PromptsStore;
 }
 
-/** draft 工作副本：六 store.saveData() → structuredClone → 新 store 实例（与 live 完全隔离）。 */
+/** draft 工作副本：七 store.saveData() → structuredClone → 新 store 实例（与 live 完全隔离）。 */
 export function cloneTruth(live: TruthStores): TruthStores {
   return {
     world: new WorldStore(structuredClone(live.world.saveData())),
@@ -34,6 +36,7 @@ export function cloneTruth(live: TruthStores): TruthStores {
     archive: new ArchiveStore(structuredClone(live.archive.saveData())),
     loreStore: new LoreStore(structuredClone(live.loreStore.saveData())),
     timeStore: new TimeStore(structuredClone(live.timeStore.saveData())),
+    promptsStore: new PromptsStore(structuredClone(live.promptsStore.saveData())),
   };
 }
 
@@ -45,9 +48,10 @@ export function adoptTruth(live: TruthStores, draft: TruthStores): void {
   live.archive.restoreData(draft.archive.saveData());
   live.loreStore.restoreData(draft.loreStore.saveData());
   live.timeStore.restoreData(draft.timeStore.saveData());
+  live.promptsStore.restoreData(draft.promptsStore.saveData());
 }
 
-/** 收集指定 truth 视图的六 Store 当前数据为一代 SaveSet（commit 的输入）。 */
+/** 收集指定 truth 视图的七 Store 当前数据为一代 SaveSet（commit 的输入）。 */
 export function collectSave(truth: TruthStores): SaveSet {
   const worldFile = truth.world.saveData();
   return {
@@ -58,5 +62,6 @@ export function collectSave(truth: TruthStores): SaveSet {
     archive: truth.archive.saveData(),
     lore: truth.loreStore.saveData(),
     time: truth.timeStore.saveData(),
+    prompts: truth.promptsStore.saveData(),
   };
 }

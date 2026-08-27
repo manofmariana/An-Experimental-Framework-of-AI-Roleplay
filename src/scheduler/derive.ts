@@ -55,12 +55,14 @@ export interface SchedulerSnapshot {
  * 轮首步的调度落账语义数据（不生成 VarChange、不知持久化路径——
  * application/CommitPlan 层负责把 setup 转成常规变更记录）：
  * due = 时钟跳转目标（连续轮/无跳转 = undefined）；actedClears = 维护性清零 CID；
- * cycleIncrement = 周期完成 X+1。
+ * cycleIncrement = 周期完成 X+1；foreground = 本步弹出前台的组成员（轮首在场位置位）。
  */
 export interface ScheduleSetup {
   due?: number;
   actedClears: string[];
   cycleIncrement: boolean;
+  /** 弹出前台的组成员（本步无弹出 = 空表；正文/死锁分支恒空） */
+  foreground: string[];
 }
 
 /** 下一命令（判别联合：每个分支携带执行所需的全部字段，调用方无非空断言）。 */
@@ -127,13 +129,13 @@ export function deriveNext(snapshot: SchedulerSnapshot): NextCommand {
 
   // 1. GM 步刚闭合：narrativity≠skip → 正文（lastGmNarrativity=null 视为包缺失，此分支只作展示态）
   if (snapshot.lastStepKind === "gm" && snapshot.lastGmNarrativity !== "skip") {
-    return { type: "prose", setup: { actedClears: [], cycleIncrement: false } };
+    return { type: "prose", setup: { actedClears: [], cycleIncrement: false, foreground: [] } };
   }
 
   // 2. 调度：nextDue 弹出最近到期者 → 同刻多组串行取首组；全员无计时器 → 死锁防御停等玩家
   const sel = selectFront(chars, snapshot.clock);
   if (sel === null) {
-    return { type: "player", reason: "deadlock", setup: { actedClears: [], cycleIncrement: false } };
+    return { type: "player", reason: "deadlock", setup: { actedClears: [], cycleIncrement: false, foreground: [] } };
   }
   const front = sel.front;
   const due = sel.due > snapshot.clock ? sel.due : undefined;
@@ -148,6 +150,7 @@ export function deriveNext(snapshot: SchedulerSnapshot): NextCommand {
       ...(due !== undefined ? { due } : {}),
       actedClears: clears,
       cycleIncrement: extra?.cycleIncrement ?? false,
+      foreground: front,
     };
   };
   const actorCmd = (

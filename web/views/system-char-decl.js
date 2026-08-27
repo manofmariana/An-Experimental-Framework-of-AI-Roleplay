@@ -11,8 +11,8 @@
  */
 
 /**
- * character 根系统声明子树：name 等顶层字段 + 五调度字段 acted/group/channel/timer/
- * isPlayer（值只读语义在 var-tree-model 的 CHAR_SYSTEM_FIELDS 收窄，呈现层徽记）。
+ * character 根系统声明子树：name 等顶层字段 + 调度字段 acted/group/channel/timer/
+ * isPlayer/appearance（值只读语义在 var-tree-model 的 CHAR_SYSTEM_FIELDS 收窄，呈现层徽记）。
  */
 export const SYSTEM_CHAR_DECLS = {
   name: "string",
@@ -31,6 +31,7 @@ export const SYSTEM_CHAR_DECLS = {
   channel: "number",
   timer: "number",
   isPlayer: "boolean",
+  appearance: "boolean",
 };
 
 /** 系统类型声明（relations 数组元素结构引用）。 */

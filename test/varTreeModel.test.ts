@@ -5,11 +5,11 @@
  * - 视图模型：世界树滤 time/_sys、实例简写读出、未声明键 unknown 呈现；
  * - 角色树 = 系统声明分支投影 + vars 实例树（同一棵树不分区）：系统分支值从类型化
  *   字段读出（timer/channel null 原样、initiative null = 容器无实例、relations =
- *   结构化数组按下标投影），系统只读收窄为 {acted, group, channel, timer, isPlayer}；
+ *   结构化数组按下标投影），系统只读收窄为 {acted, group, channel, timer, isPlayer, appearance}；
  * - 结构化数组：可折叠分支、元素增删（按元素结构物化空元素/按下标摘除）、元素内
  *   字段经 `键[下标]` 路径写值（嵌套数组递归）；
  * - 系统末端写值：回写类型化字段（omniscience 钳制 0-6、initiative null 两值齐全整体
- *   写入、relations 元素字段、long_term_memory）；系统五字段拒写；
+ *   写入、relations 元素字段、long_term_memory）；系统调度字段拒写；
  * - 外壳 tags：全部末端可编——系统末端写 systemTags 侧车（数组层键 = `键[下标]`，
  *   relations 元素删除顺带重映射）、vars 末端写外壳；
  * - 从动判定：声明带 formula / 实例外壳带 formula 均只读且出结构化 formula 只读标注；
@@ -193,14 +193,14 @@ describe("var-tree-model：视图模型", () => {
     assert.deepEqual(tags.formula, { kind: "unionAttach", paths: [] });
   });
 
-  it("角色树：系统声明分支投影在前（系统五字段只读徽记）、vars 树随后，同一棵树不分区", () => {
+  it("角色树：系统声明分支投影在前（系统调度字段只读徽记）、vars 树随后，同一棵树不分区", () => {
     const m = modelOf(makeWorking());
     const tree = m.buildTree("C1001");
     const keys = tree.children.map((n) => n.key);
     assert.deepEqual(keys, [
       "name", "gender", "age", "personality", "reaction", "level", "omniscience",
       "location", "initiative", "relations", "long_term_memory",
-      "acted", "group", "channel", "timer", "isPlayer",
+      "acted", "group", "channel", "timer", "isPlayer", "appearance",
       "attachtags", "tags", "mood", "str", "double_str", "gear",
     ]);
     assert.ok(tree.children.every((n) => n.key !== "vars" && n.key !== "systemTags"));
@@ -213,8 +213,8 @@ describe("var-tree-model：视图模型", () => {
     assert.deepEqual(name.tags, [{ name: "闻名", level: 2 }]); // 侧车
     assert.deepEqual(terminalOf(tree, "long_term_memory").value, ["记忆一", "记忆二"]);
 
-    // 系统五字段：system 徽记（值只读）；timer 有值、channel null 原样
-    for (const key of ["acted", "group", "channel", "timer", "isPlayer"]) {
+    // 系统调度字段：system 徽记（值只读）；timer 有值、channel null 原样
+    for (const key of ["acted", "group", "channel", "timer", "isPlayer", "appearance"]) {
       assert.equal(terminalOf(tree, key).system, true, key);
     }
     assert.equal(terminalOf(tree, "timer").value, 120);
@@ -306,7 +306,7 @@ describe("var-tree-model：系统末端写值", () => {
     assert.deepEqual(w.characters.C1001.initiative, { value: 3, group: 2 });
   });
 
-  it("值类型错配即抛；系统五字段拒写；未知路径拒写；世界作用域无系统分支", () => {
+  it("值类型错配即抛；系统调度字段拒写；未知路径拒写；世界作用域无系统分支", () => {
     const m = modelOf(makeWorking());
     assert.throws(() => m.writeTerminalValue("C1001", "reaction", "x"), /错配/);
     assert.throws(() => m.writeTerminalValue("C1001", "long_term_memory", [1]), /错配/);
@@ -446,7 +446,7 @@ describe("var-tree-model：外壳 tags 编辑", () => {
 
     m.writeTerminalTags("C1001", "relations[0].name", [{ name: "暴怒", level: 4 }]);
     assert.deepEqual(w.characters.C1001.systemTags["relations[0].name"], [{ name: "暴怒", level: 4 }]);
-    // 系统五字段的外壳 tags 同样可编
+    // 系统调度字段的外壳 tags 同样可编
     m.writeTerminalTags("C1001", "timer", [{ name: "冷静", level: 2 }]);
     assert.deepEqual(w.characters.C1001.systemTags["timer"], [{ name: "冷静", level: 2 }]);
 

@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { CHARACTER_PLACEHOLDERS, type CharacterContext } from "../src/agents/character.js";
-import { GM_PLACEHOLDERS, type GmContext } from "../src/agents/gm.js";
 import type { GameSession } from "../src/application/gameSession.js";
 import type { CharacterState } from "../src/truth/charactersStore.js";
 import {
   buildAdjudication as gmPkg,
   buildCharacterState as state,
   buildDecision as decision,
+  buildProjectionHost,
+  buildTruthStores,
 } from "./builders/index.js";
 import { SessionHarness } from "./harness/session.js";
 
@@ -100,11 +100,21 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
     assert.equal(charState(session, "C0").acted, false);
     assert.equal(charState(session, "C1001").acted, true, "seq7 已再次行动");
 
-    // 事件 commit：tags 缺省 = 本轮行动者（工作集顺序去重），t = 当前 clock
+    // 事件 commit：tags 空数组程序补全 = 本轮行动者的 cid 类 TAG 一级（工作集顺序去重），t = 当前 clock
     const events = session.getEvents();
     assert.deepEqual(
       events.map((e) => ({ payload: e.payload, tags: e.tags, t: e.t, seq: e.seq })),
-      [{ payload: "GM事件", tags: ["known_by:C1001", "known_by:C0"], t: 0, seq: 5 }],
+      [
+        {
+          payload: "GM事件",
+          tags: [
+            { name: "C1001", level: 1 },
+            { name: "C0", level: 1 },
+          ],
+          t: 0,
+          seq: 5,
+        },
+      ],
     );
 
     // seq7 是 current（组 1 第三周期首步）：changes 含时钟跳转（setup 段）
@@ -115,7 +125,12 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
     assert.equal(world.world.time.min, 5);
     assert.deepEqual(world.pipeline.working_set.map((w) => w.cid), ["C1001"], "GM 步已清算工作集");
     const seq7 = session.getPipelineCurrent()!;
-    assert.deepEqual(flat(seq7).map((c) => c.path), ["world.time", "characters.C1001.acted"]);
+    assert.deepEqual(flat(seq7).map((c) => c.path), [
+      "world.time",
+      "characters.C0.appearance",
+      "characters.C1001.appearance",
+      "characters.C1001.acted",
+    ]);
 
     // 正文输入：台词+内心（无标记）+ GM 事件包
     const prosePrompt = callsText("prose", 6);
@@ -167,8 +182,8 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
     assert.equal(charState(session, "C0").acted, false);
     // C0 未丢轮：前台停等玩家
     assert.equal(session.pipelineInfo.phase, "await_player");
-    // 事件 tags 缺省 = 本轮行动者（仅 C1001）
-    assert.deepEqual(session.getEvents()[0]!.tags, ["known_by:C1001"]);
+    // 事件 tags 空数组程序补全 = 本轮行动者（仅 C1001）的 cid 类 TAG 一级
+    assert.deepEqual(session.getEvents()[0]!.tags, [{ name: "C1001", level: 1 }]);
   });
 
   it("同值批次：批内互不见言行（GM 见全部）；玩家结构化输入的 gm_request 等批完再激活", async () => {
@@ -591,7 +606,11 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
     await session.handlePlayerInput("推进"); // seq2 player → seq3 GM(full) → seq4 prose → seq5 abort
     const current = session.getPipelineCurrent()!;
     assert.equal(current.interrupted, true);
-    assert.deepEqual(flat(current).map((change) => change.path), ["world.time"]);
+    assert.deepEqual(flat(current).map((change) => change.path), [
+      "world.time",
+      "characters.C0.appearance",
+      "characters.C1001.appearance",
+    ]);
     assert.equal(session.worldTime, 5);
     session.rollbackTo(4);
     const beforeWorld = readRun(runId, "world.json");
@@ -645,7 +664,7 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
     session.rollbackTo(3);
 
     const edited = gmPkg({
-      events: [{ text: "@C0 对 @C1001 说：\"玩家行动\"", tags: ["known_by:C0"], location: "loc_A" }],
+      events: [{ text: "@C0 对 @C1001 说：\"玩家行动\"", tags: [{ name: "C0", level: 1 }], location: "loc_A" }],
       narrativity: "full",
       durations: [{ cid: "C0", span: { min: 10 } }, { cid: "C1001", span: { min: 10 } }],
     });
@@ -655,7 +674,7 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
     assert.equal(events.length, 1);
     assert.equal(events[0]!.payload, "@C0 对 @C1001 说：\"玩家行动\"");
     assert.equal(events[0]!.seq, 3);
-    assert.deepEqual(events[0]!.tags, ["known_by:C0"]);
+    assert.deepEqual(events[0]!.tags, [{ name: "C0", level: 1 }]);
     assert.equal(charState(session, "C0").timer, 10);
     assert.equal(charState(session, "C1001").timer, 10);
     const current = session.getPipelineCurrent()!;
@@ -689,7 +708,7 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
     assert.throws(() => validate(["C1001"]), /无计时器/);
   });
 
-  it("联系人列表 provider：排除频道持有者与前台（timer 未到期才可被联系）", () => {
+  it("联系人列表投影：排除频道持有者与前台（timer 未到期才可被联系）", () => {
     const states: Record<string, CharacterState> = {
       C0: state({ name: "玩家", isPlayer: true }),
       C1001: state({ name: "甲", channel: 1 }), // 频道持有者 → 排除
@@ -697,26 +716,29 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
       C1003: state({ name: "丙", timer: 5 }), // timer 已到期（前台）→ 排除
       C1004: state({ name: "丁", timer: null }), // 无计时器 → 可联系
     };
-    const charCtx: CharacterContext = {
-      selfCid: "C0", states, cast: [], worldSnapshot: "{}", activatedLore: "", recentEvents: [],
-      proseWindow: [], currentScene: "", timeHeader: "", clock: 10,
+    const hostOf = (s: Record<string, CharacterState>, input?: { invitation: { inviter: string; channel: string } }) => {
+      const truth = buildTruthStores({ characters: s });
+      truth.world.setClock(10);
+      return buildProjectionHost({ kind: "character", cid: "C0" }, truth, input);
     };
-    const contacts = CHARACTER_PLACEHOLDERS.contacts!.provide(charCtx);
+    const contacts = hostOf(states).entries("contacts").map((entry) => entry.content).join("\n");
     assert.ok(contacts.includes("C1002") && contacts.includes("C1004"));
     assert.ok(!contacts.includes("C1001"), "频道持有者可被重复邀请（防重入失败）");
     assert.ok(!contacts.includes("C1003"), "前台角色结构上不可被联系");
-    assert.ok(!contacts.includes("C0"), "不含自己");
+    assert.ok(!contacts.includes("- @C0\n") && !contacts.endsWith("- @C0"), "不含自己");
     // 整体可见性：自身持有频道 → 名单整体不可见
-    const holderCtx: CharacterContext = { ...charCtx, states: { ...states, C0: state({ name: "玩家", isPlayer: true, channel: 2 }) } };
-    assert.strictEqual(CHARACTER_PLACEHOLDERS.contacts!.provide(holderCtx), "", "频道持有者不应看见联系人名单");
+    const holder = hostOf({ ...states, C0: state({ name: "玩家", isPlayer: true, channel: 2 }) });
+    assert.deepEqual(holder.entries("contacts"), [], "频道持有者不应看见联系人名单");
     // 整体可见性：自身正在应答邀请 → 名单整体不可见
-    const invitedCtx: CharacterContext = { ...charCtx, incomingContact: { inviter: "C1001", channel: "传音" } };
-    assert.strictEqual(CHARACTER_PLACEHOLDERS.contacts!.provide(invitedCtx), "", "待答邀请者不应看见联系人名单");
-    const gmCtx: GmContext = {
-      setting: "", cast: [], loreFull: "", events: [], proseWindow: [], currentScene: "",
-      worldSnapshot: "{}", states, clock: 10, timeHeader: "", fortune: "",
-    };
-    const gmContacts = GM_PLACEHOLDERS.contacts!.provide(gmCtx);
+    const invited = hostOf(states, { invitation: { inviter: "C1001", channel: "传音" } });
+    assert.deepEqual(invited.entries("contacts"), [], "待答邀请者不应看见联系人名单");
+    // GM 读者：全量视野的同规则过滤
+    const gmTruth = buildTruthStores({ characters: states });
+    gmTruth.world.setClock(10);
+    const gmContacts = buildProjectionHost({ kind: "gm" }, gmTruth, { roundScenes: {} })
+      .entries("contacts")
+      .map((entry) => entry.content)
+      .join("\n");
     assert.ok(gmContacts.includes("C1002") && gmContacts.includes("C1004"));
     assert.ok(!gmContacts.includes("C1001") && !gmContacts.includes("C1003"));
   });

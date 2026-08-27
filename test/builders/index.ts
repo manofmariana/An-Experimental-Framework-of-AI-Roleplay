@@ -3,10 +3,19 @@
  * 只收 3 处以上文件重复的构造；一次性字面量仍留在各测试本地。
  */
 import type { CharacterManifest } from "../../src/agents/character.js";
+import { ProjectionBuilder, type ProjectionInput } from "../../src/application/activationContexts.js";
+import type { ReaderRef, RenderHost } from "../../src/compile/render.js";
 import { TAG_CATEGORIES, SYSTEM_TAG_NAMES } from "../../src/tags/registry.js";
-import type { CharacterState } from "../../src/truth/charactersStore.js";
+import { ArchiveStore } from "../../src/truth/archive.js";
+import { CharactersStore, type CharacterState } from "../../src/truth/charactersStore.js";
+import { EventsStore } from "../../src/truth/events.js";
 import type { SaveSet } from "../../src/truth/generationRepository.js";
+import { LoreStore } from "../../src/truth/loreStore.js";
+import { PromptsStore, type PromptsFile } from "../../src/truth/promptsStore.js";
 import { SAVE_SCHEMA_VERSION } from "../../src/truth/saveSchema.js";
+import type { TruthStores } from "../../src/truth/stores.js";
+import { TimeStore } from "../../src/truth/timeStore.js";
+import { WorldStore } from "../../src/truth/worldStore.js";
 import type { Event } from "../../src/types.js";
 import { parseVarsTemplate, type VarsTemplate } from "../../src/vars/template.js";
 
@@ -116,6 +125,7 @@ export function buildCharacterState(overrides?: Partial<CharacterState>): Charac
     omniscience: 0,
     isPlayer: false,
     relations: [],
+    appearance: false,
     long_term_memory: [],
     systemTags: {},
     vars: {},
@@ -154,8 +164,60 @@ export function buildEvent(overrides: Partial<Event> & { id: string }): Event {
 
 const SAVE_SET_START = { y: 0, m: 1, d: 1, h: 6, min: 0 };
 
+/** 全内存七真相 Store（投影层/activation 直构造测试用；characters 缺省 = 仅玩家 C0）。 */
+export function buildTruthStores(overrides?: {
+  characters?: Record<string, CharacterState>;
+  events?: Event[];
+}): TruthStores {
+  const world = WorldStore.initial({ time: SAVE_SET_START }, buildWorldSysRaw());
+  const characters = new CharactersStore(overrides?.characters ?? { C0: buildCharacterState({ isPlayer: true }) });
+  const events = new EventsStore();
+  for (const event of overrides?.events ?? []) events.append(event);
+  const archive = new ArchiveStore();
+  const loreStore = LoreStore.initFrom([]);
+  const timeStore = new TimeStore({
+    schema_version: SAVE_SCHEMA_VERSION,
+    start: SAVE_SET_START,
+    periods: [{ key: "白天", from: 0, to: 24 }],
+  });
+  const promptsStore = buildPromptsStore();
+  return { world, characters, events, archive, loreStore, timeStore, promptsStore };
+}
+
+/** 投影层 RenderHost（activation 渲染/投影取数断言用；input 覆盖合并进 ProjectionInput）。 */
+export function buildProjectionHost(
+  reader: ReaderRef,
+  truth: TruthStores,
+  input?: Partial<ProjectionInput>,
+): RenderHost {
+  return new ProjectionBuilder({ setting: "测试设定", toneCard: "测试基调" }).for(reader, {
+    truth,
+    proseWindowTurns: 5,
+    ...input,
+  });
+}
+
+/** 档内提示词文件（prompts.json 载荷形状）：四键齐备、id 与键名一致（空模块列表 + 空占位符目录 = 最小合法）。 */
+export function buildPromptsFile(): PromptsFile {
+  return {
+    schema_version: SAVE_SCHEMA_VERSION,
+    templates: {
+      character: { id: "character", modules: [] },
+      gm: { id: "gm", modules: [] },
+      prose: { id: "prose", modules: [] },
+      "gm-incident": { id: "gm-incident", modules: [] },
+    },
+    placeholders: {},
+  };
+}
+
+/** 最小合法内存 PromptsStore（TruthStores 字面量测试用；不写盘）。 */
+export function buildPromptsStore(): PromptsStore {
+  return new PromptsStore(buildPromptsFile());
+}
+
 /**
- * 整代存档（Generation 六文件载荷）：缺省 = 刚建会话的空档（seq=0、无进行中步、仅玩家 C0），
+ * 整代存档（Generation 七文件载荷）：缺省 = 刚建会话的空档（seq=0、无进行中步、仅玩家 C0），
  * 即可提交态基线；各违规用例用 overrides 精准打破一条。
  */
 export function buildSaveSet(overrides?: Partial<SaveSet>): SaveSet {
@@ -167,6 +229,7 @@ export function buildSaveSet(overrides?: Partial<SaveSet>): SaveSet {
     archive: [],
     lore: { schema_version: SAVE_SCHEMA_VERSION, entries: [], changelog: [] },
     time: { schema_version: SAVE_SCHEMA_VERSION, start: SAVE_SET_START, periods: [{ key: "白天", from: 6, to: 18 }] },
+    prompts: buildPromptsFile(),
     ...overrides,
   };
 }

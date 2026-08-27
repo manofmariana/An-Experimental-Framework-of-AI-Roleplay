@@ -1,18 +1,18 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { CharacterActivation, type CharacterContext, type CharacterManifest } from "../src/agents/character.js";
-import { GmActivation, validateAdjudicationRound, type GmContext } from "../src/agents/gm.js";
-import { resolveWorldDir } from "../src/config.js";
+import { CharacterActivation, type CharacterManifest } from "../src/agents/character.js";
+import { GmActivation, validateAdjudicationRound } from "../src/agents/gm.js";
+import type { RenderHost } from "../src/compile/render.js";
 import { LLMAbortedError } from "../src/llm/chatPort.js";
 import { OpenAIChatAdapter } from "../src/llm/openaiChatAdapter.js";
-import { packPromptsDir } from "../src/resources/worldRepository.js";
 import { CharactersStore } from "../src/truth/charactersStore.js";
-import { buildVarsTemplate } from "./builders/index.js";
+import { buildProjectionHost, buildTruthStores, buildVarsTemplate } from "./builders/index.js";
+import { factoryPromptsStore } from "./harness/session.js";
 
 const DECL = buildVarsTemplate().characterVars;
 
-/** 出厂模板目录 = 默认世界包内 prompts/（activation 构造注入，热加载即读它）。 */
-const FACTORY_PROMPTS_DIR = packPromptsDir(resolveWorldDir());
+/** 出厂模板档内副本（activation 构造注入，每轮激活读它）。 */
+const FACTORY_PROMPTS = factoryPromptsStore();
 
 const manifest: CharacterManifest = {
   id: "C1001", name: "林雾", gender: "女", age: "26", personality: "谨慎。",
@@ -33,22 +33,20 @@ function failingLlm(err: Error) {
   };
 }
 
-/** 最小角色上下文（无状态 activation：上下文逐调用传入，测试就地构造）。 */
-function characterCtx(): CharacterContext {
+/** 最小角色投影（无状态 activation：注入内容逐调用经投影层现算，测试就地构造）。 */
+function characterHost(): RenderHost {
   const store = CharactersStore.fromManifests([manifest], 0, DECL);
-  return {
-    selfCid: "C1001", states: store.all(), cast: [], worldSnapshot: "{}", activatedLore: "",
-    recentEvents: [], proseWindow: [], currentScene: "", timeHeader: "", clock: 0,
-  };
+  return buildProjectionHost({ kind: "character", cid: "C1001" }, buildTruthStores({ characters: store.saveData() }));
 }
 
-/** 最小 GM 上下文。 */
-function gmCtx(): GmContext {
+/** 最小 GM 投影。 */
+function gmHost(): RenderHost {
   const store = CharactersStore.fromManifests([manifest], 0, DECL);
-  return {
-    setting: "设定", cast: [], loreFull: "", events: [], proseWindow: [], currentScene: "场景",
-    worldSnapshot: "{}", states: store.all(), clock: 0, timeHeader: "", fortune: "良恶判定：良性；程度 30（1–100）",
-  };
+  return buildProjectionHost(
+    { kind: "gm" },
+    buildTruthStores({ characters: store.saveData() }),
+    { sceneText: "场景", roundScenes: {}, fortune: "良恶判定：良性；程度 30（1–100）" },
+  );
 }
 
 describe("abort 不触发重试（停止 ≠ 可重试的失败）", () => {
@@ -83,15 +81,15 @@ describe("abort 不触发重试（停止 ≠ 可重试的失败）", () => {
 
   it("character.decide：LLMAbortedError 直接向上传播，只调用一次", async () => {
     const llm = failingLlm(new LLMAbortedError("半截", ""));
-    const activation = new CharacterActivation(llm as never, FACTORY_PROMPTS_DIR);
-    await assert.rejects(() => activation.decide(characterCtx(), 1, new AbortController().signal), LLMAbortedError);
+    const activation = new CharacterActivation(llm as never, FACTORY_PROMPTS);
+    await assert.rejects(() => activation.decide(characterHost(), 1, new AbortController().signal), LLMAbortedError);
     assert.equal(llm.state.calls, 1);
   });
 
   it("gm.adjudicate：LLMAbortedError 直接向上传播，只调用一次", async () => {
     const llm = failingLlm(new LLMAbortedError("", ""));
-    const gm = new GmActivation(llm as never, FACTORY_PROMPTS_DIR);
-    await assert.rejects(() => gm.adjudicate(gmCtx(), 1, ["C1001"], new AbortController().signal), LLMAbortedError);
+    const gm = new GmActivation(llm as never, FACTORY_PROMPTS);
+    await assert.rejects(() => gm.adjudicate(gmHost(), 1, ["C1001"], {}, new AbortController().signal), LLMAbortedError);
     assert.equal(llm.state.calls, 1);
   });
 
@@ -114,8 +112,8 @@ describe("abort 不触发重试（停止 ≠ 可重试的失败）", () => {
         return { text: JSON.stringify(pkg), reasoning: "" };
       },
     };
-    const gm = new GmActivation(llm as never, FACTORY_PROMPTS_DIR);
-    const { pkg } = await gm.adjudicate(gmCtx(), 1, ["C1001"], new AbortController().signal);
+    const gm = new GmActivation(llm as never, FACTORY_PROMPTS);
+    const { pkg } = await gm.adjudicate(gmHost(), 1, ["C1001"], {}, new AbortController().signal);
     assert.equal(state.calls, 2);
     assert.deepEqual(pkg.durations.map((item) => item.cid), ["C1001"]);
     assert.doesNotThrow(() => validateAdjudicationRound(pkg, ["C1001"]));
@@ -123,6 +121,40 @@ describe("abort 不触发重试（停止 ≠ 可重试的失败）", () => {
       () => validateAdjudicationRound({ ...pkg, location: [{ cid: "C1002", location: { name: "越界", level: 1 } }] }, ["C1001"]),
       /location cid 只能是不重复的上述集合子集/,
     );
+  });
+
+  it("事件 tags 名称对注册表类别化口径校验：未注册名走同一重试通道", async () => {
+    const state = { calls: 0 };
+    const llm = {
+      chat: async () => {
+        state.calls += 1;
+        const tags = state.calls === 1 ? [{ name: "未注册TAG", level: 1 }] : [{ name: "C1001", level: 1 }];
+        const pkg = {
+          events: [{ text: "@C1001 行动", tags }],
+          narrativity: "skip", deltas: [],
+          durations: [{ cid: "C1001", span: { min: 1 } }],
+          location: [],
+        };
+        return { text: JSON.stringify(pkg), reasoning: "" };
+      },
+    };
+    const gm = new GmActivation(llm as never, FACTORY_PROMPTS);
+    const scope = { registeredNames: new Set(["aud"]), categories: { cid: new Set(["C1001"]) } };
+    const { pkg } = await gm.adjudicate(gmHost(), 1, ["C1001"], scope, new AbortController().signal);
+    assert.equal(state.calls, 2, "未注册 TAG 名首次拒绝并重试一次");
+    assert.deepEqual(pkg.events[0]!.tags, [{ name: "C1001", level: 1 }]);
+    // 等级越界由 schema 机检（不走名称校验）：level 0/8 均拒
+    const badLevel = {
+      chat: async () => ({
+        text: JSON.stringify({
+          events: [{ text: "x", tags: [{ name: "C1001", level: 8 }] }],
+          narrativity: "skip", deltas: [], durations: [{ cid: "C1001", span: { min: 1 } }], location: [],
+        }),
+        reasoning: "",
+      }),
+    };
+    const gm2 = new GmActivation(badLevel as never, FACTORY_PROMPTS);
+    await assert.rejects(() => gm2.adjudicate(gmHost(), 1, ["C1001"], scope, new AbortController().signal));
   });
 
   it("对照：解析失败仍重试 1 次（重试机制本身未被误伤）", async () => {
@@ -134,8 +166,8 @@ describe("abort 不触发重试（停止 ≠ 可重试的失败）", () => {
         return { text: '{"action": "点头", "inner": "先看看。", "dialogue": "好。"}', reasoning: "" };
       },
     };
-    const activation = new CharacterActivation(llm as never, FACTORY_PROMPTS_DIR);
-    const { pkg } = await activation.decide(characterCtx(), 1, new AbortController().signal);
+    const activation = new CharacterActivation(llm as never, FACTORY_PROMPTS);
+    const { pkg } = await activation.decide(characterHost(), 1, new AbortController().signal);
     assert.equal(state.calls, 2);
     assert.equal(pkg.dialogue, "好。");
   });

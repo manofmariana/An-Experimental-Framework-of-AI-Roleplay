@@ -17,7 +17,7 @@ import { ApiError } from "../errors.js";
 import { parseJsonBody, readBody, requireStringField } from "../response.js";
 import type { ApiDeps, Route } from "../router.js";
 
-const ARTIFACT_KINDS: readonly RunArtifactKind[] = ["events", "world", "characters", "archive", "lore", "stats"];
+const ARTIFACT_KINDS: readonly RunArtifactKind[] = ["events", "world", "characters", "archive", "lore", "prompts", "stats"];
 
 export function sessionRoutes(deps: ApiDeps): Route[] {
   const saveDir = deps.dirs.saveDir;

@@ -81,15 +81,30 @@ async function renderWorldForm(host, ctx) {
   host.appendChild(el("h3", null, "Lorebook 条目"));
   const table = el("table");
   const head = el("tr");
-  for (const h of ["ID", "标签（逗号分隔）", "内容", "启用", ""]) head.appendChild(el("th", null, h));
+  for (const h of ["ID", "标签（名称:等级，逗号分隔；等级 1-7 可省略=1）", "内容", "启用", ""]) head.appendChild(el("th", null, h));
   table.appendChild(head);
+
+  // 标签列文本形态："名称:等级, 名称2"（等级省略 = 1；名称里的全角冒号不影响解析，只认半角冒号）
+  const tagsToText = (tags) => (tags ?? []).map((t) => `${t.name}:${t.level ?? 1}`).join(", ");
+  const textToTags = (text) =>
+    text
+      .split(/[,，]/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((item) => {
+        const at = item.lastIndexOf(":");
+        if (at < 0) return { name: item, level: 1 };
+        const level = Number.parseInt(item.slice(at + 1), 10);
+        return { name: item.slice(0, at).trim(), level: Number.isInteger(level) && level >= 1 && level <= 7 ? level : 1 };
+      })
+      .filter((t) => t.name !== "");
 
   const addRow = (entry = { id: "", tags: [], content: "", enabled: true }) => {
     const tr = el("tr");
     const idIn = document.createElement("input");
     idIn.value = entry.id;
     const tagsIn = document.createElement("input");
-    tagsIn.value = (entry.tags ?? []).join(", ");
+    tagsIn.value = tagsToText(entry.tags);
     const contentIn = el("textarea");
     contentIn.rows = 2;
     contentIn.value = entry.content ?? "";
@@ -122,7 +137,7 @@ async function renderWorldForm(host, ctx) {
       if (!idIn.value.trim()) continue;
       entries.push({
         id: idIn.value.trim(),
-        tags: tagsIn.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean),
+        tags: textToTags(tagsIn.value),
         content: contentIn.value,
         enabled: enabledIn.checked,
       });

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { projectWorkingSet, type ProjectionStep } from "../src/application/workingSetProjection.js";
+import { isNoticeEntry, type WorkingSetSpeechEntry } from "../src/truth/workingSet.js";
 import { buildDecision } from "./builders/index.js";
 import { DecisionPackageSchema, type DecisionPackage } from "../src/types.js";
 
@@ -10,6 +11,11 @@ import { DecisionPackageSchema, type DecisionPackage } from "../src/types.js";
 // ---------------------------------------------------------------------------
 
 const PLAYER = "C0";
+
+/** 言行条目窄化（本套件决策均无标记 → 投影产物不含通知条目）。 */
+function speechOf(ws: ReturnType<typeof projectWorkingSet>): WorkingSetSpeechEntry[] {
+  return ws.filter((e): e is WorkingSetSpeechEntry => !isNoticeEntry(e));
+}
 
 function decisionOf(tag: string): DecisionPackage {
   return DecisionPackageSchema.parse(buildDecision({ dialogue: tag }));
@@ -83,7 +89,7 @@ describe("projectWorkingSet（三切片表驱动）", () => {
     it(name, () => {
       const ws = projectWorkingSet(steps, PLAYER);
       assert.deepEqual(
-        ws.map((e) => ({ cid: e.cid, dialogue: e.decision?.dialogue })),
+        speechOf(ws).map((e) => ({ cid: e.cid, dialogue: e.decision?.dialogue })),
         expect,
       );
     });
@@ -91,7 +97,7 @@ describe("projectWorkingSet（三切片表驱动）", () => {
 
   it("player 步转写为调用方给的 playerCid（投影无 player 概念）", () => {
     const ws = projectWorkingSet([pStep(d1)], "C9");
-    assert.equal(ws[0]!.cid, "C9");
+    assert.equal(speechOf(ws)[0]!.cid, "C9");
   });
 
   it("decision 引用与落账同形（{cid, decision}，逐字节还原原工作集条目）", () => {

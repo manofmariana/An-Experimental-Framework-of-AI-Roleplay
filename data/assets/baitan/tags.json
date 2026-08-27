@@ -19,6 +19,11 @@
     "description": "视频媒介（视频通话等音像工具）",
     "system": true
   },
+  "fappear": {
+    "name": "fappear",
+    "description": "后台感知（后台角色末端的虚拟挂载；对象侧持纯名 = 感知后台 escape hatch）",
+    "system": true
+  },
   "全知": {
     "name": "全知",
     "description": "虚拟全知挂载记号（按全知权重覆盖对应等级组，不落盘）",
@@ -46,5 +51,17 @@
     "description": "地点开放类别（实例集运行期派生，写值时类别已声明即放行）",
     "category": "location",
     "system": true
+  },
+  "白滩镇：常识": {
+    "name": "白滩镇：常识",
+    "description": "白滩镇居民皆知的公开常识"
+  },
+  "灯塔": {
+    "name": "灯塔",
+    "description": "旧灯塔相关的公开信息"
+  },
+  "灯塔：秘密": {
+    "name": "灯塔：秘密",
+    "description": "灯塔熄灭内情（仅知情者）"
   }
 }

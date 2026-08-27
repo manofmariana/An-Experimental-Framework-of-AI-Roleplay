@@ -120,7 +120,7 @@ export function varWriteDepsOf(sys: ParsedWorldSys, cidInstances?: ReadonlySet<s
   return { template: sys.template, registeredNames: new Set(Object.keys(sys.tagRegistry)), categories };
 }
 
-/** 写入目标（六 Store 视图的最小面；WorldStore/CharactersStore 直接满足）。 */
+/** 写入目标（七 Store 视图的最小面；WorldStore/CharactersStore 直接满足）。 */
 export interface VarWriteStores {
   world: WorldStore;
   characters: CharactersStore;

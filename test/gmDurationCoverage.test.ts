@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { CHARACTER_PLACEHOLDERS, type CharacterContext } from "../src/agents/character.js";
-import { GM_PLACEHOLDERS, validateAdjudicationRound, type GmContext } from "../src/agents/gm.js";
+import { validateAdjudicationRound } from "../src/agents/gm.js";
+import type { PlaceholderSource } from "../src/compile/placeholders.js";
 import type { GameSession } from "../src/application/gameSession.js";
 import type { CharacterState } from "../src/truth/charactersStore.js";
 import { snapshotCharacterState, snapshotCharacterStates } from "../src/truth/snapshot.js";
 import { worldTimeToMinutes } from "../src/truth/timeStore.js";
 import { AdjudicationPackageSchema } from "../src/types.js";
-import { buildAdjudication as gmPkg, buildCharacterState as state } from "./builders/index.js";
+import {
+  buildAdjudication as gmPkg,
+  buildCharacterState as state,
+  buildProjectionHost,
+  buildTruthStores,
+} from "./builders/index.js";
 import { SessionHarness } from "./harness/session.js";
 
 // ---------------------------------------------------------------------------
@@ -155,14 +160,26 @@ describe("validateAdjudicationRound 文案与校验（基准集合 = 期望 dura
 });
 
 // ---------------------------------------------------------------------------
-// 快照 timer 结构化渲染（Task 2）与占位符单测基建
+// 快照 timer 结构化渲染（Task 2）与投影层取数断言基建
 // ---------------------------------------------------------------------------
 
-function charCtx(selfCid: string, states: Record<string, CharacterState>): CharacterContext {
-  return {
-    selfCid, states, cast: [], worldSnapshot: "{}", activatedLore: "", recentEvents: [],
-    proseWindow: [], currentScene: "", timeHeader: "", clock: 10,
-  };
+/** 角色读者投影（clock 需要特定值时由调用方 setClock）。 */
+function charHost(selfCid: string, states: Record<string, CharacterState>, clock?: number) {
+  const truth = buildTruthStores({ characters: states });
+  if (clock !== undefined) truth.world.setClock(clock);
+  return buildProjectionHost({ kind: "character", cid: selfCid }, truth);
+}
+
+/** GM 读者投影。 */
+function gmHost(states: Record<string, CharacterState>, clock?: number) {
+  const truth = buildTruthStores({ characters: states });
+  if (clock !== undefined) truth.world.setClock(clock);
+  return buildProjectionHost({ kind: "gm" }, truth, { roundScenes: {} });
+}
+
+/** 扁平源取数拼接（separator 与出厂目录一致 "\n"）。 */
+function joined(host: ReturnType<typeof charHost>, source: PlaceholderSource): string {
+  return host.entries(source).map((entry) => entry.content).join("\n");
 }
 
 describe("快照注入的 timer 结构化渲染", () => {
@@ -179,22 +196,18 @@ describe("快照注入的 timer 结构化渲染", () => {
     assert.equal(many["C2"]!.timer, null);
   });
 
-  it("character_snapshot / characters_snapshot 占位符输出结构化 timer", () => {
+  it("snapshot 占位符输出结构化 timer（角色 = 自身，GM = 全体）", () => {
     const minutes = worldTimeToMinutes({ y: 1, m: 1, d: 1, h: 6, min: 30 });
     const states: Record<string, CharacterState> = {
       C0: state({ name: "玩家", isPlayer: true, timer: minutes }),
       C1001: state({ name: "甲", timer: null }),
     };
-    const selfSnap = JSON.parse(CHARACTER_PLACEHOLDERS.character_snapshot!.provide(charCtx("C0", states))) as {
+    const selfSnap = JSON.parse(charHost("C0", states).entries("snapshot")[0]!.content) as {
       timer: unknown;
     };
     assert.deepEqual(selfSnap.timer, { y: 1, m: 1, d: 1, h: 6, min: 30 });
 
-    const gmCtx: GmContext = {
-      setting: "", cast: [], loreFull: "", events: [], proseWindow: [], currentScene: "",
-      worldSnapshot: "{}", states, clock: 10, timeHeader: "", fortune: "",
-    };
-    const allSnap = JSON.parse(GM_PLACEHOLDERS.characters_snapshot!.provide(gmCtx)) as Record<string, { timer: unknown }>;
+    const allSnap = JSON.parse(gmHost(states).entries("snapshot")[0]!.content) as Record<string, { timer: unknown }>;
     assert.deepEqual(allSnap["C0"]!.timer, { y: 1, m: 1, d: 1, h: 6, min: 30 });
     assert.equal(allSnap["C1001"]!.timer, null);
   });
@@ -206,11 +219,7 @@ describe("快照注入的 timer 结构化渲染", () => {
       C1002: state({ name: "乙", timer: 100 }), // 未到期
       C1003: state({ name: "丙", timer: null }), // 无计时器
     };
-    const gmCtx: GmContext = {
-      setting: "", cast: [], loreFull: "", events: [], proseWindow: [], currentScene: "",
-      worldSnapshot: "{}", states, clock: 10, timeHeader: "", fortune: "",
-    };
-    const out = GM_PLACEHOLDERS.timers!.provide(gmCtx);
+    const out = joined(gmHost(states, 10), "timers");
     assert.ok(out.includes("- @C0：已到期（已行动）"));
     assert.ok(out.includes("- @C1001：已到期（未行动）"));
     assert.ok(out.includes("- @C1002：") && out.includes("后到期"));
@@ -227,7 +236,7 @@ describe("group_members 占位符（同组角色表）", () => {
       C0: state({ name: "玩家", isPlayer: true, group: 0 }),
       C1001: state({ name: "甲", group: 3, location: { name: "灯塔", level: 1 } }),
     };
-    assert.strictEqual(CHARACTER_PLACEHOLDERS.group_members!.provide(charCtx("C0", states)), "");
+    assert.strictEqual(joined(charHost("C0", states), "group_members"), "");
   });
 
   it("多人组：按 cid 排序、含自己并标注（你）、含地点名；他组成员不进", () => {
@@ -237,13 +246,13 @@ describe("group_members 占位符（同组角色表）", () => {
       C1002: state({ name: "乙", group: 2, location: { name: "码头", level: 1 } }),
       C1003: state({ name: "丙", group: 5, location: { name: "灯塔", level: 1 } }),
     };
-    const out = CHARACTER_PLACEHOLDERS.group_members!.provide(charCtx("C1001", states));
+    const out = joined(charHost("C1001", states), "group_members");
     assert.equal(
       out,
       "- @C0 玩家（广场）\n- @C1001 甲（广场）（你）\n- @C1002 乙（码头）",
     );
     // 视角换成玩家：标注随行
-    const outC0 = CHARACTER_PLACEHOLDERS.group_members!.provide(charCtx("C0", states));
+    const outC0 = joined(charHost("C0", states), "group_members");
     assert.ok(outC0.includes("- @C0 玩家（广场）（你）"));
     assert.ok(!outC0.includes("@C1003"), "他组成员不进同组角色表");
   });

@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { CHARACTER_PLACEHOLDERS } from "../src/agents/character.js";
-import { GM_PLACEHOLDERS } from "../src/agents/gm.js";
-import { PROSE_PLACEHOLDERS } from "../src/agents/prose.js";
+import { loadPackPlaceholders, loadPackPrompts } from "../src/application/sessionFactory.js";
+import { validatePlaceholders } from "../src/compile/placeholders.js";
 import {
   extractPlaceholders,
   loadTemplate,
@@ -10,9 +9,12 @@ import {
 } from "../src/compile/template.js";
 import { resolveWorldDir } from "../src/config.js";
 import { packPromptsDir } from "../src/resources/worldRepository.js";
+import { parseWorldSys } from "../src/truth/varWrite.js";
+import { buildWorldSysRaw } from "./builders/index.js";
 
-/** 出厂模板目录 = 默认世界包内 prompts/。 */
-const FACTORY_PROMPTS_DIR = packPromptsDir(resolveWorldDir());
+/** 出厂世界包目录与其内 prompts/。 */
+const FACTORY_WORLD_DIR = resolveWorldDir();
+const FACTORY_PROMPTS_DIR = packPromptsDir(FACTORY_WORLD_DIR);
 
 describe("extractPlaceholders", () => {
   it("按出现顺序去重提取", () => {
@@ -65,26 +67,25 @@ describe("validateTemplate（结构 + 占位符合法性）", () => {
   });
 });
 
-describe("出厂模板 × 注册表（data/assets/{包}/prompts/*.prompt.json）", () => {
-  const cases = [
-    ["character", CHARACTER_PLACEHOLDERS],
-    ["gm", GM_PLACEHOLDERS],
-    ["prose", PROSE_PLACEHOLDERS],
-  ] as const;
+describe("出厂模板 × 占位符目录（data/assets/{包}/prompts/）", () => {
+  const catalog = loadPackPlaceholders(FACTORY_WORLD_DIR);
 
-  for (const [agent, reg] of cases) {
-    it(`${agent}：模板可加载，占位符全部在注册表内`, () => {
-      const t = loadTemplate(agent, Object.keys(reg), FACTORY_PROMPTS_DIR);
+  for (const agent of ["character", "gm", "prose", "gm-incident"] as const) {
+    it(`${agent}：模板可加载，占位符全部在目录内`, () => {
+      const t = loadTemplate(agent, Object.keys(catalog), FACTORY_PROMPTS_DIR);
       assert.equal(t.id, agent);
       assert.ok(t.modules.length >= 2);
       // 尾部模块是动态内容（编辑约定：动态置尾）
       const used = new Set(t.modules.flatMap((m) => extractPlaceholders(m.content)));
-      for (const key of used) assert.ok(key in reg, `{{${key}}} 应在注册表内`);
+      for (const key of used) assert.ok(key in catalog, `{{${key}}} 应在占位符目录内`);
     });
   }
 
-  it("模板 id 与文件名不一致时报错", () => {
-    // gm 的注册表不含 character 专有占位符，交叉加载必失败
-    assert.throws(() => loadTemplate("character", Object.keys(GM_PLACEHOLDERS), FACTORY_PROMPTS_DIR));
+  it("loadPackPrompts 四份齐备（含 gm-incident）；目录语义机检通过", () => {
+    const templates = loadPackPrompts(FACTORY_WORLD_DIR, catalog);
+    assert.deepEqual(templates.map((tpl) => tpl.id), ["character", "gm", "prose", "gm-incident"]);
+    // 与装配同一口径的语义机检（vars 路径/置后同轴/分支记号；出厂目录当前无 vars 源条目）
+    const sys = parseWorldSys(buildWorldSysRaw());
+    validatePlaceholders(catalog, { template: sys.template, registry: sys.tagRegistry });
   });
 });

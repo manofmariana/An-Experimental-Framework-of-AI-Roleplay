@@ -9,12 +9,12 @@
     {
       "key": "world_lore",
       "role": "system",
-      "content": "# 世界设定\n{{world_lore}}"
+      "content": "# 世界设定\n{{setting}}"
     },
     {
       "key": "recent_events",
       "role": "system",
-      "content": "# 近期事件\n{{recent_events}}"
+      "content": "# 近期事件\n{{events}}"
     },
     {
       "key": "cast",
@@ -24,7 +24,7 @@
     {
       "key": "triggered_lore",
       "role": "system",
-      "content": "# 本轮触发 lore\n{{triggered_lore}}"
+      "content": "# 本轮触发 lore\n{{lore}}"
     },
     {
       "key": "last_prose",

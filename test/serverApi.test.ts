@@ -29,13 +29,16 @@ import { resolveWorldDir } from "../src/config.js";
 import { safeSegment } from "../src/shared/safeSegment.js";
 import { Lorebook } from "../src/truth/lorebook.js";
 import { CharacterManifestSchema } from "../src/agents/character.js";
+import { PLACEHOLDER_SOURCES } from "../src/compile/placeholders.js";
+import { loadPackPlaceholders } from "../src/application/sessionFactory.js";
 import { SAVE_SCHEMA_VERSION } from "../src/truth/saveSchema.js";
 import type { SessionCoordinator } from "../src/application/sessionCoordinator.js";
 import { RevisionConflictError } from "../src/truth/validation/errors.js";
 import { tempDir } from "./harness/tempDir.js";
 
-/** 出厂模板目录 = 默认世界包内 prompts/（data/assets/baitan/prompts/）。 */
-const FACTORY_PROMPTS_DIR = packPromptsDir(resolveWorldDir());
+/** 出厂世界包目录（data/assets/baitan/）与其内 prompts/。 */
+const FACTORY_WORLD_DIR = resolveWorldDir();
+const FACTORY_PROMPTS_DIR = packPromptsDir(FACTORY_WORLD_DIR);
 
 describe("validateFileConfig（contracts FileConfigSchema）", () => {
   it("合法结构通过并保留未知注释字段", () => {
@@ -101,7 +104,7 @@ describe("validateFileConfig（contracts FileConfigSchema）", () => {
 describe("validateLorebookPayload", () => {
   it("合法条目数组通过", () => {
     const entries = validateLorebookPayload([
-      { id: "a", tags: ["白滩镇：常识"], content: "c", enabled: true },
+      { id: "a", tags: [{ name: "白滩镇：常识", level: 1 }], content: "c", enabled: true },
     ]);
     assert.equal(entries[0]!.id, "a");
   });
@@ -217,11 +220,11 @@ describe("listRuns / readRunArtifact（存档 v7 Generation 布局）", () => {
 });
 
 describe("prompts API（提示词模板端点的纯逻辑）", () => {
-  it("readPromptTemplates：三个出厂模板结构完整", () => {
+  it("readPromptTemplates：四份出厂模板结构完整（含 gm-incident 突发变体）", () => {
     const templates = readPromptTemplates(FACTORY_PROMPTS_DIR);
     assert.deepEqual(
       templates.map((t) => t.id),
-      ["character", "gm", "prose"],
+      ["character", "gm", "prose", "gm-incident"],
     );
     for (const t of templates) {
       assert.ok(t.modules.length >= 2);
@@ -229,32 +232,31 @@ describe("prompts API（提示词模板端点的纯逻辑）", () => {
     }
   });
 
-  it("placeholdersCatalog：从注册表导出，含各 agent 关键占位符", () => {
-    const catalog = placeholdersCatalog();
-    assert.deepEqual(
-      catalog.map((c) => c.agent),
-      ["character", "gm", "prose"],
-    );
-    const keysOf = (agent: string) =>
-      catalog.find((c) => c.agent === agent)!.placeholders.map((p) => p.key);
-    for (const k of ["world_snapshot", "character_snapshot", "recent_events", "prose_window", "current_scene", "time", "location"]) {
-      assert.ok(keysOf("character").includes(k), `character 缺 ${k}`);
+  it("placeholdersCatalog：声明式目录导出（条目名 + description + source，读者无关）", () => {
+    const catalog = placeholdersCatalog(loadPackPlaceholders(FACTORY_WORLD_DIR));
+    const keys = catalog.map((p) => p.key);
+    for (const k of [
+      "setting", "tone_card", "lore", "events", "current_scene", "prose_window", "last_prose",
+      "time", "cast", "contacts", "departure_notices", "incoming_contact", "timers", "fortune",
+      "gm_event", "target_group", "world_snapshot", "snapshot", "group_members",
+      "long_term_memory", "name", "cid", "location",
+    ]) {
+      assert.ok(keys.includes(k), `目录缺 ${k}`);
     }
-    for (const k of ["setting", "lore_full", "events", "current_scene", "world_snapshot", "characters_snapshot"]) {
-      assert.ok(keysOf("gm").includes(k), `gm 缺 ${k}`);
+    // 每项都带描述、合法内容源与段列全文（编辑器结构化数据）
+    for (const p of catalog) {
+      assert.ok(p.description.length > 0);
+      assert.ok((PLACEHOLDER_SOURCES as readonly string[]).includes(p.source));
+      assert.ok(Array.isArray(p.segments) && p.segments.length > 0);
     }
-    for (const k of ["tone_card", "world_lore", "recent_events", "cast", "triggered_lore", "last_prose", "gm_event", "current_scene"]) {
-      assert.ok(keysOf("prose").includes(k), `prose 缺 ${k}`);
-    }
-    // 每项都带描述
-    for (const c of catalog) for (const p of c.placeholders) assert.ok(p.description.length > 0);
   });
 
   it("validatePromptPayload：合法通过；未知占位符列出名字；id 不符拒绝", () => {
+    const catalog = loadPackPlaceholders(FACTORY_WORLD_DIR);
     const ok = validatePromptPayload("gm", {
       id: "gm",
       modules: [{ key: "m", role: "system", content: "设定：{{setting}}" }],
-    });
+    }, catalog);
     assert.equal(ok.id, "gm");
 
     assert.throws(
@@ -262,7 +264,7 @@ describe("prompts API（提示词模板端点的纯逻辑）", () => {
         validatePromptPayload("gm", {
           id: "gm",
           modules: [{ key: "m", role: "system", content: "{{nope}}" }],
-        }),
+        }, catalog),
       /nope/,
     );
     assert.throws(
@@ -270,7 +272,7 @@ describe("prompts API（提示词模板端点的纯逻辑）", () => {
         validatePromptPayload("gm", {
           id: "character",
           modules: [{ key: "m", role: "system", content: "{{setting}}" }],
-        }),
+        }, catalog),
       /不一致/,
     );
   });
@@ -322,7 +324,7 @@ describe("lorebook 读写回环", () => {
     const dir = tempDir("airp-lore-");
     const file = path.join(dir, "lorebook.json");
     const entries = validateLorebookPayload([
-      { id: "b", tags: ["白滩镇：常识"], content: "B", enabled: false },
+      { id: "b", tags: [{ name: "白滩镇：常识", level: 1 }], content: "B", enabled: false },
       { id: "a", tags: [], content: "A" },
     ]);
     fs.writeFileSync(file, JSON.stringify(entries, null, 2) + "\n", "utf8");
@@ -334,8 +336,8 @@ describe("lorebook 读写回环", () => {
     );
     assert.equal(book.getByIds(["b"])[0]!.content, "B");
     assert.deepEqual(
-      book.getByTags(["白滩镇：常识"]).map((e) => e.id),
-      ["b"],
+      book.getByTags({ tags: new Set(["白滩镇：常识"]) }, {}).map((e) => e.id),
+      ["a", "b"], // 无挂载条目 = 广播恒通过
     );
   });
 });

@@ -2,7 +2,7 @@
  * 统一效果规划器——GM 裁决。
  *
  * GM 正常裁决与 GM 编辑统一进入 planGmAdjudication；agent 通知段（GM 全文观察 +
- * 各角色按 known_by 感知过滤）不在此——留在 session 内核，commit 成功后执行（两段式）。
+ * 各角色按 TAG 过滤的感知通知）不在此——留在 session 内核，commit 成功后执行（两段式）。
  *
  * 真相段：deltas 落库 + durations（时长 → 到期时刻 timer 变量）/location 应用 + 周期计数/
  * 触发复位 + 结算成员 acted 清零 + reconcileGroups 回写 group 与先攻补投 + 频道清理
@@ -17,8 +17,8 @@ import type { DicePort } from "../ports.js";
 import type { TruthStores } from "../truth/stores.js";
 import type { VarChange } from "../truth/varChanges.js";
 import { applyVarDeltas, parseWorldSys, varWriteDepsOf } from "../truth/varWrite.js";
-import { knownByTag, spanToMinutes, type AdjudicationPackage, type Event } from "../types.js";
-import { cleanupChannels, playableCharacters, rederiveGroups } from "./scheduleEffects.js";
+import { spanToMinutes, type AdjudicationPackage, type Event } from "../types.js";
+import { cleanupChannels, playableCharacters, rederiveGroups, setAppearance } from "./scheduleEffects.js";
 
 export interface GmAdjudicationContext {
   /** 本步 seq（事件落账用）。 */
@@ -67,15 +67,16 @@ export function planGmAdjudication(draft: TruthStores, ctx: GmAdjudicationContex
     draft.world.writeRaw("_sys.cycles_since_gm", 0),
     draft.world.writeRaw("_sys.gm_trigger", false),
   );
-  // 本轮被结算的成员转入后台：acted 清零（先攻值不重投，回前台时行动状态已重置）
+  // 本轮被结算的成员转入后台：acted 清零（先攻值不重投，回前台时行动状态已重置）+ 在场位复位
   for (const t of pkg.durations) {
     if (t.cid in known) changes.push(...draft.characters.setVars(t.cid, { acted: false }));
+    changes.push(...setAppearance(draft, t.cid, false));
   }
   // 组派生 + 先攻补投（location/timer 是分组判据；组 id 保稳，缺投者单独补投）
   changes.push(...rederiveGroups(draft, ctx.rollDice));
   // 频道清理 pass：全部持有者同地 → 全清 + 非组位置持有者按 leave 处理
   changes.push(...cleanupChannels(draft));
-  // 事件逐条 commit（事件数 = GM 计划的新组划分；tags 缺省 = 本轮全部行动者可见）
+  // 事件逐条 commit（事件数 = GM 计划的新组划分；tags 空数组 = 程序补全本轮全部行动者的 cid 类 TAG 一级）
   const committed: Event[] = [];
   for (const ev of pkg.events) {
     const event: Event = {
@@ -84,7 +85,7 @@ export function planGmAdjudication(draft: TruthStores, ctx: GmAdjudicationContex
       seq,
       kind: "world",
       ...(ev.location !== undefined ? { location: ev.location } : {}),
-      tags: ev.tags.length > 0 ? ev.tags : roundCids.map(knownByTag),
+      tags: ev.tags.length > 0 ? ev.tags : roundCids.map((cid) => ({ name: cid, level: 1 })),
       payload: ev.text,
     };
     draft.events.append(event);

@@ -12,7 +12,7 @@
  *   按下标摘除），元素内字段按元素结构递归渲染；元素自身无 tags 挂载位；
  * - 数组元素路径用 `键[下标]` 语法（如 items[0].name；通配 [*] 只出现在附加来源
  *   合并的查询变体中）；
- * - 系统只读收窄为 {acted, group, channel, timer, isPlayer} 五字段（「系统」徽记）；
+ * - 系统只读收窄为 {acted, group, channel, timer, isPlayer, appearance}（「系统」徽记）；
  *   全部末端（含系统字段）外壳 tags 可编辑——系统末端写 systemTags 侧车（数组层
  *   侧车键 = `键[下标]` 路径，relations 元素删除时按下标重映射）、vars 末端写外壳；
  * - 从动末端 = 声明带 formula 或实例外壳带 formula：值只读，formula 出结构化只读标注；
@@ -61,7 +61,7 @@ export const WORLD_SCOPE = "world";
 const WORLD_PROGRAM_KEYS = new Set(["time", "_sys"]);
 
 /** 角色系统只读字段（仅此五个，徽记「系统」；值走专用通道不开放编辑）。 */
-export const CHAR_SYSTEM_FIELDS = ["acted", "group", "channel", "timer", "isPlayer"];
+export const CHAR_SYSTEM_FIELDS = ["acted", "group", "channel", "timer", "isPlayer", "appearance"];
 
 /** omniscience 前端钳制范围（0-6 整数）。 */
 const OMNISCIENCE_CLAMP = { min: 0, max: 6 };
@@ -468,6 +468,7 @@ export function createVarTreeModel({ world, characters }) {
       channel: shell(c.channel ?? null, "channel"),
       timer: shell(c.timer ?? null, "timer"),
       isPlayer: shell(c.isPlayer, "isPlayer"),
+      appearance: shell(c.appearance ?? false, "appearance"),
     };
     if (isPlainObject(c.initiative)) {
       proj.initiative = {
@@ -628,7 +629,7 @@ export function createVarTreeModel({ world, characters }) {
   /**
    * 系统分支末端写值（回写类型化字段）：单值字段 / location 子字段 / initiative 子字段
    * （null 时拒写，整体写入是唯一通道）/ relations 元素字段（`relations[i].字段`，
-   * 含 cid）/ long_term_memory。五调度字段在上游已拒（只读）。
+   * 含 cid）/ long_term_memory。调度字段在上游已拒（只读）。
    */
   function writeSystemTerminal(scope, path, info, value) {
     const segs = splitVarPath(path);
@@ -694,7 +695,7 @@ export function createVarTreeModel({ world, characters }) {
 
     /**
      * 构建作用域视图树：{scope, children}。世界树滤 time/_sys；角色树 = 系统声明分支
-     * 投影（系统五字段只读徽记）+ vars 实例树，单树呈现不再分区；角色顶层未登记键
+     * 投影（系统调度字段只读徽记）+ vars 实例树，单树呈现不再分区；角色顶层未登记键
      * （系统分支/vars/systemTags 之外）以 unknown 只读节点呈现（fieldLevel 标记）。
      * 无模板时实例侧键全部以 unknown 节点呈现。
      */
@@ -728,7 +729,7 @@ export function createVarTreeModel({ world, characters }) {
     },
 
     /**
-     * 末端写值：按声明 valueType 校验；从动末端（声明/实例带 formula）与系统五字段
+     * 末端写值：按声明 valueType 校验；从动末端（声明/实例带 formula）与系统调度字段
      * 拒写。系统路径回写类型化字段（initiative 容器整体写入 = null → 对象唯一通道）；
      * vars 路径实例缺失/简写时物化外壳（沿途按声明补建容器/数组）。
      */
