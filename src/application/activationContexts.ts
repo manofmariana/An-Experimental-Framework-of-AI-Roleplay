@@ -3,26 +3,29 @@
  * 三个无状态 activation 的全部注入内容在这里从**最新真相 + 派生投影现算**——
  * 每次渲染读 live stores 的只读数据（恒冻结保证不被误写），无任何跨调用缓存：
  * - cast 每次现建（动态改名/增角色后下一次渲染直接读到最新）；
- * - lore 逐次从 loreStore 档内副本渲染（运行期可编辑，必须读到最新）；
- * - setting/toneCard 是世界设定集静态文本（运行期不变），由装配层注入并持有。
+ * - lore 逐次从 loreStore 档内副本读取（运行期可编辑，必须读到最新）。
  *
  * 投影 = RenderHost 实现（引擎只感知该接口）：占位符定义读者无关，取数范围由本层按
- * 读者供给（角色事件经 TAG 过滤取可见集；GM/正文取全量），同一 source 跨对象复用。
- * TAG 过滤上下文（事件/lore/vars/working_set 同一读者口径）：角色读者有效 TAG 集 =
+ * 读者供给，同一 source 跨对象复用。落盘四根（events/lores/characters/world）全量供给
+ * （仅两处取数范围截取：prose 读者的事件滑窗 = 供给窗口截取，不是过滤；prose 读者的
+ * lores = 本轮参与者触发集，保正文 lore 触发制语义），TAG 过滤统一收进引擎逐末端求值。
+ * TAG 过滤上下文（四根/working_set 同一读者口径）：角色读者有效 TAG 集 =
  * 落盘池（vars tags 池纯名集）∪ 程序派生（自身 cid 恒在、当前地点名、当前频道编号、
  * 工具 AV 临时挂载）+ 全知权重（omniscience 系统字段），开放类别实例 = cid/channel/
- * location 三类（命中归一化为类别记号）；GM/正文 = 权重 6 + 持强制全知（恒过，事件/lore
- * 维持全量取数不过滤）。vars 源全量遍历（一切读者同一取数范围），对 appearance=false
- * 角色的全部末端虚拟挂载 {fappear, 6 级}（不落盘、不污染 TAG 池）。working_set 源 =
- * 抓取层同值批隔离 + 逐条目 TAG 过滤（言行条目挂载按焊死映射渲染时派生；通知条目
- * 挂载随条目携带；自己的条目恒可见）。身份替换 = 组装后处理统一出口
- * （renderIdentity：角色 = renderForReader/renderRefsForReader；GM = refs 渲染、事件
- * 保持 @ID 原文；正文 = renderForGm 演员表渲染、refs 保持原文）。
+ * location 三类（命中归一化为类别记号）；GM/正文 = 权重 6 + 持强制全知。characters 根
+ * 全量遍历（一切读者同一取数范围；每角色 = 系统分支投影 + vars 树），world/characters
+ * 两根供给前做 vars-tags 附加的读取期合并（cid 类按属主分发、不物化进实例值），对
+ * appearance=false 角色的全部末端虚拟挂载
+ * {fappear, 6 级}（不落盘、不污染 TAG 池）。working_set 源 = 抓取层同值批隔离 +
+ * 逐条目 TAG 过滤（言行条目挂载按焊死映射渲染时派生；通知条目挂载随条目携带；
+ * 自己的条目恒可见）。身份替换 = 组装后处理统一出口（renderIdentity：角色 =
+ * renderForReader/renderRefsForReader；GM = refs 渲染、事件保持 @ID 原文；正文 =
+ * renderForGm 演员表渲染、refs 保持原文）；events 根 string 末端由引擎过 cid 模式。
  *
  * 旧 run 在途 activation 完成结果的丢弃（消息身份 runId/activationId/epoch）
  * 不在本文件范围，由 SessionCoordinator 会话隔离负责（见 sessionCoordinator.ts 注释）。
  */
-import type { PlaceholderSource } from "../compile/placeholders.js";
+import type { AssembledSource } from "../compile/placeholders.js";
 import type {
   IdentityMode,
   RenderHost,
@@ -43,10 +46,9 @@ import {
   renderRefsForReader,
   type CastMember,
 } from "../truth/identity.js";
-import { Lorebook } from "../truth/lorebook.js";
 import { snapshotCharacterState, snapshotCharacterStates } from "../truth/snapshot.js";
 import type { TruthStores } from "../truth/stores.js";
-import { parseWorldSys, type ParsedWorldSys } from "../truth/varWrite.js";
+import { parseSys, type ParsedSys } from "../truth/sysStore.js";
 import {
   isNoticeEntry,
   renderEntryLines,
@@ -55,7 +57,10 @@ import {
   type WorkingSetEntry,
 } from "../truth/workingSet.js";
 import { minutesToText, type AdjudicationPackage } from "../types.js";
-import { isTerminalInstance, readTerminal } from "../vars/tree.js";
+import { projectCharacterTree } from "../vars/systemChar.js";
+import { readWorldTime, renderTimeHeader } from "../vars/systemWorld.js";
+import { resolveAttachTags } from "../vars/template.js";
+import { isTerminalInstance, mergeAttachMounts, readTerminal } from "../vars/tree.js";
 import {
   lastProse,
   participantTags,
@@ -64,14 +69,6 @@ import {
   proseWindowForRound,
 } from "./historyProjection.js";
 import { playableCharacters, simCharsOf } from "./scheduleEffects.js";
-
-/** 世界设定集静态文本（运行期不变；装配层加载后注入，builder 允许持有）。 */
-export interface ActivationStatics {
-  /** 世界设定全文（GM setting 注入 + 正文 worldLore 注入，同源） */
-  setting: string;
-  /** 世界基调卡全文（正文 toneCard 注入） */
-  toneCard: string;
-}
 
 /** 投影输入（truth 之外的全部逐次渲染变量；四 Context 接口重叠字段归并为单一接口）。 */
 export interface ProjectionInput {
@@ -91,7 +88,7 @@ export interface ProjectionInput {
   adjudication?: AdjudicationPackage | undefined;
   /** 本轮各角色台词+内心（renderSpeech 产出；prose 读者 working_set） */
   currentScene?: string | undefined;
-  /** 本轮参与者 cid（prose 读者 lore 触发标签并集输入） */
+  /** 本轮参与者 cid（prose 读者 lores 根供给截取 = 参与者触发集输入） */
   participantCids?: string[] | undefined;
 }
 
@@ -125,7 +122,7 @@ export function remoteCidsOf(truth: TruthStores): Set<string> {
  */
 export function batchIsolatedWorkingSet(truth: TruthStores, cid: string): WorkingSetEntry[] {
   const initiative = truth.characters.get(cid).initiative;
-  return truth.world.pipeline.working_set.filter((e) => {
+  return truth.sys.pipeline.working_set.filter((e) => {
     if (isNoticeEntry(e)) return true;
     if (e.cid === cid) return true; // 自己的过往言行可见（同值批隔离只对他人条目生效）
     const otherState = truth.characters.get(e.cid);
@@ -144,7 +141,7 @@ export function batchIsolatedWorkingSet(truth: TruthStores, cid: string): Workin
  * 常规 GM 的 ##当前场景 开头（同一派生，两侧复用）。
  */
 export function pendingIncidentText(truth: TruthStores, cids: readonly string[]): string {
-  const current = truth.world.pipeline.current;
+  const current = truth.sys.pipeline.current;
   const steps = [...truth.archive.readAll(), ...(current !== null ? [current] : [])];
   let boundary = -1;
   steps.forEach((s, i) => {
@@ -196,7 +193,8 @@ function e(content: string, extra?: { owner?: string; identity?: IdentityMode })
  * 否则不可见。fappear 等级是代码焊死常量。调用方对属主 = 读者的子树跳过本变换（自豁免）。
  */
 function withBackgroundMount(node: unknown): unknown {
-  if (isTerminalInstance(node)) {
+  // tags 数组护栏：initiative 等系统容器带 value 子键，会被外壳判定误中——按容器递归下行
+  if (isTerminalInstance(node) && Array.isArray(node.tags)) {
     return { ...node, tags: [...node.tags, { name: FAPPEAR_TAG, level: FAPPEAR_LEVEL }] };
   }
   if (Array.isArray(node)) return node.map((item) => withBackgroundMount(item));
@@ -214,13 +212,12 @@ class Projection implements RenderHost {
   readonly readerLabel: string;
   /** cast 懒缓存（一次渲染内复用；不跨渲染持有） */
   private castCache: CastMember[] | null = null;
-  /** `_sys` 严格解析懒缓存（vars 源视图与过滤上下文共用） */
-  private sysCache: ParsedWorldSys | null = null;
+  /** sys 根严格解析懒缓存（四根视图与过滤上下文共用） */
+  private sysCache: ParsedSys | null = null;
 
   constructor(
     readonly reader: ReaderRef,
     private readonly input: ProjectionInput,
-    private readonly statics: ActivationStatics,
   ) {
     this.readerLabel =
       reader.kind === "character" ? input.truth.characters.get(reader.cid).name : reader.kind === "gm" ? "GM" : "正文";
@@ -240,8 +237,8 @@ class Projection implements RenderHost {
     return this.castCache;
   }
 
-  private sys(): ParsedWorldSys {
-    this.sysCache ??= parseWorldSys(this.truth.world.world._sys);
+  private sys(): ParsedSys {
+    this.sysCache ??= parseSys(this.truth.sys.saveData());
     return this.sysCache;
   }
 
@@ -342,53 +339,11 @@ class Projection implements RenderHost {
     return out;
   }
 
-  /** 扁平源取数：同一 source 按读者限定取数范围（定义读者无关，取数读者有关）。 */
-  entries(source: PlaceholderSource): SourceEntry[] {
+  /** 组装源取数：同一 source 按读者限定取数范围（定义读者无关，取数读者有关）。 */
+  entries(source: AssembledSource): SourceEntry[] {
     const { truth, input } = this;
     const reader = this.reader;
     switch (source) {
-      case "setting":
-        return [e(this.statics.setting)];
-      case "tone_card":
-        return [e(this.statics.toneCard)];
-      case "lore": {
-        if (reader.kind === "character") {
-          return [
-            e(Lorebook.render(truth.loreStore.book().getByTags(this.characterScope(reader.cid), this.sys().tagRegistry))),
-          ];
-        }
-        if (reader.kind === "gm") {
-          return [
-            e(
-              truth.loreStore
-                .book()
-                .all()
-                .map((entry) => `[${entry.id}]（标签：${entry.tags.map((t) => `${t.name}(${t.level})`).join("、")}）\n${entry.content}`)
-                .join("\n\n"),
-            ),
-          ];
-        }
-        // 正文 = 本轮参与者有效 TAG 集并集（各池纯名 ∪ 各自 cid）按权重 0 求值触发
-        const participantScope: ReaderScope = {
-          tags: new Set(
-            participantTags((input.participantCids ?? []).map((cid) => [...truth.characters.tagNames(cid), cid])),
-          ),
-          omniscienceWeight: 0,
-        };
-        return [e(Lorebook.render(truth.loreStore.book().getByTags(participantScope, this.sys().tagRegistry)))];
-      }
-      case "events": {
-        if (reader.kind === "character") {
-          return truth.events
-            .readVisibleTo(this.characterScope(reader.cid), truth.world.clock, this.sys().tagRegistry)
-            .map((event) => e(event.payload, { identity: "cid" }));
-        }
-        if (reader.kind === "gm") {
-          // GM 事件保持 @ID 原文（不身份替换）
-          return truth.events.readAll().map((event) => e(event.payload));
-        }
-        return truth.events.readWindow(input.proseWindowTurns).map((event) => e(event.payload, { identity: "cid" }));
-      }
       case "working_set": {
         if (reader.kind === "character") {
           return this.workingSetEntriesFor(reader.cid);
@@ -415,8 +370,10 @@ class Projection implements RenderHost {
       }
       case "last_prose":
         return [e(lastProse(truth.archive.readAll()))];
-      case "clock":
-        return [e(truth.timeStore.render(truth.world.world.time))];
+      case "clock": {
+        const { anchor, periods } = readWorldTime(truth.world.world);
+        return [e(renderTimeHeader(anchor, periods))];
+      }
       case "cast": {
         const selfCid = reader.kind === "character" ? reader.cid : undefined;
         return this.cast().map((member) => e(buildCastLines([member], selfCid)[0]!, { owner: member.cid }));
@@ -501,39 +458,68 @@ class Projection implements RenderHost {
       }
       case "long_term_memory":
         return reader.kind === "character" ? this.self().long_term_memory.map((item) => e(`- ${item}`)) : [];
-      case "self_name":
-        return reader.kind === "character" ? [e(this.self().name)] : [];
-      case "self_cid":
-        return reader.kind === "character" ? [e(reader.cid)] : [];
-      case "location":
-        return reader.kind === "character" ? [e(this.self().location.name)] : [];
-      case "vars":
-        throw new Error("vars 源无扁平条目（引擎走 vars() 视图）");
     }
   }
 
   /**
-   * vars 源视图：全量变量树实例（一切读者同一取数范围，无专门抓取）+ TAG 过滤上下文。
-   * 过滤：对 appearance=false 角色的全部末端虚拟挂载 {fappear, 6 级}（见
-   * withBackgroundMount）——权重 6 全知（GM/正文）恒见，权重 0-5 读者须持 fappear
-   * 纯名方可见后台角色变量。自豁免：属主 = 读者的子树不挂载（自己的变量自己恒见——
-   * 邀请应答时受邀者仍在后台，是后台读者的唯一场景）。角色读者上下文 = characterScope；
-   * GM/正文 = omniscientScope。
+   * 落盘四根视图：events/lores/characters/world 同构供给 + 统一 TAG 过滤上下文。
+   * 取数范围按读者供给（过滤在引擎逐末端求值）：
+   * - events：character/GM = 全量；prose = 正文滑窗截取（取数范围，不是过滤）；
+   * - lores：character/GM = 全量；prose = 本轮参与者触发集（参与者有效 TAG 名并集按
+   *   权重 0 对 content.tags 求值——保正文 lore 触发制语义；enabled 是元数据不参与）；
+   * - characters：全量遍历（一切读者同一取数范围），每角色 = 系统分支投影
+   *   （projectCharacterTree：cid/name/location 等类型化字段呈标准末端，tags 取自
+   *   systemTags 侧车）+ vars 树；对 appearance=false 角色的全部末端虚拟挂载
+   *   {fappear, 6 级}（见 withBackgroundMount）——权重 6 全知（GM/正文）恒见，
+   *   权重 0-5 读者须持 fappear 纯名方可见后台角色变量。自豁免：属主 = 读者的子树不挂载
+   *  （自己的变量自己恒见——邀请应答时受邀者仍在后台，是后台读者的唯一场景）；
+   * - world：整棵变量树（含 time 系统分支）。
+   * world/characters 两根在供给前做 TAG 附加读取期合并（resolveAttachTags 按属主分发 +
+   * mergeAttachMounts 并入末端 tags，不物化进实例值；events/lores 无附加通道）。
+   * 角色读者上下文 = characterScope；GM/正文 = omniscientScope。
    */
   vars(): VarsView {
-    const { truth } = this;
+    const { truth, input } = this;
     const sys = this.sys();
-    const { time: _time, _sys, ...worldVars } = truth.world.world;
     const selfCid = this.reader.kind === "character" ? this.reader.cid : null;
+    // vars-tags {category} 条目合法性基准 = 注册表声明的开放类别集合
+    const categories = new Set(
+      Object.values(sys.tagRegistry).flatMap((entry) => (entry.category !== undefined ? [entry.category] : [])),
+    );
+    const worldAttach = resolveAttachTags(sys.varsTags.world, sys.template.world, { categories });
     const characters = Object.fromEntries(
-      this.sortedStates().map(([cid, state]) => [
-        cid,
-        state.appearance || cid === selfCid ? state.vars : withBackgroundMount(state.vars),
-      ]),
+      this.sortedStates().map(([cid, state]) => {
+        const attach = resolveAttachTags(sys.varsTags.character, sys.template.character, { categories, ownerCid: cid });
+        const tree = mergeAttachMounts(projectCharacterTree(state), attach);
+        return [cid, state.appearance || cid === selfCid ? tree : withBackgroundMount(tree)];
+      }),
     );
     const scope =
       this.reader.kind === "character" ? this.characterScope(this.reader.cid) : this.omniscientScope();
-    return { template: sys.template, world: worldVars, characters, filter: { scope, registry: sys.tagRegistry } };
+    const events =
+      this.reader.kind === "prose" ? truth.events.readWindow(input.proseWindowTurns) : truth.events.readAll();
+    let lores = truth.loreStore.book().all();
+    if (this.reader.kind === "prose") {
+      const participantScope: ReaderScope = {
+        tags: new Set(
+          participantTags((input.participantCids ?? []).map((cid) => [...truth.characters.tagNames(cid), cid])),
+        ),
+        omniscienceWeight: 0,
+      };
+      lores = lores.filter(
+        (entry) =>
+          evaluateTagFilter({ content: null, tags: entry.content.tags }, participantScope, sys.tagRegistry).status ===
+          "pass",
+      );
+    }
+    return {
+      template: sys.template,
+      world: mergeAttachMounts(truth.world.world, worldAttach),
+      characters,
+      events,
+      lores,
+      filter: { scope, registry: sys.tagRegistry },
+    };
   }
 
   /**
@@ -555,14 +541,12 @@ class Projection implements RenderHost {
 }
 
 /**
- * 投影装配器：持有世界集静态文本，其余全部逐次渲染现算。
+ * 投影装配器：全部内容逐次渲染现算。
  * 每次激活经 for() 建一份 Projection（RenderHost），交给 activation 渲染当轮模板。
  */
 export class ProjectionBuilder {
-  constructor(private readonly statics: ActivationStatics) {}
-
   /** 按读者建投影（纯读取组装，不写真相、不做 IO）。 */
   for(reader: ReaderRef, input: ProjectionInput): RenderHost {
-    return new Projection(reader, input, this.statics);
+    return new Projection(reader, input);
   }
 }

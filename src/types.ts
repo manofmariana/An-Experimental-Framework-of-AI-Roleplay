@@ -19,23 +19,33 @@ export const TagMountRefSchema = z
   .strict();
 export type TagMountRef = z.infer<typeof TagMountRefSchema>;
 
+/**
+ * 末端外壳（四内容根同构的唯一叶子形态）：{value, tags, formula?}——
+ * 与变量树末端同一形状；formula 为占位（写入侧一律不产，结构预留）。
+ */
+export const FieldShellSchema = <T extends z.ZodTypeAny>(value: T) =>
+  z
+    .object({
+      value,
+      /** 内容侧 TAG 挂载（{name, level}[]）：引擎逐末端过滤的输入 */
+      tags: z.array(TagMountRefSchema),
+      formula: z.unknown().optional(),
+    })
+    .strict();
+
+/** 事件元素 = 系统固定结构（引擎机检登记同形声明）：全字段末端外壳；时间/地点同为可挂 tags 的调取对象。 */
 export const EventSchema = z.object({
   /** 稳定 ID（排序、引用用，如 evt_0001） */
-  id: z.string(),
+  id: FieldShellSchema(z.string()),
   /** 世界时间 T（连续时间，真相层才有绝对时间，提示词永不出现） */
-  t: z.number(),
+  t: FieldShellSchema(z.number()),
   /** 产生本事件的 GM 步骤 seq（回溯截断锚） */
-  seq: z.number(),
-  kind: EventKindSchema,
+  seq: FieldShellSchema(z.number()),
+  kind: FieldShellSchema(EventKindSchema),
   /** 事件发生地点名（叙事记录用；感知过滤不含地点成分） */
-  location: z.string().optional(),
-  /**
-   * 内容侧 TAG 挂载（{name, level}[]，与 Lorebook tags 同一套体系）：
-   * 可见性 = 按读者有效 TAG 集求值通过；私密事件 = 只挂自身 cid 类 TAG。
-   */
-  tags: z.array(TagMountRefSchema),
-  /** 事件内容（@ID 占位的第三人称真相描述，渲染时按读者做身份替换） */
-  payload: z.string(),
+  location: FieldShellSchema(z.string()).optional(),
+  /** 事件内容（@ID 占位的第三人称真相描述，写入时定型，读取侧只过身份替换后处理） */
+  content: FieldShellSchema(z.string()),
 });
 export type Event = z.infer<typeof EventSchema>;
 
@@ -279,11 +289,10 @@ export type CacheStat = z.infer<typeof CacheStatSchema>;
 // ---------------------------------------------------------------------------
 
 export const LoreEntrySchema = z.object({
-  id: z.string(),
-  /** 内容侧 TAG 挂载（{name, level}[]）：激活与可见性统一按读者有效 TAG 集求值 */
-  tags: z.array(TagMountRefSchema),
-  content: z.string(),
-  /** 管理界面用开关（不参与激活逻辑，仅元数据） */
-  enabled: z.boolean().optional(),
+  id: FieldShellSchema(z.string()),
+  /** 条目正文（TAG 挂载全部落在本末端：激活与可见性按读者有效 TAG 集逐末端求值） */
+  content: FieldShellSchema(z.string()),
+  /** 管理界面用开关（元数据，不参与过滤/激活逻辑——投影全量供给，引擎只按 content.tags 过滤） */
+  enabled: FieldShellSchema(z.boolean()).optional(),
 });
 export type LoreEntry = z.infer<typeof LoreEntrySchema>;

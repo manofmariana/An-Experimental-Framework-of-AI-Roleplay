@@ -1,9 +1,10 @@
 /**
  * 树状变量编辑器数据核心（纯逻辑，零 DOM 零网络，node:test 可直接 import）。
  *
- * 持有直编工作副本 {world, characters}（调用方深拷贝后传入，全部编辑原地作用于副本），
- * 把实例状态投影为单棵视图树：
- * - 世界树根滤掉 time/_sys 程序键；实例值容错简写（裸值/扁平数组 = 无外壳末端）；
+ * 持有直编工作副本 {world, characters} + sys 根三件套（{varsTemplate, varsTags, tagRegistry}，
+ * 调用方经 GET /api/session/state/sys 取数传入），把实例状态投影为单棵视图树：
+ * - 世界树根滤掉 time 系统分支键（程序维护的时间锚；结构编辑/时间呈现归后续刀）；
+ *   实例值容错简写（裸值/扁平数组 = 无外壳末端）；
  * - 角色树 = 系统声明分支（镜像常量取自 system-char-decl.js，与 src/vars/systemChar.ts
  *   镜像同源；值从类型化字段投影：timer/channel null 原样呈现、initiative null =
  *   容器无实例、relations = 结构化数组按下标投影）+ vars 实例树，同一棵树的末端
@@ -12,12 +13,12 @@
  *   按下标摘除），元素内字段按元素结构递归渲染；元素自身无 tags 挂载位；
  * - 数组元素路径用 `键[下标]` 语法（如 items[0].name；通配 [*] 只出现在附加来源
  *   合并的查询变体中）；
- * - 系统只读收窄为 {acted, group, channel, timer, isPlayer, appearance}（「系统」徽记）；
+ * - 系统只读收窄为 {cid, acted, group, channel, timer, isPlayer, appearance}（「系统」徽记）；
  *   全部末端（含系统字段）外壳 tags 可编辑——系统末端写 systemTags 侧车（数组层
  *   侧车键 = `键[下标]` 路径，relations 元素删除时按下标重映射）、vars 末端写外壳；
  * - 从动末端 = 声明带 formula 或实例外壳带 formula：值只读，formula 出结构化只读标注；
  * - 实例缺声明的键（正常态不存在）以 unknown 只读节点呈现，不静默隐藏；
- * - 附加来源 tags（`_sys.varsTags` 读取期合并结果）以只读 attachTags 呈现在每个末端
+ * - 附加来源 tags（sys.varsTags 读取期合并结果）以只读 attachTags 呈现在每个末端
  *   节点上（「附加」徽记、不可删改）——解析逻辑是 src/vars/template.ts
  *   resolveAttachTags 的镜像（节点级扇出到全部后代末端/末端级单挂/数组整型挂载
  *   `[*]` 通配/cid 类别按当前 scope 角色 CID 分发，world 域无属主遇 cid 条目跳过）；
@@ -57,11 +58,11 @@ export { VALUE_TYPES, defaultValueFor };
 
 export const WORLD_SCOPE = "world";
 
-/** 世界根程序键（不进变量树，也不允许新增同名实例）。 */
-const WORLD_PROGRAM_KEYS = new Set(["time", "_sys"]);
+/** 世界根系统分支键（程序维护的时间锚，状态编辑器不呈现，也不允许新增同名实例）。 */
+const WORLD_PROGRAM_KEYS = new Set(["time"]);
 
-/** 角色系统只读字段（仅此五个，徽记「系统」；值走专用通道不开放编辑）。 */
-export const CHAR_SYSTEM_FIELDS = ["acted", "group", "channel", "timer", "isPlayer", "appearance"];
+/** 角色系统只读字段（徽记「系统」；值走专用通道不开放编辑——cid 建角物化后恒定）。 */
+export const CHAR_SYSTEM_FIELDS = ["cid", "acted", "group", "channel", "timer", "isPlayer", "appearance"];
 
 /** omniscience 前端钳制范围（0-6 整数）。 */
 const OMNISCIENCE_CLAMP = { min: 0, max: 6 };
@@ -249,13 +250,14 @@ function resolveAttachTagsMirror(node, rootChildren, typeChildrenOf, opts) {
 // ---------------------------------------------------------------------------
 
 /**
- * @param {object} working 工作副本（调用方深拷贝）
- * @param {object} working.world 世界状态（含 _sys；编辑直接改它，_sys.varsTemplate 只读对拍）
+ * @param {object} working 工作副本（调用方深拷贝）+ sys 根三件套
+ * @param {object} working.world 世界变量树（纯内容根；编辑直接改它）
  * @param {object} working.characters CID → 角色状态（系统分支值在顶层类型化字段 +
  *   systemTags 侧车，vars 树在 .vars；relations = {cid, name?, impression?}[] 数组）
+ * @param {object} working.sys sys 根结构三件套（{varsTemplate, varsTags, tagRegistry}，只读对拍基准）
  */
-export function createVarTreeModel({ world, characters }) {
-  const sys = isPlainObject(world) && isPlainObject(world._sys) ? world._sys : null;
+export function createVarTreeModel({ world, characters, sys }) {
+  sys = isPlainObject(sys) ? sys : null;
   const template = sys !== null && isPlainObject(sys.varsTemplate) ? sys.varsTemplate : null;
   const tagRegistry = sys !== null && isPlainObject(sys.tagRegistry) ? sys.tagRegistry : {};
   const varsTags = sys !== null && isPlainObject(sys.varsTags) ? sys.varsTags : null;
@@ -288,7 +290,7 @@ export function createVarTreeModel({ world, characters }) {
     return info.elementType !== undefined ? typeChildren(scope, info.elementType) : info.elementChildren;
   }
 
-  // ---- TAG 附加解析（每 scope 一次缓存；状态编辑不动 _sys.varsTags/模板） ---------------
+  // ---- TAG 附加解析（每 scope 一次缓存；状态编辑不动 sys.varsTags/模板） ---------------
 
   const attachMaps = new Map();
 
@@ -453,6 +455,7 @@ export function createVarTreeModel({ world, characters }) {
       };
     });
     const proj = {
+      cid: shell(c.cid ?? "", "cid"),
       name: shell(c.name, "name"),
       gender: shell(c.gender, "gender"),
       age: shell(c.age, "age"),
@@ -597,7 +600,7 @@ export function createVarTreeModel({ world, characters }) {
     );
     for (const instKey of Object.keys(instObj)) {
       if (Object.hasOwn(info.children, instKey)) continue;
-      if (scope === WORLD_SCOPE && path === "" && WORLD_PROGRAM_KEYS.has(instKey)) continue; // time/_sys 不显示
+      if (scope === WORLD_SCOPE && path === "" && WORLD_PROGRAM_KEYS.has(instKey)) continue; // time 系统分支不显示
       children.push({
         key: instKey,
         path: path === "" ? instKey : `${path}.${instKey}`,
@@ -694,7 +697,7 @@ export function createVarTreeModel({ world, characters }) {
     },
 
     /**
-     * 构建作用域视图树：{scope, children}。世界树滤 time/_sys；角色树 = 系统声明分支
+     * 构建作用域视图树：{scope, children}。世界树滤 time 系统分支；角色树 = 系统声明分支
      * 投影（系统调度字段只读徽记）+ vars 实例树，单树呈现不再分区；角色顶层未登记键
      * （系统分支/vars/systemTags 之外）以 unknown 只读节点呈现（fieldLevel 标记）。
      * 无模板时实例侧键全部以 unknown 节点呈现。
@@ -869,7 +872,7 @@ export function createVarTreeModel({ world, characters }) {
       arr.splice(index, 1);
     },
 
-    /** 保存载荷：编辑后的工作副本（world 原样携带 _sys.varsTemplate——结构编辑不在此）。 */
+    /** 保存载荷：编辑后的工作副本（world = 纯变量树；结构编辑在世界页，不在此）。 */
     getPayload() {
       return { world, characters };
     },

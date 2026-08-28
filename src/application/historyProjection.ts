@@ -4,7 +4,7 @@
  */
 import type { ArchiveEntry } from "../truth/archive.js";
 import type { DeepReadonly } from "../truth/snapshot.js";
-import type { PipelineCurrent } from "../truth/worldStore.js";
+import type { PipelineCurrent } from "../truth/sysStore.js";
 import type { AdjudicationPackage, DecisionPackage, Event } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -84,7 +84,7 @@ export function buildHistory(
   if (steps.length === 0) {
     return {
       mode: "simple",
-      events: events.map((e) => ({ kind: e.kind, payload: e.payload })),
+      events: events.map((e) => ({ kind: e.kind.value, payload: e.content.value })),
     };
   }
   const turns: HistoryTurn[] = [];

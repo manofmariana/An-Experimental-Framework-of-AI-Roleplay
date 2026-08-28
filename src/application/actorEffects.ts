@@ -55,8 +55,8 @@ export interface StepEffects {
 function setGmTrigger(truth: TruthStores, cid: string): VarChange[] {
   const batch = truth.characters.get(cid).initiative?.value ?? NO_INITIATIVE_BATCH;
   return [
-    truth.world.writeRaw("_sys.gm_trigger", true),
-    truth.world.writeRaw("_sys.gm_trigger_batch", batch),
+    truth.sys.writeRaw("gm_trigger", true),
+    truth.sys.writeRaw("gm_trigger_batch", batch),
   ];
 }
 
@@ -89,7 +89,7 @@ function applyMarkers(truth: TruthStores, cid: string, markers: Marker[], rollDi
               changes.push(...truth.characters.setVars(survivor, { acted: false }));
             }
             if (cycleCountOf(truth) !== 0) {
-              changes.push(truth.world.writeRaw("_sys.cycles_since_gm", 0));
+              changes.push(truth.sys.writeRaw("cycles_since_gm", 0));
             }
           }
         }
@@ -163,7 +163,7 @@ function applyReject(truth: TruthStores, cid: string, preTimer: number | null): 
  * 入组（含远程，按组籍）在场位置位。
  */
 function applyConfirm(truth: TruthStores, cid: string, contactSeq: number, rollDice: DicePort): VarChange[] {
-  const current = truth.world.pipeline.current;
+  const current = truth.sys.pipeline.current;
   const steps = [...truth.archive.readAll(), ...(current !== null ? [current] : [])];
   const contactStep = steps.find((s) => s.seq === contactSeq);
   if (contactStep === undefined) {
@@ -208,9 +208,9 @@ export function planActorDecision(draft: TruthStores, ctx: ActorDecisionContext)
   const changes: VarChange[] = [];
   if (ctx.pkg.relations?.length) changes.push(...draft.characters.updateRelations(ctx.cid, ctx.pkg.relations));
   // 决策入工作集 + 标记派生的系统通知条目（纯函数镜像；同 type 固定 ID 复用，后来者居上）
-  draft.world.setPipeline({
+  draft.sys.setPipeline({
     working_set: appendNotices(
-      [...draft.world.pipeline.working_set, { cid: ctx.cid, decision: ctx.pkg }],
+      [...draft.sys.pipeline.working_set, { cid: ctx.cid, decision: ctx.pkg }],
       noticesOfMarkers(ctx.cid, ctx.pkg.markers ?? []),
     ),
   });

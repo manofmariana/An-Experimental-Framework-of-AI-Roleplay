@@ -8,21 +8,8 @@ import {
   reconcileGroups,
   rerollInitiative,
   rollInitiative,
-  visibleEvents,
   type SimChar,
 } from "../src/scheduler/simulator.js";
-import type { Event } from "../src/types.js";
-
-function evt(partial: Partial<Event> & { id: string }): Event {
-  return {
-    t: 0,
-    seq: 1,
-    kind: "world",
-    tags: [{ name: "C0", level: 1 }],
-    payload: `payload-${partial.id}`,
-    ...partial,
-  };
-}
 
 function simChar(partial: Partial<SimChar>): SimChar {
   return {
@@ -245,58 +232,8 @@ describe("orderGroups（同刻多组串行：组内最高先攻降序，同值�
   });
 });
 
-describe("visibleEvents（TAG 过滤，无地点成分）", () => {
-  it("cid 类挂载命中读者有效 TAG 集即可见；location 不参与过滤；跨级 = 与", () => {
-    const events = [
-      evt({
-        id: "evt_1",
-        tags: [
-          { name: "C0", level: 1 },
-          { name: "C1001", level: 1 },
-        ],
-        location: "灯塔",
-      }),
-      evt({ id: "evt_2", tags: [{ name: "C0", level: 1 }] }), // C1001 不可见
-      evt({ id: "evt_3", tags: [{ name: "C1001", level: 1 }], location: "白滩镇" }), // 异地仍可见（无地点成分）
-      evt({
-        id: "evt_4",
-        tags: [
-          { name: "C1001", level: 1 },
-          { name: "灯塔：秘密", level: 2 },
-        ],
-      }), // 跨级 = 与：持 C1001 但未持 灯塔：秘密 → 不可见
-    ];
-    const c1001 = { tags: new Set(["C1001"]) };
-    assert.deepEqual(
-      visibleEvents(events, c1001, {}).map((e) => e.id),
-      ["evt_1", "evt_3"],
-    );
-    assert.deepEqual(
-      visibleEvents(events, { tags: new Set(["C0"]) }, {}).map((e) => e.id),
-      ["evt_1", "evt_2"],
-    );
-    assert.deepEqual(
-      visibleEvents(events, { tags: new Set(["C1001", "灯塔：秘密"]) }, {}).map((e) => e.id),
-      ["evt_1", "evt_3", "evt_4"],
-    );
-    assert.deepEqual(visibleEvents(events, { tags: new Set(["C9999"]) }, {}), []);
-  });
-
-  it("全知权重虚拟覆盖：权重 6 恒见；无 TAG 事件 = 广播恒通过", () => {
-    const events = [
-      evt({ id: "evt_1", tags: [{ name: "C0", level: 1 }] }),
-      evt({ id: "evt_2", tags: [] }),
-    ];
-    assert.deepEqual(
-      visibleEvents(events, { tags: new Set<string>(), omniscienceWeight: 6 }, {}).map((e) => e.id),
-      ["evt_1", "evt_2"],
-    );
-    assert.deepEqual(
-      visibleEvents(events, { tags: new Set(["C9999"]) }, {}).map((e) => e.id),
-      ["evt_2"],
-    );
-  });
-});
+// 事件可见性 TAG 过滤由引擎承接（{events[*].content} 路由逐末端求值）——
+// 用例口径见 placeholderEngine 四根契约测试。
 
 describe("rollInitiative（d20 + reaction，同值 = 同时批次）", () => {
   it("降序分批；同值同批（批内 cid 排序）", () => {

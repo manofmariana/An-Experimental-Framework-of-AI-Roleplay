@@ -2,9 +2,8 @@
  * 会话装配工厂：
  * 给定 configs/runId/options/worldSetId → 装配好的 GameSession 内核实例。
  * 职责 = ChatPort/adapter 装配、提示词模板档内副本装载（新档拷自世界包、续档读档）、
- * 世界设定集读取、存档
- * meta.json（world_set）读写、七真相 Store 初始/续档装载、无状态 activation 装配
- * （三个 activation 各持对应 kind 的 ChatPort；上下文由 builder 逐调用现算）。
+ * 存档 meta.json（world_set）读写、五根真相 Store 初始/续档装载、无状态 activation
+ * 装配（三个 activation 各持对应 kind 的 ChatPort；上下文由投影层逐调用现算）。
  * 命令串行/会话切换在 sessionCoordinator.ts；内核步编排在 gameSession.ts。
  */
 import fs from "node:fs";
@@ -52,10 +51,14 @@ import { GenerationRepository } from "../truth/generationRepository.js";
 import { Lorebook } from "../truth/lorebook.js";
 import { LoreStore } from "../truth/loreStore.js";
 import { PromptsStore } from "../truth/promptsStore.js";
-import { SAVE_SCHEMA_VERSION } from "../truth/saveSchema.js";
-import { loadWorldTime, TimeStore, worldTimeToMinutes } from "../truth/timeStore.js";
-import { cascadeDerived, parseWorldSys, varWriteDepsOf, type ParsedWorldSys } from "../truth/varWrite.js";
+import { parseSys, SysStore, type ParsedSys, type SysStructs } from "../truth/sysStore.js";
+import { cascadeDerived, varWriteDepsOf } from "../truth/varWrite.js";
 import { WorldStore } from "../truth/worldStore.js";
+import {
+  defaultWorldTimeInstance,
+  readWorldTime,
+  worldTimeToMinutes,
+} from "../vars/systemWorld.js";
 import { normalizeInstance, validateSystemTags } from "../vars/tree.js";
 import { GameSession } from "./gameSession.js";
 import { loadConfigState, type ConfigServiceDeps } from "./configService.js";
@@ -85,13 +88,17 @@ function loadIncidentConfig(worldDir: string): IncidentConfig {
 }
 
 /** 变量体系三文件原始内容（世界包 tags.json / vars-template.json / vars-tags.json；缺文件即拒装，incident.json 先例）。 */
-function loadVarsPackFiles(worldDir: string): { tagRegistry: unknown; varsTemplate: unknown; varsTags: unknown } {
+function loadVarsPackFiles(worldDir: string): SysStructs {
   const read = (name: string): unknown => {
     const file = path.join(worldDir, name);
     if (!fs.existsSync(file)) throw new Error(`世界设定集缺少变量体系文件: ${file}`);
     return JSON.parse(readText(file));
   };
-  return { tagRegistry: read("tags.json"), varsTemplate: read("vars-template.json"), varsTags: read("vars-tags.json") };
+  return {
+    tagRegistry: read("tags.json"),
+    varsTemplate: read("vars-template.json"),
+    varsTags: read("vars-tags.json") as { world: unknown; character: unknown },
+  };
 }
 
 /**
@@ -201,9 +208,7 @@ export function createGameSession(
   const dir = options?.baseDir ?? runDir(runId);
   writeWorldSet(runId, worldSet, dir);
 
-  const setting = readText(path.join(worldDir, "setting.md"));
-  const toneCard = readText(path.join(worldDir, "tone-card.md"));
-  const worldLoreEntries = Lorebook.load(path.join(worldDir, "lorebook.json")).all();
+  const worldLoreEntries = Lorebook.load(path.join(worldDir, "lores.json")).all();
   const incidentConfig = loadIncidentConfig(worldDir);
   const playerInitial = loadPlayerInitial(worldDir);
   const charDir = path.join(worldDir, "characters");
@@ -215,21 +220,21 @@ export function createGameSession(
   if (manifests.length === 0) throw new Error(`世界设定集 ${worldSet} 没有角色 manifest`);
 
   const repo = new GenerationRepository(dir);
-  const worldTime = loadWorldTime(worldDir);
-  const startMinutes = worldTimeToMinutes(worldTime.start);
+  // 初始时间 = world 变量树 time 锚（新档 = 代码缺省实例，世界作者经状态直编调整）
+  const startMinutes = worldTimeToMinutes(readWorldTime({ time: defaultWorldTimeInstance() }).anchor);
   // 变量体系三文件（tags/vars-template/vars-tags）：装配时读取（缺文件即拒装）；
-  // 新会话解析校验后拷入 world._sys，续档改从档内 _sys 读（校验同理）
+  // 新会话解析校验后拷入 sys 第五根，续档改从档内 sys.json 读（校验同理）
   const packVars = loadVarsPackFiles(worldDir);
   // 占位符目录 + 四份模板（缺文件/校验失败即拒装；语义机检在 sys 解析后）
   const packPlaceholders = loadPackPlaceholders(worldDir);
   const packTemplates = loadPackPrompts(worldDir, packPlaceholders);
-  let sys: ParsedWorldSys;
+  let parsedSys: ParsedSys;
   let revision: number;
   let world: WorldStore;
+  let sysStore: SysStore;
   let events: EventsStore;
   let characters: CharactersStore;
   let loreStore: LoreStore;
-  let timeStore: TimeStore;
   let archive: ArchiveStore;
   let promptsStore: PromptsStore;
   if (repo.exists()) {
@@ -237,24 +242,21 @@ export function createGameSession(
     const loaded = repo.loadCurrent();
     revision = loaded.revision;
     const save = loaded.save;
-    sys = parseWorldSys(save.world._sys);
+    parsedSys = parseSys(save.sys);
     // 续档同样过一遍 normalize（幂等：已 normalize 数据再 normalize 结果相同）
-    const { time: timeAnchor, _sys, ...worldVars } = save.world;
-    const normalizedWorld = {
-      ...(normalizeInstance(worldVars, sys.template.world, "world") as Record<string, unknown>),
-      time: timeAnchor,
-      _sys,
-    };
-    world = new WorldStore({ schema_version: SAVE_SCHEMA_VERSION, world: normalizedWorld, pipeline: save.pipeline });
+    const normalizedWorld = normalizeInstance(save.world, parsedSys.template.world, "world") as Record<string, unknown>;
+    readWorldTime(normalizedWorld); // time 系统分支必备回读校验
+    world = new WorldStore(normalizedWorld);
+    sysStore = new SysStore(save.sys);
     events = new EventsStore(save.events);
     const normalizedChars: Record<string, CharacterState> = {};
     // 侧车校验与级联共用同一份写值依赖（cid 类别实例集 = 档内角色表键集）
-    const resumeDeps = varWriteDepsOf(sys, new Set(Object.keys(save.characters)));
+    const resumeDeps = varWriteDepsOf(parsedSys, new Set(Object.keys(save.characters)));
     for (const [cid, state] of Object.entries(save.characters)) {
       normalizedChars[cid] = {
         ...state,
-        systemTags: validateSystemTags(state.systemTags, sys.template.character, resumeDeps),
-        vars: normalizeInstance(state.vars, sys.template.characterVars, cid) as Record<string, unknown>,
+        systemTags: validateSystemTags(state.systemTags, parsedSys.template.character, resumeDeps),
+        vars: normalizeInstance(state.vars, parsedSys.template.characterVars, cid) as Record<string, unknown>,
       };
     }
     characters = new CharactersStore(normalizedChars);
@@ -263,29 +265,27 @@ export function createGameSession(
     for (const cid of Object.keys(normalizedChars)) {
       cascadeDerived({ world, characters }, { kind: "character", cid }, resumeDeps);
     }
-    loreStore = new LoreStore(save.lore);
-    timeStore = new TimeStore(save.time);
+    loreStore = new LoreStore(save.lores);
     archive = new ArchiveStore(save.archive);
     // 续档：提示词模板与占位符目录从档内副本恢复（不再读世界包）+ 语义机检（同新档口径）
     promptsStore = new PromptsStore(save.prompts);
-    validatePlaceholders(promptsStore.placeholders(), { template: sys.template, registry: sys.tagRegistry });
+    validatePlaceholders(promptsStore.placeholders(), { template: parsedSys.template, registry: parsedSys.tagRegistry });
   } else {
     // 新档：内存组装初始状态（首次写盘 = GameSession 构造尾的 init 提交 → Generation 1）
     repo.assertNoLegacyFlat();
     revision = 0;
-    const sysRaw = { ...packVars, cycles_since_gm: 0, gm_trigger: false, gm_trigger_batch: null };
-    sys = parseWorldSys(sysRaw);
-    world = WorldStore.initial({ time: worldTime.start }, sysRaw);
+    parsedSys = parseSys(packVars);
+    world = new WorldStore({ time: defaultWorldTimeInstance() });
+    sysStore = SysStore.initial(packVars);
     events = new EventsStore();
-    characters = CharactersStore.fromManifests(manifests, startMinutes, sys.template.characterVars);
+    characters = CharactersStore.fromManifests(manifests, startMinutes, parsedSys.template.characterVars);
     loreStore = LoreStore.initFrom(worldLoreEntries);
-    timeStore = new TimeStore({ schema_version: SAVE_SCHEMA_VERSION, start: worldTime.start, periods: worldTime.periods });
     archive = new ArchiveStore();
     // 新档：世界包四份模板 + 占位符目录（缺文件/校验失败即拒装）拷入档内副本，随 init 提交落 Generation 1
-    validatePlaceholders(packPlaceholders, { template: sys.template, registry: sys.tagRegistry });
+    validatePlaceholders(packPlaceholders, { template: parsedSys.template, registry: parsedSys.tagRegistry });
     promptsStore = PromptsStore.initFrom(packTemplates, packPlaceholders);
   }
-  characters.ensurePlayer(playerInitial, startMinutes, sys.template.characterVars);
+  characters.ensurePlayer(playerInitial, startMinutes, parsedSys.template.characterVars);
 
   // 无状态 activation：三个调用规则各持对应 kind 的 ChatPort + 档内 PromptsStore（每轮
   // 激活读档内模板副本与占位符目录），单一 CharacterActivation
@@ -302,12 +302,11 @@ export function createGameSession(
     prose,
     events,
     world,
+    sysStore,
     characters,
     loreStore,
-    timeStore,
     archive,
     promptsStore,
-    statics: { setting, toneCard },
     proseWindowTurns: options?.proseWindowTurns ?? DEFAULT_PROSE_WINDOW_TURNS,
     gmIntervalCycles: options?.gmIntervalCycles ?? DEFAULT_GM_INTERVAL_CYCLES,
     rollDice: options?.rollDice ?? defaultDice,

@@ -5,13 +5,18 @@ import { ArchiveStore } from "../src/truth/archive.js";
 import { CharactersStore, type CharacterState } from "../src/truth/charactersStore.js";
 import { EventsStore } from "../src/truth/events.js";
 import { LoreStore } from "../src/truth/loreStore.js";
-import { SAVE_SCHEMA_VERSION } from "../src/truth/saveSchema.js";
 import type { TruthStores } from "../src/truth/stores.js";
-import { TimeStore } from "../src/truth/timeStore.js";
+import { SysStore } from "../src/truth/sysStore.js";
 import type { VarChange } from "../src/truth/varChanges.js";
 import { isNoticeEntry } from "../src/truth/workingSet.js";
 import { WorldStore } from "../src/truth/worldStore.js";
-import { buildManifest, buildPromptsStore, buildVarsTemplate, buildWorldSysRaw } from "./builders/index.js";
+import {
+  buildManifest,
+  buildPromptsStore,
+  buildSysFile,
+  buildVarsTemplate,
+  buildWorldTree,
+} from "./builders/index.js";
 import { DecisionPackageSchema, type DecisionPackage } from "../src/types.js";
 
 // ---------------------------------------------------------------------------
@@ -19,17 +24,16 @@ import { DecisionPackageSchema, type DecisionPackage } from "../src/types.js";
 // 表驱动：同一 DecisionPackage 正常/编辑重放产出相同 effects；五标记谱系；邀请应答两分支。
 // ---------------------------------------------------------------------------
 
-const START = { y: 0, m: 1, d: 1, h: 0, min: 0 };
 const DECL = buildVarsTemplate().characterVars;
 
 function makeTruth(specs: (Parameters<typeof buildManifest>[0])[]): TruthStores {
   return {
-    world: WorldStore.initial({ time: START }, buildWorldSysRaw()),
+    world: new WorldStore(buildWorldTree(undefined, { y: 0, m: 1, d: 1, h: 0, min: 0 })),
+    sys: new SysStore(buildSysFile()),
     characters: CharactersStore.fromManifests(specs.map(buildManifest), 0, DECL),
     events: new EventsStore(),
     archive: new ArchiveStore(),
     loreStore: LoreStore.initFrom([]),
-    timeStore: new TimeStore({ schema_version: SAVE_SCHEMA_VERSION, start: START, periods: [{ key: "白天", from: 0, to: 24 }] }),
     promptsStore: buildPromptsStore(),
   };
 }
@@ -47,10 +51,11 @@ function diceQueue(values: number[]): () => number {
   };
 }
 
-/** 倒序反转一组变更（与 loop.revertVarChanges 同分发口径）。 */
+/** 倒序反转一组变更（与 gameSession.revertVarChanges 同分发口径）。 */
 function revert(truth: TruthStores, changes: readonly VarChange[]): void {
   for (const c of [...changes].reverse()) {
     if (c.path.startsWith("world.")) truth.world.revertChange(c);
+    else if (c.path.startsWith("sys.")) truth.sys.revertChange(c);
     else truth.characters.revertChange(c);
   }
 }
@@ -69,7 +74,7 @@ describe("planActorDecision（同一 DecisionPackage：正常与编辑重放产�
     const ea = planActorDecision(a, { cid: "C1001", pkg, rollDice: diceQueue([]) });
     const eb = planActorDecision(b, { cid: "C1001", pkg, rollDice: diceQueue([]) });
     assert.deepEqual(ea.changes, eb.changes);
-    assert.deepEqual(a.world.pipeline.working_set, b.world.pipeline.working_set);
+    assert.deepEqual(a.sys.pipeline.working_set, b.sys.pipeline.working_set);
     assert.deepEqual(a.characters.all(), b.characters.all());
   });
 
@@ -80,8 +85,8 @@ describe("planActorDecision（同一 DecisionPackage：正常与编辑重放产�
     const replayed = makeTruth(trio());
     const oldEffects = planActorDecision(replayed, { cid: "C1001", pkg: pkgOld, rollDice: diceQueue([]) });
     revert(replayed, oldEffects.changes);
-    replayed.world.setPipeline({
-      working_set: replayed.world.pipeline.working_set.filter((e) =>
+    replayed.sys.setPipeline({
+      working_set: replayed.sys.pipeline.working_set.filter((e) =>
         isNoticeEntry(e) ? e.notice.actor !== "C1001" : e.cid !== "C1001",
       ),
     });
@@ -92,7 +97,7 @@ describe("planActorDecision（同一 DecisionPackage：正常与编辑重放产�
     assert.deepEqual(replayEffects.changes, freshEffects.changes, "重放与全新规划产出相同 effects");
     assert.deepEqual(replayed.characters.all(), fresh.characters.all());
     assert.deepEqual(replayed.world.world, fresh.world.world);
-    assert.deepEqual(replayed.world.pipeline.working_set, fresh.world.pipeline.working_set);
+    assert.deepEqual(replayed.sys.pipeline.working_set, fresh.sys.pipeline.working_set);
   });
 
   it("普通行动：relations 落账 + 工作集追加 + acted 置位（效应顺序 = relations → acted → markers）", () => {
@@ -105,7 +110,7 @@ describe("planActorDecision（同一 DecisionPackage：正常与编辑重放产�
     );
     assert.equal(truth.characters.get("C1001").acted, true);
     assert.deepEqual(truth.characters.get("C1001").relations, [{ cid: "C0", name: "玩家" }]);
-    assert.deepEqual(truth.world.pipeline.working_set, [{ cid: "C1001", decision: pkg }]);
+    assert.deepEqual(truth.sys.pipeline.working_set, [{ cid: "C1001", decision: pkg }]);
   });
 });
 
@@ -117,9 +122,9 @@ describe("planActorDecision（标记谱系：程序即时执行，全走 VarChan
       pkg: decision({ markers: [{ type: "gm_request" }] }),
       rollDice: diceQueue([]),
     });
-    assert.equal(withInit.world.world._sys["gm_trigger"], true);
-    assert.equal(withInit.world.world._sys["gm_trigger_batch"], 12);
-    assert.ok(r1.changes.some((c) => c.path === "world._sys.gm_trigger" && c.after === true));
+    assert.equal(withInit.sys.counters.gm_trigger, true);
+    assert.equal(withInit.sys.counters.gm_trigger_batch, 12);
+    assert.ok(r1.changes.some((c) => c.path === "sys.gm_trigger" && c.after === true));
 
     const noInit = makeTruth([{ id: "C1001" }]);
     planActorDecision(noInit, {
@@ -127,7 +132,7 @@ describe("planActorDecision（标记谱系：程序即时执行，全走 VarChan
       pkg: decision({ markers: [{ type: "gm_request" }] }),
       rollDice: diceQueue([]),
     });
-    assert.equal(noInit.world.world._sys["gm_trigger_batch"], -Number.MAX_SAFE_INTEGER);
+    assert.equal(noInit.sys.counters.gm_trigger_batch, -Number.MAX_SAFE_INTEGER);
   });
 
   it("leave：组归 0 + timer 置 null + 清频道，不触发 GM", () => {
@@ -141,7 +146,7 @@ describe("planActorDecision（标记谱系：程序即时执行，全走 VarChan
     assert.equal(s.group, 0);
     assert.equal(s.timer, null);
     assert.equal(s.channel, null);
-    assert.notEqual(truth.world.world._sys["gm_trigger"], true);
+    assert.notEqual(truth.sys.counters.gm_trigger, true);
   });
 
   it("contact：邀请双方分配同一新频道 + 立 GM 触发；未知目标忽略", () => {
@@ -155,7 +160,7 @@ describe("planActorDecision（标记谱系：程序即时执行，全走 VarChan
     assert.equal(truth.characters.get("C1001").channel, 8, "邀请者入新频道（max+1）");
     assert.equal(truth.characters.get("C0").channel, 8, "@ 前缀目标归一化后入同一频道");
     assert.equal(truth.characters.get("C1002").channel, 7, "非目标不受影响");
-    assert.equal(truth.world.world._sys["gm_trigger"], true, "contact 触发 GM 立即激活");
+    assert.equal(truth.sys.counters.gm_trigger, true, "contact 触发 GM 立即激活");
     assert.ok(!changes.some((c) => c.path.includes("C9999")), "未知目标不产生变更");
   });
 
@@ -260,8 +265,8 @@ describe("planActorDecision（邀请应答：confirm 接受 / 拒绝两分支）
       rollDice: diceQueue([10, 8]),
     });
     revert(replayed, accepted.changes);
-    replayed.world.setPipeline({
-      working_set: replayed.world.pipeline.working_set.filter((e) =>
+    replayed.sys.setPipeline({
+      working_set: replayed.sys.pipeline.working_set.filter((e) =>
         isNoticeEntry(e) ? e.notice.actor !== "C1002" : e.cid !== "C1002",
       ),
     });

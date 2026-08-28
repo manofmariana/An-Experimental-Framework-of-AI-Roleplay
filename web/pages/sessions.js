@@ -139,12 +139,14 @@ function renderRunDetail(detail, data) {
   detail.appendChild(el("h3", null, `事件时间线（${events.length}）`));
   const tl = el("div");
   for (const e of events) {
-    tl.appendChild(el("div", "line-info", `[${e.id}] (seq ${e.seq}) ${e.payload}`));
+    // 事件元素 = 全字段末端外壳（{value, tags}）
+    tl.appendChild(el("div", "line-info", `[${e.id?.value ?? "?"}] (seq ${e.seq?.value ?? "?"}) ${e.content?.value ?? ""}`));
   }
   detail.appendChild(tl);
 
-  const time = world.time ?? {};
-  const timeText = `${time.y ?? "?"}年${time.m ?? "?"}月${time.d ?? "?"}日 ${String(time.h ?? 0).padStart(2, "0")}:${String(time.min ?? 0).padStart(2, "0")}`;
+  const time = world.time ?? {}; // world.time 系统分支（末端外壳树）
+  const v = (k) => time[k]?.value;
+  const timeText = `${v("y") ?? "?"}年${v("m") ?? "?"}月${v("d") ?? "?"}日 ${String(v("h") ?? 0).padStart(2, "0")}:${String(v("min") ?? 0).padStart(2, "0")}`;
   detail.appendChild(el("h3", null, "世界状态"));
   detail.appendChild(el("div", "line-info", `${timeText} · 流水线 seq ${pipeline.seq ?? 0} · phase ${pipeline.phase ?? "—"}`));
   detail.appendChild(el("pre", null, JSON.stringify(world, null, 2)));

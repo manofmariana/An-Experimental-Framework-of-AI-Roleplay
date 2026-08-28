@@ -101,7 +101,7 @@ describe("buildTransition 引用差分", () => {
   it("events 中段分歧（编辑重裁决替换事件）→ 截断 + 尾部重放；draft 克隆值等 → 不带 events", () => {
     const e1 = buildEvent({ id: "evt_0001", seq: 1 });
     const e2 = buildEvent({ id: "evt_0002", seq: 2 });
-    const e2new = buildEvent({ id: "evt_0004", seq: 2, payload: "重写" });
+    const e2new = buildEvent({ id: "evt_0004", seq: 2, content: "重写" });
     const t = buildTransition(
       notice("admin_edit", roots({ events: [e1, e2] }), roots({ events: [e1, e2new] })),
       "run-x",

@@ -27,6 +27,10 @@
  *
  * validateSystemTags = 系统末端 tags 侧车校验：路径必须命中系统声明分支末端
  * （systemChar.ts 的键集 + character 根解析），条目按 validateTagListWrite 校验。
+ *
+ * mergeAttachMounts = TAG 附加的读取期合并：resolveAttachTags 的 末端路径 → 挂载表
+ * 并入实例树（纯函数出新树；数组层 [*] 占位路径逐元素查表；实例 tags 优先、附加
+ * 按名去重追加），供提示词组装层在投影时合并，绝不写回实例。
  */
 import { z } from "zod";
 import type { TagCategory } from "../tags/registry.js";
@@ -315,4 +319,50 @@ export function readTerminal(
     throw new Error(`路径 "${dottedPath}" 的实例不是末端外壳`);
   }
   return sel === "tags" ? inst.tags : inst.value;
+}
+
+// ---------------------------------------------------------------------------
+// TAG 附加合并（读取期）
+// ---------------------------------------------------------------------------
+
+/**
+ * 把 resolveAttachTags 解析出的 末端路径 → 挂载表 并入实例树（读取期合并，不物化）：
+ * 纯函数，返回新树、不动入参（真相恒冻结），无附加命中的子树原引用返回。附加表
+ * 路径的数组层以 `[*]` 占位——实例侧数组逐元素按 [*] 路径查表。每末端合并 =
+ * 实例 tags 优先、附加条目按名去重追加（与状态编辑器「附加」只读显示同口径）。
+ */
+export function mergeAttachMounts(
+  node: unknown,
+  attach: ReadonlyMap<string, readonly TagMount[]>,
+  path = "",
+): unknown {
+  if (attach.size === 0) return node;
+  // tags 数组护栏：带 value 子键的容器（如系统分支 initiative）按容器递归下行
+  if (isTerminalInstance(node) && Array.isArray(node.tags)) {
+    const mounts = attach.get(path);
+    if (mounts === undefined || mounts.length === 0) return node;
+    const held = new Set(node.tags.map((t) => t.name));
+    const extra = mounts.filter((m) => !held.has(m.name));
+    return extra.length === 0 ? node : { ...node, tags: [...node.tags, ...extra] };
+  }
+  if (Array.isArray(node)) {
+    let changed = false;
+    const out = node.map((el) => {
+      const next = mergeAttachMounts(el, attach, `${path}[*]`);
+      if (next !== el) changed = true;
+      return next;
+    });
+    return changed ? out : node;
+  }
+  if (isPlainObject(node)) {
+    let changed = false;
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(node)) {
+      const next = mergeAttachMounts(value, attach, path === "" ? key : `${path}.${key}`);
+      if (next !== value) changed = true;
+      out[key] = next;
+    }
+    return changed ? out : node;
+  }
+  return node;
 }

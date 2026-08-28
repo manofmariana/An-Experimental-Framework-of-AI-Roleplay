@@ -29,7 +29,8 @@ function invariant(message: string): never {
 
 /** ① pipeline：seq 非负整数；current 与 seq/archive 的对应关系。 */
 function checkPipeline(save: SaveSet): void {
-  const { pipeline, archive } = save;
+  const pipeline = save.sys.pipeline;
+  const archive = save.archive;
   if (!Number.isInteger(pipeline.seq) || pipeline.seq < 0) {
     invariant(`pipeline.seq 必须为非负整数，实为 ${String(pipeline.seq)}`);
   }
@@ -47,7 +48,8 @@ function checkPipeline(save: SaveSet): void {
 
 /** ② archive：seq ≥1 整数、严格递增；current 非空时不得触及进行中步骤 seq。 */
 function checkArchive(save: SaveSet): void {
-  const { archive, pipeline } = save;
+  const archive = save.archive;
+  const pipeline = save.sys.pipeline;
   let previous = 0;
   for (const entry of archive) {
     if (!Number.isInteger(entry.seq) || entry.seq < 1) {
@@ -70,11 +72,11 @@ function checkArchive(save: SaveSet): void {
 function checkEvents(save: SaveSet): void {
   const seen = new Set<string>();
   for (const event of save.events) {
-    if (event.id === "") invariant("事件 id 不能为空");
-    if (seen.has(event.id)) invariant(`事件 id 重复: ${event.id}`);
-    seen.add(event.id);
-    if (!Number.isInteger(event.seq) || event.seq < 1) {
-      invariant(`事件 ${event.id} 的 seq 必须为 ≥1 整数，实为 ${String(event.seq)}`);
+    if (event.id.value === "") invariant("事件 id 不能为空");
+    if (seen.has(event.id.value)) invariant(`事件 id 重复: ${event.id.value}`);
+    seen.add(event.id.value);
+    if (!Number.isInteger(event.seq.value) || event.seq.value < 1) {
+      invariant(`事件 ${event.id.value} 的 seq 必须为 ≥1 整数，实为 ${String(event.seq.value)}`);
     }
   }
 }
@@ -82,7 +84,7 @@ function checkEvents(save: SaveSet): void {
 /** ④ 引用闭包：working_set 言行条目 cid / 通知条目 actor 与 archive 角色步 cid 都必须存在于角色表。 */
 function checkReferences(save: SaveSet): void {
   const known = new Set(Object.keys(save.characters));
-  for (const entry of save.pipeline.working_set) {
+  for (const entry of save.sys.pipeline.working_set) {
     if (isNoticeEntry(entry)) {
       if (!known.has(entry.notice.actor)) invariant(`working_set 通知条目引用未知角色: ${entry.notice.actor}`);
     } else if (!known.has(entry.cid)) {
@@ -108,11 +110,11 @@ function checkCharacters(save: SaveSet): void {
 /** ⑥ lore：entries id 唯一；changelog seq 为整数（回滚锚）。 */
 function checkLore(save: SaveSet): void {
   const seen = new Set<string>();
-  for (const entry of save.lore.entries) {
-    if (seen.has(entry.id)) invariant(`lore 条目 id 重复: ${entry.id}`);
-    seen.add(entry.id);
+  for (const entry of save.lores.entries) {
+    if (seen.has(entry.id.value)) invariant(`lore 条目 id 重复: ${entry.id.value}`);
+    seen.add(entry.id.value);
   }
-  for (const change of save.lore.changelog) {
+  for (const change of save.lores.changelog) {
     if (!Number.isInteger(change.seq)) {
       invariant(`lore changelog seq 必须为整数，实为 ${String(change.seq)}`);
     }

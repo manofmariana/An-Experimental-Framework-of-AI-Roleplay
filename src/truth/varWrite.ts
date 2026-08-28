@@ -1,13 +1,13 @@
 /**
- * 双根 deltas 应用编排 + 档内 `_sys` 严格解析（truth 层；纯内存变异）。
+ * 双根 deltas 应用编排（truth 层；纯内存变异）。
  *
  * 路由：`world.…` → world 域；`characters.{cid}.…` → 角色域（cid 必须存在）。路径支持
  * 数组下标语法 `键[数字]`（如 characters.C1001.vars.items[0].name；解析期拆段，落账路径
  * 归一化为点分数字下标）；`[*]` 通配只用于从动/附加解析，写路径一律拒。拒写：
- * `world.time`（时间只能由调度器推进）/`world._sys`/`world.pipeline`（程序分支）、
- * 角色系统分支（vars 下首段命中系统声明分支键（name/timer/location 等）即拒——系统
- * 字段走 durations/location 等白名单专用通道，GM deltas 只可写 vars 作者子树；系统
- * 末端 tags 侧车本轮不开放 GM 写通道）、从动末端（带 formula，由程序维护）。
+ * `world.time`（时间只能由调度器经 setClock 专用通道推进）、角色系统分支（vars 下首段
+ * 命中系统声明分支键（name/timer/location 等）即拒——系统字段走 durations/location 等
+ * 白名单专用通道，GM deltas 只可写 vars 作者子树；系统末端 tags 侧车不开放 GM 写通道）、
+ * 从动末端（带 formula，由程序维护）。sys 第五根不开放 GM deltas（程序分支各有专口）。
  *
  * 校验：路径必须在档内模板中可解析（resolvePath，无声明 = 抛错拒绝该条）；
  * 写末端 = 写 value（`=` 全量替换，值按 valueType 校验，外壳 tags 保留；`+=`/`-=` 仅
@@ -21,22 +21,15 @@
  * union_attach，含实例携带 formula 与结构化数组 "*" 段元素枚举），值变则写回并追加
  * 该末端的 VarChange（级联写回是程序内部写，不走 GM 拒写闸）。
  *
- * `_sys` 程序分支 = {tagRegistry, varsTemplate, varsTags, cycles_since_gm, gm_trigger,
- * gm_trigger_batch}：文件 codec 层只验对象存在（worldStore.WorldSysSchema），本模块的
- * parseWorldSys 是严格解析唯一出口（装配/续档/直编共用），并在此做一次从动依赖
- * 成环闸（模板双根各建一次计划，成环即拒装/拒写）。
+ * sys 根严格解析（parseSys）在 sysStore.ts（与容器同文件维护）。
  */
-import { z } from "zod";
-import { parseTagRegistry, type TagCategory, type TagRegistry } from "../tags/registry.js";
+import type { TagCategory } from "../tags/registry.js";
 import type { StateDelta } from "../types.js";
-import { buildDerivedPlan, buildRootDerivedPlan, evalDerivedTarget } from "../vars/derived.js";
+import { buildRootDerivedPlan, evalDerivedTarget } from "../vars/derived.js";
 import { SYSTEM_CHAR_KEYS } from "../vars/systemChar.js";
 import {
-  parseVarsTags,
-  parseVarsTemplate,
   splitVarPath,
   type DeclNode,
-  type VarsTagsNode,
   type VarsTemplate,
 } from "../vars/template.js";
 import {
@@ -50,52 +43,8 @@ import {
 } from "../vars/tree.js";
 import { getByPath, type VarChange } from "./varChanges.js";
 import type { CharactersStore } from "./charactersStore.js";
+import type { ParsedSys } from "./sysStore.js";
 import type { WorldStore } from "./worldStore.js";
-
-// ---------------------------------------------------------------------------
-// `_sys` 严格解析
-// ---------------------------------------------------------------------------
-
-/** `_sys` 形状闸（内容校验分派：registry/template/varsTags 各自的 parse）。 */
-const WorldSysStrictSchema = z.object({
-  tagRegistry: z.unknown(),
-  varsTemplate: z.unknown(),
-  varsTags: z.object({ world: z.unknown(), character: z.unknown() }).strict(),
-  cycles_since_gm: z.number(),
-  gm_trigger: z.boolean(),
-  gm_trigger_batch: z.number().nullable(),
-});
-
-/** 解析后的 `_sys` 程序分支。 */
-export interface ParsedWorldSys {
-  tagRegistry: TagRegistry;
-  template: VarsTemplate;
-  varsTags: { world: VarsTagsNode; character: VarsTagsNode };
-  cycles_since_gm: number;
-  gm_trigger: boolean;
-  gm_trigger_batch: number | null;
-}
-
-/** 严格解析 `_sys`：形状闸 + 注册表/模板/附加文件各自 parse + 从动依赖成环闸（任何违规 = 抛错）。 */
-export function parseWorldSys(raw: unknown): ParsedWorldSys {
-  const parsed = WorldSysStrictSchema.parse(raw);
-  const tagRegistry = parseTagRegistry(parsed.tagRegistry);
-  const template = parseVarsTemplate(parsed.varsTemplate);
-  // 成环闸：双根各建一次从动计划，成环即拒（装配/续档/直编共用本出口）
-  buildDerivedPlan(template.world);
-  buildDerivedPlan(template.character);
-  return {
-    tagRegistry,
-    template,
-    varsTags: {
-      world: parseVarsTags(parsed.varsTags.world, template.world),
-      character: parseVarsTags(parsed.varsTags.character, template.character),
-    },
-    cycles_since_gm: parsed.cycles_since_gm,
-    gm_trigger: parsed.gm_trigger,
-    gm_trigger_batch: parsed.gm_trigger_batch,
-  };
-}
 
 /** deltas 应用所需依赖：档内模板 + TAG 写值名称校验上下文（注册名集合 + 开放类别声明）。 */
 export interface VarWriteDeps {
@@ -107,11 +56,11 @@ export interface VarWriteDeps {
 }
 
 /**
- * 从 `_sys` 解析产物构建写值依赖：registeredNames = 注册表条目名；categories = 注册表
+ * 从 sys 根解析产物构建写值依赖：registeredNames = 注册表条目名；categories = 注册表
  * 声明的开放类别（cid 类别的实例集 = cidInstances，调用方注入当前角色表键集；缺省 =
  * 空集，即 cid 实例名一律不放行）。
  */
-export function varWriteDepsOf(sys: ParsedWorldSys, cidInstances?: ReadonlySet<string>): VarWriteDeps {
+export function varWriteDepsOf(sys: ParsedSys, cidInstances?: ReadonlySet<string>): VarWriteDeps {
   const categories: Partial<Record<TagCategory, ReadonlySet<string>>> = {};
   for (const entry of Object.values(sys.tagRegistry)) {
     if (entry.category === undefined) continue;
@@ -120,7 +69,7 @@ export function varWriteDepsOf(sys: ParsedWorldSys, cidInstances?: ReadonlySet<s
   return { template: sys.template, registeredNames: new Set(Object.keys(sys.tagRegistry)), categories };
 }
 
-/** 写入目标（七 Store 视图的最小面；WorldStore/CharactersStore 直接满足）。 */
+/** 写入目标（TruthStores 视图的最小面；WorldStore/CharactersStore 直接满足）。 */
 export interface VarWriteStores {
   world: WorldStore;
   characters: CharactersStore;
@@ -232,7 +181,7 @@ function computeWriteValue(
   return { value: delta.op === "+=" ? current + delta.value : current - delta.value, tags: existingTags };
 }
 
-/** world 域：拒写 time/_sys/pipeline 程序分支，其余按 world 模板校验落账；写后整根级联。 */
+/** world 域：拒写 time 系统分支，其余按 world 模板校验落账；写后整根级联。 */
 function applyWorldDelta(stores: VarWriteStores, delta: StateDelta, deps: VarWriteDeps): VarChange[] {
   const rest = delta.path.slice("world.".length);
   const segs = splitWritePath(rest);
@@ -240,9 +189,6 @@ function applyWorldDelta(stores: VarWriteStores, delta: StateDelta, deps: VarWri
   if (head === "") throw new Error(`变量路径不完整：${delta.path}`);
   if (head === "time") {
     throw new Error(`GM deltas 不得修改 world.time；时间只能由调度器推进：${delta.path}`);
-  }
-  if (head === "_sys" || head === "pipeline") {
-    throw new Error(`GM deltas 不得写程序分支 world.${head}：${delta.path}`);
   }
   const rel = segs.join(".");
   const decl = resolvePath(deps.template.world, rel);

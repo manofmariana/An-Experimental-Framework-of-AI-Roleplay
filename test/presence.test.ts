@@ -26,6 +26,7 @@ function idAllocator(): () => string {
 function revert(truth: TruthStores, changes: readonly VarChange[]): void {
   for (const c of [...changes].reverse()) {
     if (c.path.startsWith("world.")) truth.world.revertChange(c);
+    else if (c.path.startsWith("sys.")) truth.sys.revertChange(c);
     else truth.characters.revertChange(c);
   }
 }

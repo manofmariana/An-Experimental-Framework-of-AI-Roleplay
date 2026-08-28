@@ -40,6 +40,8 @@ export interface DirectEditPayload {
   events?: unknown;
   /** 提示词编辑通道（PUT /api/prompts/:agent 档内模式）：单份 PromptTemplate，按 id 整体替换 */
   prompts?: unknown;
+  /** sys 结构编辑档内通道（PUT /api/session/state 带 sys 键）：{varsTemplate?, varsTags?} 部分替换 */
+  sys?: unknown;
   /** 占位符目录编辑通道（PUT /api/prompts/placeholders 档内模式）：整份目录替换 */
   placeholders?: unknown;
 }
@@ -117,9 +119,14 @@ export class SessionCoordinator {
     return this.epoch;
   }
 
-  /** 活跃会话当前 world 冻结视图（含 `_sys`；HTTP 结构编辑档内模式取数用）。无会话 = null。 */
+  /** 活跃会话当前 world 冻结视图（纯变量树）。无会话 = null。 */
   activeWorld(): ReturnType<GameSession["getState"]>["world"] | null {
     return this.session?.getState().world ?? null;
+  }
+
+  /** 活跃会话 sys 根冻结视图（HTTP 结构编辑/占位符机检档内模式取数用）。无会话 = null。 */
+  activeSys(): ReturnType<GameSession["snapshot"]>["sys"] | null {
+    return this.session?.snapshot().sys ?? null;
   }
 
   /** 活跃会话档内提示词模板冻结视图（HTTP 提示词编辑档内模式取数用）。无会话 = null。 */

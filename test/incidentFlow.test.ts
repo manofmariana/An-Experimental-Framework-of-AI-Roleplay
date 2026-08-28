@@ -108,7 +108,7 @@ describe("突发事件管线", () => {
     assert.equal(timerChange.after, 0);
 
     // 突发内容不落 Event：事件库只有 GM#seq5 转写的那一条
-    assert.deepEqual(session.getEvents().map((e) => e.payload), ["@C1001 发现了山贼的营地，悄悄退开了。"]);
+    assert.deepEqual(session.getEvents().map((e) => e.content.value), ["@C1001 发现了山贼的营地，悄悄退开了。"]);
 
     // 注入派生：甲的 #当前场景 开头带突发文本（角色侧）
     const charPrompt = callsText("character:C1001", 4);

@@ -24,22 +24,23 @@ export function createEpochGuard() {
 }
 
 /**
- * 会话回放五端点取数 + 形状归一（数据获取与渲染分离的可测一半）。
+ * 会话回放六端点取数 + 形状归一（数据获取与渲染分离的可测一半）。
  * @param {(path: string) => Promise<any>} apiFn GET JSON 助手（调用方可包 signal）
  * @param {string} id runId
  */
 export async function fetchRunDetail(apiFn, id) {
-  const [events, world, characters, archive, stats] = await Promise.all([
+  const [events, world, characters, archive, sys, stats] = await Promise.all([
     apiFn(`/api/sessions/${id}/events`),
     apiFn(`/api/sessions/${id}/world`),
     apiFn(`/api/sessions/${id}/characters`),
     apiFn(`/api/sessions/${id}/archive`),
+    apiFn(`/api/sessions/${id}/sys`),
     apiFn(`/api/sessions/${id}/stats`),
   ]);
   return {
     events: events?.events ?? [],
     world: world?.world ?? {},
-    pipeline: world?.pipeline ?? {},
+    pipeline: sys?.pipeline ?? {},
     characters: characters?.characters ?? {},
     archive: archive?.entries ?? [],
     stats: stats ?? [],

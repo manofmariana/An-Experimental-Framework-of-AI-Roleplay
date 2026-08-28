@@ -14,9 +14,10 @@ import { LoreStore } from "../../src/truth/loreStore.js";
 import { PromptsStore, type PromptsFile } from "../../src/truth/promptsStore.js";
 import { SAVE_SCHEMA_VERSION } from "../../src/truth/saveSchema.js";
 import type { TruthStores } from "../../src/truth/stores.js";
-import { TimeStore } from "../../src/truth/timeStore.js";
+import { SysStore, type SysFile } from "../../src/truth/sysStore.js";
 import { WorldStore } from "../../src/truth/worldStore.js";
-import type { Event } from "../../src/types.js";
+import type { Event, LoreEntry } from "../../src/types.js";
+import { defaultWorldTimeInstance } from "../../src/vars/systemWorld.js";
 import { parseVarsTemplate, type VarsTemplate } from "../../src/vars/template.js";
 
 /**
@@ -67,17 +68,48 @@ export function buildTagRegistryRaw(): Record<string, unknown> {
   );
 }
 
-/** 档内 `_sys` 程序分支原始形状（WorldStore.initial 入参；计数键初始 0/false/null）。 */
-export function buildWorldSysRaw(overrides?: Record<string, unknown>): Record<string, unknown> {
+/** sys 根结构三件套原始形状（SysStore.initial 入参）。 */
+export function buildSysStructsRaw(overrides?: Record<string, unknown>): Record<string, unknown> {
   return {
     tagRegistry: buildTagRegistryRaw(),
     varsTemplate: TEST_VARS_TEMPLATE_RAW,
     varsTags: { world: {}, character: {} },
+    ...overrides,
+  };
+}
+
+/** sys.json 信封（Generation 载荷形状；pipeline 缺省空、计数键归零，overrides 精准覆盖）。 */
+export function buildSysFile(overrides?: Record<string, unknown>): SysFile {
+  return {
+    schema_version: SAVE_SCHEMA_VERSION,
+    ...buildSysStructsRaw(),
     cycles_since_gm: 0,
     gm_trigger: false,
     gm_trigger_batch: null,
+    pipeline: { seq: 0, working_set: [], current: null },
     ...overrides,
-  };
+  } as unknown as SysFile;
+}
+
+/** world 变量树（纯内容根；缺省 = 仅 time 系统分支代码缺省实例，periods/anchor 可覆盖）。 */
+export function buildWorldTree(
+  periods?: { key: string; from: number; to: number }[],
+  anchor?: { y: number; m: number; d: number; h: number; min: number },
+): Record<string, unknown> {
+  const tree = defaultWorldTimeInstance();
+  if (anchor !== undefined) {
+    for (const key of ["y", "m", "d", "h", "min"] as const) {
+      (tree as Record<string, unknown>)[key] = { value: anchor[key], tags: [] };
+    }
+  }
+  if (periods !== undefined) {
+    (tree as Record<string, unknown>)["periods"] = periods.map((p) => ({
+      key: { value: p.key, tags: [] },
+      from: { value: p.from, tags: [] },
+      to: { value: p.to, tags: [] },
+    }));
+  }
+  return { time: tree };
 }
 
 /**
@@ -110,6 +142,7 @@ export function buildManifest(overrides: Partial<CharacterManifest> & { id: stri
 /** 运行时角色状态（characters.json 条目形状；long_term_memory 为状态专有字段）。 */
 export function buildCharacterState(overrides?: Partial<CharacterState>): CharacterState {
   return {
+    cid: "C0",
     name: "某人",
     gender: "未设定",
     age: "未设定",
@@ -150,38 +183,38 @@ export function buildAdjudication(overrides?: Record<string, unknown>): Record<s
   };
 }
 
-/** 事件（events.json 条目）；id 必填，payload 缺省 = `payload-{id}`。 */
-export function buildEvent(overrides: Partial<Event> & { id: string }): Event {
+/** 事件（events.json 条目：全字段末端外壳）；id 必填，content 缺省 = `payload-{id}`。 */
+export function buildEvent(overrides: { id: string; t?: number; seq?: number; content?: string; tags?: { name: string; level: number }[] }): Event {
+  const shell = <T extends string | number>(value: T, tags: { name: string; level: number }[] = []): { value: T; tags: { name: string; level: number }[] } => ({ value, tags });
   return {
-    t: 0,
-    seq: 1,
-    kind: "world",
-    tags: [],
-    payload: `payload-${overrides.id}`,
-    ...overrides,
+    id: shell(overrides.id),
+    t: shell(overrides.t ?? 0),
+    seq: shell(overrides.seq ?? 1),
+    kind: shell("world" as const),
+    content: shell(overrides.content ?? `payload-${overrides.id}`, overrides.tags ?? []),
   };
 }
 
-const SAVE_SET_START = { y: 0, m: 1, d: 1, h: 6, min: 0 };
+/** lore 条目（lores.json 元素：全末端外壳；TAG 挂载全部落在 content 末端）。 */
+export function buildLoreEntry(id: string, content: string, tags: { name: string; level: number }[] = []): LoreEntry {
+  return { id: { value: id, tags: [] }, content: { value: content, tags } };
+}
 
-/** 全内存七真相 Store（投影层/activation 直构造测试用；characters 缺省 = 仅玩家 C0）。 */
+/** 全内存五根真相 Store（投影层/activation 直构造测试用；characters 缺省 = 仅玩家 C0）。 */
 export function buildTruthStores(overrides?: {
   characters?: Record<string, CharacterState>;
   events?: Event[];
+  lores?: LoreEntry[];
 }): TruthStores {
-  const world = WorldStore.initial({ time: SAVE_SET_START }, buildWorldSysRaw());
+  const world = new WorldStore(buildWorldTree([{ key: "白天", from: 0, to: 24 }]));
+  const sys = new SysStore(buildSysFile());
   const characters = new CharactersStore(overrides?.characters ?? { C0: buildCharacterState({ isPlayer: true }) });
   const events = new EventsStore();
   for (const event of overrides?.events ?? []) events.append(event);
   const archive = new ArchiveStore();
-  const loreStore = LoreStore.initFrom([]);
-  const timeStore = new TimeStore({
-    schema_version: SAVE_SCHEMA_VERSION,
-    start: SAVE_SET_START,
-    periods: [{ key: "白天", from: 0, to: 24 }],
-  });
+  const loreStore = LoreStore.initFrom(overrides?.lores ?? []);
   const promptsStore = buildPromptsStore();
-  return { world, characters, events, archive, loreStore, timeStore, promptsStore };
+  return { world, sys, characters, events, archive, loreStore, promptsStore };
 }
 
 /** 投影层 RenderHost（activation 渲染/投影取数断言用；input 覆盖合并进 ProjectionInput）。 */
@@ -190,7 +223,7 @@ export function buildProjectionHost(
   truth: TruthStores,
   input?: Partial<ProjectionInput>,
 ): RenderHost {
-  return new ProjectionBuilder({ setting: "测试设定", toneCard: "测试基调" }).for(reader, {
+  return new ProjectionBuilder().for(reader, {
     truth,
     proseWindowTurns: 5,
     ...input,
@@ -200,7 +233,6 @@ export function buildProjectionHost(
 /** 档内提示词文件（prompts.json 载荷形状）：四键齐备、id 与键名一致（空模块列表 + 空占位符目录 = 最小合法）。 */
 export function buildPromptsFile(): PromptsFile {
   return {
-    schema_version: SAVE_SCHEMA_VERSION,
     templates: {
       character: { id: "character", modules: [] },
       gm: { id: "gm", modules: [] },
@@ -222,13 +254,12 @@ export function buildPromptsStore(): PromptsStore {
  */
 export function buildSaveSet(overrides?: Partial<SaveSet>): SaveSet {
   return {
-    world: { time: SAVE_SET_START, _sys: buildWorldSysRaw() },
-    pipeline: { seq: 0, working_set: [], current: null },
+    world: buildWorldTree(),
+    sys: buildSysFile(),
     characters: { C0: buildCharacterState({ isPlayer: true }) },
     events: [],
     archive: [],
-    lore: { schema_version: SAVE_SCHEMA_VERSION, entries: [], changelog: [] },
-    time: { schema_version: SAVE_SCHEMA_VERSION, start: SAVE_SET_START, periods: [{ key: "白天", from: 6, to: 18 }] },
+    lores: { entries: [], changelog: [] },
     prompts: buildPromptsFile(),
     ...overrides,
   };

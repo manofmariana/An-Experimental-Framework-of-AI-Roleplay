@@ -2,12 +2,12 @@
  * 角色系统声明分支与实例投影（纯逻辑；对 template/tree 仅 type-import，保持零运行时
  * 出边——template.ts 解析期并入本模块常量，反向运行时会成环）。
  *
- * 角色顶层字段（name/gender/age/personality/reaction/level/omniscience/location/
+ * 角色顶层字段（cid/name/gender/age/personality/reaction/level/omniscience/location/
  * initiative/relations/long_term_memory + 调度字段 acted/group/channel/timer/isPlayer/appearance）
  * 与 vars 树呈现为同一棵树的标准末端：本模块持有系统声明子树（代码常量，不进世界包
  * 模板文件），parseVarsTemplate 解析时并入 character 根（与世界作者声明同名 = 拒装），
- * 物理布局不变（调度器继续消费类型化字段）。调度字段的声明节点带 system 元数据
- * （值只读语义，呈现层徽记）；relations = 结构化数组（元素 = 系统类型 relation
+ * 物理布局不变（调度器继续消费类型化字段）。cid 与调度字段的声明节点带 system 元数据
+ * （值只读语义，呈现层徽记；cid = 自身 CID 字符串，建角时物化为类型化字段）；relations = 结构化数组（元素 = 系统类型 relation
  * {cid, name, impression}，消费侧按元素的 cid 字段匹配）。appearance = 在场位
  * （组弹出前台/入组 = true、结算进后台/离组 = false），程序维护、结构编辑只展示。
  *
@@ -40,8 +40,9 @@ export const SYSTEM_CHAR_TYPES: Readonly<Record<string, ContainerDecl>> = {
   relation: container({ cid: terminal("string"), name: terminal("string"), impression: terminal("string") }),
 };
 
-/** character 根系统声明子树（键序 = 投影呈现序；调度字段带 system 元数据）。 */
+/** character 根系统声明子树（键序 = 投影呈现序；cid 与调度字段带 system 元数据）。 */
 export const SYSTEM_CHAR_CHILDREN: Readonly<Record<string, DeclNode>> = {
+  cid: terminal("string", true),
   name: terminal("string"),
   gender: terminal("string"),
   age: terminal("string"),
@@ -74,6 +75,8 @@ export const SYSTEM_CHAR_KEYS: ReadonlySet<string> = new Set(Object.keys(SYSTEM_
 
 /** 投影输入（CharacterState 的结构化最小面；vars 层自定义以避免反向依赖；兼容深只读查询出口）。 */
 export interface CharacterProjectionInput {
+  /** 自身 CID（建角时物化的类型化字段；系统只读） */
+  cid: string;
   name: string;
   gender: string;
   age: string;
@@ -110,6 +113,7 @@ export function projectCharacterTree(state: CharacterProjectionInput): InstanceN
     tags: tagsOf(path),
   });
   const out: Record<string, InstanceNode> = {
+    cid: shell(state.cid, "cid"),
     name: shell(state.name, "name"),
     gender: shell(state.gender, "gender"),
     age: shell(state.age, "age"),

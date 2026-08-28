@@ -1,27 +1,30 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { WorldStore } from "../src/truth/worldStore.js";
-import { buildWorldSysRaw } from "./builders/index.js";
+import { buildWorldTree } from "./builders/index.js";
 
-const start = { y: 3, m: 10, d: 17, h: 5, min: 30 };
-describe("WorldStore 新结构", () => {
-  it("saveData 仅 schema_version/world/pipeline，world 树含 time 锚与 _sys 程序分支", () => {
-    const store = WorldStore.initial({ time: start, weather: "fog" }, buildWorldSysRaw());
+describe("WorldStore（纯变量树容器）", () => {
+  it("saveData = 纯变量树（含 time 系统分支实例）；程序分支在 sys 根不在本树", () => {
+    const store = new WorldStore({ ...buildWorldTree(), weather: "fog" });
     store.writeRaw("weather", "clear");
-    const file = store.saveData();
-    assert.deepEqual(Object.keys(file).sort(), ["pipeline", "schema_version", "world"]);
-    assert.equal(file.world["weather"], "clear");
-    assert.equal(typeof file.world._sys, "object");
+    const tree = store.saveData();
+    assert.deepEqual(Object.keys(tree).sort(), ["time", "weather"]);
+    assert.equal(tree["weather"], "clear");
     // saveData → 重建回环（纯内存，无落盘）
     assert.equal(new WorldStore(store.saveData()).world["weather"], "clear");
   });
-  it("setClock 写 world.time 变更并可逆", () => {
-    const store = WorldStore.initial({ time: start }, buildWorldSysRaw());
-    const before = store.clock; const change = store.setClock(before + 60);
-    assert.equal(change.path, "world.time"); assert.equal(store.world.time.h, 6); store.revertChange(change); assert.deepEqual(store.world.time, start);
+  it("setClock 写 world.time 锚末端（tags 保留）并可逆", () => {
+    const store = new WorldStore(buildWorldTree());
+    const before = store.clock;
+    const change = store.setClock(before + 60);
+    assert.equal(change.path, "world.time");
+    const time = store.world["time"] as Record<string, { value: number }>;
+    assert.equal(time["h"]!.value, 1); // 缺省锚 00:00 + 60min
+    store.revertChange(change);
+    assert.equal(store.clock, before);
   });
   it("writeRaw 低层写入产出逐步 before 并可倒序恢复（校验编排在 varWrite，不在本层）", () => {
-    const store = WorldStore.initial({ time: start, hp: 10 }, buildWorldSysRaw());
+    const store = new WorldStore({ ...buildWorldTree(), hp: 10 });
     const changes = [store.writeRaw("hp", 8), store.writeRaw("hp", 13)];
     assert.deepEqual(changes.map((change) => [change.path, change.before, change.after]), [
       ["world.hp", 10, 8],
@@ -29,5 +32,10 @@ describe("WorldStore 新结构", () => {
     ]);
     for (const change of [...changes].reverse()) store.revertChange(change);
     assert.equal(store.world["hp"], 10);
+  });
+  it("replaceWorld：time 系统分支缺失/畸形 = 拒写", () => {
+    const store = new WorldStore(buildWorldTree());
+    assert.throws(() => store.replaceWorld({ weather: "fog" }));
+    assert.equal(store.world["weather"], undefined);
   });
 });

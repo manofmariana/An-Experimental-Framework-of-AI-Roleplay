@@ -2,7 +2,7 @@
  * web/views/var-tree-model.js 单元测试（unit 层）：
  * 纯逻辑数据核心，零 DOM 零网络。只做实例状态编辑（结构编辑已迁世界页 var-decl-model，
  * 见 test/varDeclModel.test.ts）。覆盖：
- * - 视图模型：世界树滤 time/_sys、实例简写读出、未声明键 unknown 呈现；
+ * - 视图模型：世界树滤 time 系统分支、实例简写读出、未声明键 unknown 呈现；
  * - 角色树 = 系统声明分支投影 + vars 实例树（同一棵树不分区）：系统分支值从类型化
  *   字段读出（timer/channel null 原样、initiative null = 容器无实例、relations =
  *   结构化数组按下标投影），系统只读收窄为 {acted, group, channel, timer, isPlayer, appearance}；
@@ -15,10 +15,10 @@
  * - 从动判定：声明带 formula / 实例外壳带 formula 均只读且出结构化 formula 只读标注；
  * - vars 末端写值：外壳改写 / 无实例物化 / 简写物化 / 从动拒写 / valueType 校验；
  * - attachtags/tags 池 = string_list 纯名集合（值编辑走 string[] 校验）；
- * - 附加来源 tags 合并显示（`_sys.varsTags` 读取期合并的只读 attachTags：节点级级联/
+ * - 附加来源 tags 合并显示（sys.varsTags 读取期合并的只读 attachTags：节点级级联/
  *   末端级单挂/数组整型挂载 `[*]` 通配/cid 类别按属主分发，world 域 cid 跳过）+
  *   零泄漏红线（工作副本/保存载荷/侧车与附加前逐字节一致）；
- * - 保存载荷：_sys.varsTemplate 原样随 world 副本上送（状态编辑不动模板）。
+ * - 保存载荷：world = 纯变量树工作副本本体（sys 不经本通道上送，状态编辑不动模板）。
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -63,12 +63,13 @@ function makeWorking() {
     },
   };
   return {
+    sys: {
+      tagRegistry: { 暴怒: { name: "暴怒" }, 冷静: { name: "冷静" } },
+      varsTemplate: template,
+      varsTags: { world: {}, character: {} },
+    },
     world: {
-      time: { year: 1, month: 1, day: 1, hour: 8, minute: 0 },
-      _sys: {
-        tagRegistry: { 暴怒: { name: "暴怒" }, 冷静: { name: "冷静" } },
-        varsTemplate: template,
-      },
+      time: { y: { value: 1, tags: [] } }, // time 系统分支（编辑器不呈现）
       hp: 5, // 简写末端
       luck: { value: 7, tags: [], formula: { expr: "1 + 1" } }, // 实例携带 formula → 从动
       loc: { name: "酒馆" }, // items 无实例
@@ -116,7 +117,7 @@ function makeWorking() {
 type Working = ReturnType<typeof makeWorking>;
 
 function modelOf(working: Working): VarTreeModel {
-  return createVarTreeModel({ world: working.world, characters: working.characters });
+  return createVarTreeModel({ world: working.world, characters: working.characters, sys: working.sys });
 }
 
 /** 按键取子节点（断言存在）。 */
@@ -137,11 +138,11 @@ function terminalOf(view: { children: VarTreeNode[] }, key: string): TerminalNod
 // ---------------------------------------------------------------------------
 
 describe("var-tree-model：视图模型", () => {
-  it("世界树滤掉 time/_sys；简写末端读出值；结构化数组展开元素", () => {
+  it("世界树滤掉 time 系统分支；简写末端读出值；结构化数组展开元素", () => {
     const m = modelOf(makeWorking());
     const tree = m.buildTree("world");
     const keys = tree.children.map((n) => n.key);
-    assert.deepEqual(keys, ["hp", "luck", "pool", "loc", "bag"]); // time/_sys 不显示
+    assert.deepEqual(keys, ["hp", "luck", "pool", "loc", "bag"]); // time 系统分支不显示
 
     const hp = terminalOf(tree, "hp");
     assert.equal(hp.valueType, "number");
@@ -198,7 +199,7 @@ describe("var-tree-model：视图模型", () => {
     const tree = m.buildTree("C1001");
     const keys = tree.children.map((n) => n.key);
     assert.deepEqual(keys, [
-      "name", "gender", "age", "personality", "reaction", "level", "omniscience",
+      "cid", "name", "gender", "age", "personality", "reaction", "level", "omniscience",
       "location", "initiative", "relations", "long_term_memory",
       "acted", "group", "channel", "timer", "isPlayer", "appearance",
       "attachtags", "tags", "mood", "str", "double_str", "gear",
@@ -213,8 +214,8 @@ describe("var-tree-model：视图模型", () => {
     assert.deepEqual(name.tags, [{ name: "闻名", level: 2 }]); // 侧车
     assert.deepEqual(terminalOf(tree, "long_term_memory").value, ["记忆一", "记忆二"]);
 
-    // 系统调度字段：system 徽记（值只读）；timer 有值、channel null 原样
-    for (const key of ["acted", "group", "channel", "timer", "isPlayer", "appearance"]) {
+    // 系统调度字段 + cid：system 徽记（值只读）；timer 有值、channel null 原样
+    for (const key of ["cid", "acted", "group", "channel", "timer", "isPlayer", "appearance"]) {
       assert.equal(terminalOf(tree, key).system, true, key);
     }
     assert.equal(terminalOf(tree, "timer").value, 120);
@@ -256,7 +257,7 @@ describe("var-tree-model：视图模型", () => {
     assert.equal(custom.kind, "unknown");
   });
 
-  it("listScopes = 世界 + 各 CID；getTagNames 来自 _sys.tagRegistry", () => {
+  it("listScopes = 世界 + 各 CID；getTagNames 来自 sys.tagRegistry", () => {
     const m = modelOf(makeWorking());
     assert.deepEqual(
       m.listScopes().map((s) => s.id),
@@ -470,14 +471,14 @@ describe("var-tree-model：数组元素增删", () => {
   it("新增元素按元素结构物化空白（嵌套容器递归、嵌套数组留空），不动模板", () => {
     const w = makeWorking();
     const m = modelOf(w);
-    const tplBefore = JSON.stringify(w.world._sys.varsTemplate);
+    const tplBefore = JSON.stringify(w.sys.varsTemplate);
     m.addArrayElement("world", "bag");
     assert.deepEqual((w.world.bag as any)[1], {
       count: { value: 0, tags: [] },
       note: { value: "", tags: [] },
       parts: [], // 嵌套数组空白起步
     });
-    assert.equal(JSON.stringify(w.world._sys.varsTemplate), tplBefore); // 模板不动
+    assert.equal(JSON.stringify(w.sys.varsTemplate), tplBefore); // 模板不动
 
     // 角色域：数组实例整体缺失时补建
     m.addArrayElement("C1001", "gear");
@@ -498,10 +499,10 @@ describe("var-tree-model：数组元素增删", () => {
   it("删除元素只动实例不动模板", () => {
     const w = makeWorking();
     const m = modelOf(w);
-    const tplBefore = JSON.stringify(w.world._sys.varsTemplate);
+    const tplBefore = JSON.stringify(w.sys.varsTemplate);
     m.removeArrayElement("world", "bag", 0);
     assert.deepEqual(w.world.bag, []);
-    assert.equal(JSON.stringify(w.world._sys.varsTemplate), tplBefore);
+    assert.equal(JSON.stringify(w.sys.varsTemplate), tplBefore);
     assert.throws(() => m.removeArrayElement("world", "bag", 0), /不存在/);
   });
 });
@@ -511,16 +512,16 @@ describe("var-tree-model：数组元素增删", () => {
 // ---------------------------------------------------------------------------
 
 describe("var-tree-model：保存载荷", () => {
-  it("getPayload 返回编辑后的工作副本本体（_sys.varsTemplate 原样随 world 上送）", () => {
+  it("getPayload 返回编辑后的工作副本本体（world = 纯变量树；sys 不经本通道）", () => {
     const w = makeWorking();
     const m = modelOf(w);
-    const tplBefore = JSON.stringify(w.world._sys.varsTemplate);
+    const tplBefore = JSON.stringify(w.sys.varsTemplate);
     m.writeTerminalValue("world", "hp", 42);
     const payload = m.getPayload();
     assert.equal(payload.world, w.world);
     assert.equal(payload.characters, w.characters);
     assert.deepEqual((payload.world as Record<string, unknown>).hp, { value: 42, tags: [] });
-    assert.equal(JSON.stringify(w.world._sys.varsTemplate), tplBefore); // 状态编辑不动模板
+    assert.equal(JSON.stringify(w.sys.varsTemplate), tplBefore); // 状态编辑不动模板
   });
 });
 
@@ -531,13 +532,13 @@ describe("var-tree-model：保存载荷", () => {
 /** 含 TAG 附加条目的工作副本：根级级联 / 末端级单挂 / 整型挂载 / cid 类别分发齐备。 */
 function makeWorkingWithAttach() {
   const w = makeWorking();
-  (w.world._sys as any).tagRegistry = {
+  (w.sys as any).tagRegistry = {
     暴怒: { name: "暴怒" },
     冷静: { name: "冷静" },
     cid: { name: "cid", system: true, category: "cid" },
     channel: { name: "channel", system: true, category: "channel" },
   };
-  (w.world._sys as any).varsTags = {
+  (w.sys as any).varsTags = {
     world: {
       tags: [{ name: "全域", level: 2 }], // 根节点级：级联到 world 全部末端
       children: {

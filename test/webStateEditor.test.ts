@@ -107,6 +107,10 @@ function harness(options: {
   const deps = {
     el: fakeEl,
     api: async (path: string, method = "GET", body?: unknown): Promise<unknown> => {
+      if (path === "/api/session/state/sys" && method === "GET") {
+        // 结构信息取数（树编辑器只读对拍基准）
+        return { varsTemplate: { world: { children: {} }, character: { children: {} } }, varsTags: { world: {}, character: {} }, tagRegistry: {}, baseRevision: 7 };
+      }
       puts.push({ path, method, body: body as Record<string, unknown> });
       if (options.apiError) throw options.apiError;
       return { note: "已保存，立即生效", revision: 8 }; // 应答附保存后新 revision
@@ -139,9 +143,9 @@ function harness(options: {
 }
 
 describe("状态编辑器：打开捕获与保存语义", () => {
-  it("「变量 / 事件」标签页：默认变量页，切换互显互隐", () => {
+  it("「变量 / 事件」标签页：默认变量页，切换互显互隐", async () => {
     const h = harness({ runId: "000001" });
-    openStateEditor(h.deps);
+    await openStateEditor(h.deps);
     const overlay = h.mounted[0]!;
     const tabVars = findByText(overlay, "button", "变量");
     const tabEvents = findByText(overlay, "button", "事件");
@@ -165,7 +169,7 @@ describe("状态编辑器：打开捕获与保存语义", () => {
 
   it("打开捕获 {runId, baseRevision}；保存 PUT 携带 baseRevision，成功后不关窗并推进闸值", async () => {
     const h = harness({ runId: "000001", revision: 7 });
-    openStateEditor(h.deps);
+    await openStateEditor(h.deps);
     assert.equal(h.mounted.length, 1);
     const overlay = h.mounted[0]!;
     assert.equal(overlay.isConnected, true);
@@ -194,9 +198,9 @@ describe("状态编辑器：打开捕获与保存语义", () => {
     assert.equal(h.puts[1]!.body.baseRevision, 8);
   });
 
-  it("整树重渲保持 modal 滚动容器 scrollTop（折叠切换不跳顶）", () => {
+  it("整树重渲保持 modal 滚动容器 scrollTop（折叠切换不跳顶）", async () => {
     const h = harness({ runId: "000001" });
-    openStateEditor(h.deps);
+    await openStateEditor(h.deps);
     const overlay = h.mounted[0]!;
     const content = findByClass(overlay, "modal-content state-editor-content");
     content.scrollTop = 123;
@@ -210,14 +214,14 @@ describe("状态编辑器：打开捕获与保存语义", () => {
   it("取消确认：有未保存修改先 confirm（拒不关/确认才关）；无修改直接关不 confirm", async () => {
     // 无修改 → 直接关闭，不弹确认
     const clean = harness({ runId: "000001" });
-    openStateEditor(clean.deps);
+    await openStateEditor(clean.deps);
     findByText(clean.mounted[0]!, "button", "取消").onclick!();
     assert.equal(clean.confirms.length, 0);
     assert.equal(clean.mounted[0]!.isConnected, false);
 
     // 有修改（事件区编辑置脏）+ 用户拒绝 → 不关
     const deny = harness({ runId: "000001", confirmResult: false });
-    openStateEditor(deny.deps);
+    await openStateEditor(deny.deps);
     const overlay = deny.mounted[0]!;
     walk(overlay).filter((n) => n.tag === "textarea")[0]!.onchange!();
     findByText(overlay, "button", "取消").onclick!();
@@ -226,7 +230,7 @@ describe("状态编辑器：打开捕获与保存语义", () => {
 
     // 有修改 + 用户确认 → 关闭
     const ok = harness({ runId: "000001", confirmResult: true });
-    openStateEditor(ok.deps);
+    await openStateEditor(ok.deps);
     const overlay2 = ok.mounted[0]!;
     walk(overlay2).filter((n) => n.tag === "textarea")[0]!.onchange!();
     findByText(overlay2, "button", "取消").onclick!();
@@ -235,7 +239,7 @@ describe("状态编辑器：打开捕获与保存语义", () => {
 
     // 保存成功清脏 → 取消直接关，不再确认
     const saved = harness({ runId: "000001" });
-    openStateEditor(saved.deps);
+    await openStateEditor(saved.deps);
     const overlay3 = saved.mounted[0]!;
     walk(overlay3).filter((n) => n.tag === "textarea")[0]!.onchange!(); // 先置脏
     await findByText(overlay3, "button", "保存").onclick!(); // 保存成功清脏
@@ -246,7 +250,7 @@ describe("状态编辑器：打开捕获与保存语义", () => {
 
   it("打开后切 run → 保存被拒（不写当前会话），编辑器内提示且不发请求", async () => {
     const h = harness({ runId: "000001" });
-    openStateEditor(h.deps);
+    await openStateEditor(h.deps);
     const overlay = h.mounted[0]!;
     h.state.runId = "000002"; // 会话已切换
     await findByText(overlay, "button", "保存").onclick!();
@@ -258,7 +262,7 @@ describe("状态编辑器：打开捕获与保存语义", () => {
     const conflict = new Error("revision 冲突") as Error & { code?: string };
     conflict.code = "REVISION_CONFLICT";
     const h = harness({ runId: "000001", apiError: conflict });
-    openStateEditor(h.deps);
+    await openStateEditor(h.deps);
     const overlay = h.mounted[0]!;
     const save = findByText(overlay, "button", "保存");
     await save.onclick!();
@@ -271,7 +275,7 @@ describe("状态编辑器：打开捕获与保存语义", () => {
 
   it("事件 JSON 非法 → 编辑器内报错，不发请求", async () => {
     const h = harness({ runId: "000001" });
-    openStateEditor(h.deps);
+    await openStateEditor(h.deps);
     const overlay = h.mounted[0]!;
     walk(overlay).filter((n) => n.tag === "textarea")[0]!.value = "{ 非法";
     await findByText(overlay, "button", "保存").onclick!();
@@ -279,17 +283,17 @@ describe("状态编辑器：打开捕获与保存语义", () => {
     assert.match(findByClass(overlay, "raw-error").textContent, /事件 JSON 解析失败/);
   });
 
-  it("无活跃会话 → notifyError，不挂 modal", () => {
+  it("无活跃会话 → notifyError，不挂 modal", async () => {
     const h = harness({ runId: null });
-    openStateEditor(h.deps);
+    await openStateEditor(h.deps);
     assert.equal(h.mounted.length, 0);
     assert.equal(h.errors.length, 1);
     assert.match(h.errors[0]!, /无活跃会话/);
   });
 
-  it("runId 变化统一关闭：注册表 close 全部触发（挂 body 的 modal 不长存）", () => {
+  it("runId 变化统一关闭：注册表 close 全部触发（挂 body 的 modal 不长存）", async () => {
     const h = harness({ runId: "000001" });
-    openStateEditor(h.deps);
+    await openStateEditor(h.deps);
     const overlay = h.mounted[0]!;
     assert.equal(overlay.isConnected, true);
     // 模拟 play.js closeSessionModals（runIdChanged 信号）

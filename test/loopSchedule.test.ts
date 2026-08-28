@@ -103,7 +103,7 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
     // 事件 commit：tags 空数组程序补全 = 本轮行动者的 cid 类 TAG 一级（工作集顺序去重），t = 当前 clock
     const events = session.getEvents();
     assert.deepEqual(
-      events.map((e) => ({ payload: e.payload, tags: e.tags, t: e.t, seq: e.seq })),
+      events.map((e) => ({ payload: e.content.value, tags: e.content.tags, t: e.t.value, seq: e.seq.value })),
       [
         {
           payload: "GM事件",
@@ -119,11 +119,13 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
 
     // seq7 是 current（组 1 第三周期首步）：changes 含时钟跳转（setup 段）
     const world = JSON.parse(readRun(runId, "world.json")) as {
-      world: { time: { min: number } };
+      world: { time: { min: { value: number } } };
+    };
+    const sysFile = JSON.parse(readRun(runId, "sys.json")) as {
       pipeline: { working_set: { cid: string }[] };
     };
-    assert.equal(world.world.time.min, 5);
-    assert.deepEqual(world.pipeline.working_set.map((w) => w.cid), ["C1001"], "GM 步已清算工作集");
+    assert.equal(world.world.time.min.value, 5);
+    assert.deepEqual(sysFile.pipeline.working_set.map((w) => w.cid), ["C1001"], "GM 步已清算工作集");
     const seq7 = session.getPipelineCurrent()!;
     assert.deepEqual(flat(seq7).map((c) => c.path), [
       "world.time",
@@ -183,7 +185,7 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
     // C0 未丢轮：前台停等玩家
     assert.equal(session.pipelineInfo.phase, "await_player");
     // 事件 tags 空数组程序补全 = 本轮行动者（仅 C1001）的 cid 类 TAG 一级
-    assert.deepEqual(session.getEvents()[0]!.tags, [{ name: "C1001", level: 1 }]);
+    assert.deepEqual(session.getEvents()[0]!.content.tags, [{ name: "C1001", level: 1 }]);
   });
 
   it("同值批次：批内互不见言行（GM 见全部）；玩家结构化输入的 gm_request 等批完再激活", async () => {
@@ -218,7 +220,7 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
     );
     // 玩家步 changes 含触发落账（结构化输入的标记程序即时执行）
     const seq1 = session.getArchive()[0]!;
-    assert.ok(flat(seq1).some((c) => c.path === "world._sys.gm_trigger" && c.after === true));
+    assert.ok(flat(seq1).some((c) => c.path === "sys.gm_trigger" && c.after === true));
     // 同值批注入隔离：C1001 的 #当前场景 不含玩家言行；GM 见全部
     assert.ok(!callsText("character:C1001", 2).includes("秘密输入X"), "同值批互不可见");
     assert.ok(callsText("gm", 3).includes("秘密输入X"));
@@ -387,7 +389,7 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
       "幸存者本周期已行动也重置 acted",
     );
     assert.ok(
-      flat(seq4).some((c) => c.path === "world._sys.cycles_since_gm" && c.before === 1 && c.after === 0),
+      flat(seq4).some((c) => c.path === "sys.cycles_since_gm" && c.before === 1 && c.after === 0),
       "减员至单人时 X 归 0",
     );
     assert.deepEqual(
@@ -672,9 +674,9 @@ describe("主循环集成（无判定轮 + 行动顺序表 + 标记体系）", (
 
     const events = session.getEvents();
     assert.equal(events.length, 1);
-    assert.equal(events[0]!.payload, "@C0 对 @C1001 说：\"玩家行动\"");
-    assert.equal(events[0]!.seq, 3);
-    assert.deepEqual(events[0]!.tags, [{ name: "C0", level: 1 }]);
+    assert.equal(events[0]!.content.value, "@C0 对 @C1001 说：\"玩家行动\"");
+    assert.equal(events[0]!.seq.value, 3);
+    assert.deepEqual(events[0]!.content.tags, [{ name: "C0", level: 1 }]);
     assert.equal(charState(session, "C0").timer, 10);
     assert.equal(charState(session, "C1001").timer, 10);
     const current = session.getPipelineCurrent()!;

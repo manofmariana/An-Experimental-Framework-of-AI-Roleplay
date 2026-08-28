@@ -1,13 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { loadPackPlaceholders, loadPackPrompts } from "../src/application/sessionFactory.js";
-import { participantTags } from "../src/application/historyProjection.js";
 import { renderPrompt, type RenderHost } from "../src/compile/render.js";
 import { extractPlaceholders } from "../src/compile/template.js";
 import { resolveWorldDir } from "../src/config.js";
-import { Lorebook } from "../src/truth/lorebook.js";
 import type { AdjudicationPackage } from "../src/types.js";
-import { buildCharacterState, buildProjectionHost, buildTruthStores } from "./builders/index.js";
+import { buildCharacterState, buildLoreEntry, buildProjectionHost, buildTruthStores } from "./builders/index.js";
 
 /** 出厂世界包目录（data/assets/baitan/）。 */
 const FACTORY_WORLD_DIR = resolveWorldDir();
@@ -44,11 +42,22 @@ describe("prose 输入", () => {
       JSON.stringify({ events: [], narrativity: "skip" }),
     );
   });
-  it("参与者标签并集触发 lore", () => {
-    const book = new Lorebook([{ id: "x", tags: [{ name: "秘密", level: 1 }], content: "S" }]);
+  it("参与者标签并集触发 lore（prose 读者 lores 根供给 = 参与者触发集，投影供给侧截取）", () => {
+    const truth = buildTruthStores({
+      characters: { C1001: buildCharacterState({ name: "林雾" }) },
+      lores: [
+        buildLoreEntry("hit", "命中", [{ name: "C1001", level: 1 }]),
+        buildLoreEntry("miss", "未触发", [{ name: "秘密", level: 1 }]),
+      ],
+    });
+    const host = buildProjectionHost(
+      { kind: "prose" },
+      truth,
+      { adjudication: ADJUDICATION, participantCids: ["C1001"] },
+    );
     assert.deepEqual(
-      book.getByTags({ tags: new Set(participantTags([["秘密"]])) }, {}).map((entry) => entry.id),
-      ["x"],
+      host.vars().lores.map((entry) => (entry as { id: { value: string } }).id.value),
+      ["hit"],
     );
   });
 });

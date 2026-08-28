@@ -48,8 +48,6 @@ export function worldRoutes(deps: ApiDeps): Route[] {
       handler: ({ url }) => {
         const worldDir = worldDirOf(url);
         return {
-          setting: readWorldFile(worldDir, "setting"),
-          toneCard: readWorldFile(worldDir, "tone-card"),
           lorebook: JSON.parse(readWorldFile(worldDir, "lorebook")) as unknown,
         };
       },

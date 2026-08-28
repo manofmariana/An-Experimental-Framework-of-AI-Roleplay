@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { describe, it } from "node:test";
 import { loadPackPlaceholders, loadPackPrompts } from "../src/application/sessionFactory.js";
 import { validatePlaceholders } from "../src/compile/placeholders.js";
@@ -9,8 +11,7 @@ import {
 } from "../src/compile/template.js";
 import { resolveWorldDir } from "../src/config.js";
 import { packPromptsDir } from "../src/resources/worldRepository.js";
-import { parseWorldSys } from "../src/truth/varWrite.js";
-import { buildWorldSysRaw } from "./builders/index.js";
+import { parseSys } from "../src/truth/sysStore.js";
 
 /** 出厂世界包目录与其内 prompts/。 */
 const FACTORY_WORLD_DIR = resolveWorldDir();
@@ -84,8 +85,14 @@ describe("出厂模板 × 占位符目录（data/assets/{包}/prompts/）", () =
   it("loadPackPrompts 四份齐备（含 gm-incident）；目录语义机检通过", () => {
     const templates = loadPackPrompts(FACTORY_WORLD_DIR, catalog);
     assert.deepEqual(templates.map((tpl) => tpl.id), ["character", "gm", "prose", "gm-incident"]);
-    // 与装配同一口径的语义机检（vars 路径/置后同轴/分支记号；出厂目录当前无 vars 源条目）
-    const sys = parseWorldSys(buildWorldSysRaw());
+    // 与装配同一口径的语义机检（四根路径到末端/置后同轴/分支记号）——机检上下文 =
+    // 该包变量体系三文件（tags/vars-template/vars-tags，与包基线编辑校验同基准）
+    const read = (name: string): unknown => JSON.parse(fs.readFileSync(path.join(FACTORY_WORLD_DIR, name), "utf8"));
+    const sys = parseSys({
+      tagRegistry: read("tags.json"),
+      varsTemplate: read("vars-template.json"),
+      varsTags: read("vars-tags.json"),
+    });
     validatePlaceholders(catalog, { template: sys.template, registry: sys.tagRegistry });
   });
 });

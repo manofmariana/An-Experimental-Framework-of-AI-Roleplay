@@ -85,13 +85,11 @@ export class SessionHarness {
     return this.llm.port.calls;
   }
 
-  /** 每测试独立世界包：写 setting/tone-card/lorebook/time + 各角色 manifest + 包内 prompts/。 */
+  /** 每测试独立世界包：写 lores + 各角色 manifest + 包内 prompts/。 */
   setupWorld(worldId: string, specs: CharSpec[], opts?: { varsTemplate?: unknown }): void {
     const dir = path.join(this.assetsDir, worldId);
     fs.mkdirSync(path.join(dir, "characters"), { recursive: true });
-    fs.writeFileSync(path.join(dir, "setting.md"), "测试世界设定\n");
-    fs.writeFileSync(path.join(dir, "tone-card.md"), "测试基调\n");
-    fs.writeFileSync(path.join(dir, "lorebook.json"), "[]\n");
+    fs.writeFileSync(path.join(dir, "lores.json"), "[]\n");
     // 包内提示词四副本（三 activation + gm-incident 突发变体）+ 占位符目录：从真实默认包拷贝
     // （新档装配读取校验后拷入档内 prompts.json）
     const from = packPromptsDir(resolveWorldDir());
@@ -104,15 +102,14 @@ export class SessionHarness {
     // 突发公式配置（装配启动校验必需）
     fs.writeFileSync(path.join(dir, "incident.json"), JSON.stringify(DEFAULT_INCIDENT_CONFIG, null, 2) + "\n");
     // 变量体系三文件（装配启动校验必需）：tags.json = system 条目（含 cid/channel/location
-    // 三类别条目，builders 唯一出处）；vars-template = 测试变量模板（builders 唯一出处，
-    // 可经 opts.varsTemplate 覆盖）；vars-tags = 空结构
-    fs.writeFileSync(path.join(dir, "tags.json"), JSON.stringify(buildTagRegistryRaw(), null, 2) + "\n");
+    // 三类别条目，builders 唯一出处）+ 角色感知（拷贝的占位符目录分支记号引用）；vars-template
+    // = 测试变量模板（builders 唯一出处，可经 opts.varsTemplate 覆盖）；vars-tags = 空结构
+    fs.writeFileSync(path.join(dir, "tags.json"), JSON.stringify({
+      ...buildTagRegistryRaw(),
+      角色感知: { name: "角色感知", description: "感知在场角色的存在（占位符分支记号引用）" },
+    }, null, 2) + "\n");
     fs.writeFileSync(path.join(dir, "vars-template.json"), JSON.stringify(opts?.varsTemplate ?? TEST_VARS_TEMPLATE_RAW, null, 2) + "\n");
     fs.writeFileSync(path.join(dir, "vars-tags.json"), JSON.stringify({ world: {}, character: {} }, null, 2) + "\n");
-    fs.writeFileSync(
-      path.join(dir, "time.json"),
-      JSON.stringify({ start: { y: 0, m: 1, d: 1, h: 0, min: 0 }, periods: [{ key: "白天", from: 0, to: 24 }] }),
-    );
     for (const spec of specs) {
       const file = spec.isPlayer === true
         ? path.join(dir, "player.json")
@@ -231,8 +228,8 @@ export class SessionHarness {
     return session.getState().world as Record<string, unknown>;
   }
 
-  /** world 树的 `_sys` 程序分支（程序计数键读取口）。 */
+  /** sys 根程序计数键读取口。 */
   worldSys(session: GameSession): Record<string, unknown> {
-    return this.worldVars(session)["_sys"] as Record<string, unknown>;
+    return session.snapshot().sys as unknown as Record<string, unknown>;
   }
 }

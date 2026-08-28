@@ -29,9 +29,11 @@ describe("resumeGameSession 新版存档", () => {
     const resumed = resumeGameSession(h.configs, runId, undefined, options(runId));
     assert.equal(resumed.worldTime, createdSession.worldTime); assert.equal(resumed.turnCount, 0); assert.equal(resumed.getEvents().length, 0);
     assert.equal(fs.readFileSync(path.join(dir, "CURRENT"), "utf8"), "000001");
-    for (const file of ["world.json", "events.json", "characters.json", "lore.json", "time.json", "archive.json", "prompts.json"]) {
-      const data = JSON.parse(h.readGenerationFile(runId, "current", file)) as { schema_version: unknown };
-      assert.equal(typeof data.schema_version, "number");
+    for (const file of ["world.json", "events.json", "characters.json", "lores.json", "archive.json", "sys.json", "prompts.json"]) {
+      const data = JSON.parse(h.readGenerationFile(runId, "current", file)) as { schema_version?: unknown };
+      // schema_version 单点化：只有 sys.json 盖章
+      if (file === "sys.json") assert.equal(typeof data.schema_version, "number");
+      else assert.equal(data.schema_version, undefined, `${file} 不再盖章`);
     }
   });
   it("旧结构明确拒绝并提示新建会话/重启服务", () => {

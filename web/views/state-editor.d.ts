@@ -22,4 +22,4 @@ export interface StateEditorDeps {
   confirm: (msg: string) => boolean;
 }
 
-export function openStateEditor(deps: StateEditorDeps): void;
+export function openStateEditor(deps: StateEditorDeps): Promise<void>;

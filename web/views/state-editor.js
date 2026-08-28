@@ -2,7 +2,8 @@
  * 状态编辑器 view：
  * 直编 modal——「变量 / 事件」两标签页（一次只显示一个）：变量页为树状状态编辑器
  * （var-tree-model 数据核心 + var-tree-editor DOM 层，打开时深拷贝 store world/characters
- * 为工作副本，全部编辑作用于副本；只做实例状态编辑——结构编辑在世界页），
+ * 为工作副本 + GET /api/session/state/sys 取只读对拍基准，全部编辑作用于副本；
+ * 只做实例状态编辑——结构编辑在世界页），
  * 事件页维持 raw JSON 数组编辑；保存走 PUT /api/session/state（直编，commit →
  * transition 广播刷新面板）。
  *
@@ -43,11 +44,20 @@ export const DIRECT_EDIT_WARNING =
  * @param {(text: string) => void} deps.notifyError 无会话等即时错误的落点（游玩页错误行）
  * @param {(msg: string) => boolean} deps.confirm 取消确认（有未保存修改时）
  */
-export function openStateEditor({ el, api, getState, trackModal, mountModal, notifyError, confirm }) {
+export async function openStateEditor({ el, api, getState, trackModal, mountModal, notifyError, confirm }) {
   const state = getState();
   if (state.runId === null) {
     // 无活跃会话不可编辑（有会话时 store 数据恒新鲜——snapshot/transition 逐提交维护）
     notifyError("[错误] 当前无活跃会话，无法直接编辑");
+    return;
+  }
+  // sys 根三件套（树编辑器的只读对拍基准）：档内取数端点；失败按错误行提示不建编辑器
+  let sys = null;
+  try {
+    const sysData = await api("/api/session/state/sys");
+    sys = { varsTemplate: sysData.varsTemplate, varsTags: sysData.varsTags, tagRegistry: sysData.tagRegistry };
+  } catch (err) {
+    notifyError(`[错误] 读取会话结构信息失败：${err.message}`);
     return;
   }
   // 打开即捕获身份（runId 不可变；baseRevision 保存成功后随新 revision 推进）
@@ -67,11 +77,12 @@ export function openStateEditor({ el, api, getState, trackModal, mountModal, not
   tabs.append(tabVars, tabEvents);
   const varsSection = el("div", "state-editor-section");
   varsSection.appendChild(el("div", "muted", "变量（状态编辑：世界 / 各角色分页；结构编辑在世界页；保存时整体提交 { world, characters }）"));
-  // 工作副本：打开时深拷贝 store 数据，全部编辑作用于副本，保存才上送（world 原样
-  // 携带 _sys.varsTemplate——结构编辑不在此，工作副本机制不变）
+  // 工作副本：打开时深拷贝 store 数据（world = 纯变量树），全部编辑作用于副本，保存才上送；
+  // sys 根三件套只做只读对拍基准（结构编辑在世界页）
   const model = createVarTreeModel({
     world: JSON.parse(JSON.stringify(state.world ?? {})),
     characters: JSON.parse(JSON.stringify(state.characters ?? {})),
+    sys: JSON.parse(JSON.stringify(sys)),
   });
   // scrollHost = modal 滚动容器：整树重渲（chip 增删等）保持 scrollTop 不跳顶；
   // onEdit = 脏标记（取消确认用）

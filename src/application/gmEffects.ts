@@ -16,7 +16,8 @@
 import type { DicePort } from "../ports.js";
 import type { TruthStores } from "../truth/stores.js";
 import type { VarChange } from "../truth/varChanges.js";
-import { applyVarDeltas, parseWorldSys, varWriteDepsOf } from "../truth/varWrite.js";
+import { parseSys } from "../truth/sysStore.js";
+import { applyVarDeltas, varWriteDepsOf } from "../truth/varWrite.js";
 import { spanToMinutes, type AdjudicationPackage, type Event } from "../types.js";
 import { cleanupChannels, playableCharacters, rederiveGroups, setAppearance } from "./scheduleEffects.js";
 
@@ -44,7 +45,7 @@ export function planGmAdjudication(draft: TruthStores, ctx: GmAdjudicationContex
   const changes = applyVarDeltas(
     draft,
     pkg.deltas,
-    varWriteDepsOf(parseWorldSys(draft.world.world._sys), new Set(Object.keys(known))),
+    varWriteDepsOf(parseSys(draft.sys.saveData()), new Set(Object.keys(known))),
   );
   // durations：时长 → 到期时刻（timer = 世界时钟 + spanToMinutes(span)，契约保证非 0）
   for (const t of pkg.durations) {
@@ -64,8 +65,8 @@ export function planGmAdjudication(draft: TruthStores, ctx: GmAdjudicationContex
   }
   // 任何 GM 激活后：周期计数 X 清零 + 立即触发标记复位
   changes.push(
-    draft.world.writeRaw("_sys.cycles_since_gm", 0),
-    draft.world.writeRaw("_sys.gm_trigger", false),
+    draft.sys.writeRaw("cycles_since_gm", 0),
+    draft.sys.writeRaw("gm_trigger", false),
   );
   // 本轮被结算的成员转入后台：acted 清零（先攻值不重投，回前台时行动状态已重置）+ 在场位复位
   for (const t of pkg.durations) {
@@ -76,17 +77,25 @@ export function planGmAdjudication(draft: TruthStores, ctx: GmAdjudicationContex
   changes.push(...rederiveGroups(draft, ctx.rollDice));
   // 频道清理 pass：全部持有者同地 → 全清 + 非组位置持有者按 leave 处理
   changes.push(...cleanupChannels(draft));
-  // 事件逐条 commit（事件数 = GM 计划的新组划分；tags 空数组 = 程序补全本轮全部行动者的 cid 类 TAG 一级）
+  // 事件逐条 commit（事件数 = GM 计划的新组划分；元素 = 全字段末端外壳——
+  // GM text → content.value、tags → content.tags（空数组程序补全本轮行动者 cid 类 TAG 一级），
+  // t/kind/location 等字段的 tags 留空（挂哪些字段是 GM 输出契约的事，结构先立）
   const committed: Event[] = [];
   for (const ev of pkg.events) {
+    const shell = <T extends string | number>(value: T): { value: T; tags: { name: string; level: number }[] } => ({
+      value,
+      tags: [],
+    });
     const event: Event = {
-      id: ctx.allocateEventId(),
-      t: draft.world.clock,
-      seq,
-      kind: "world",
-      ...(ev.location !== undefined ? { location: ev.location } : {}),
-      tags: ev.tags.length > 0 ? ev.tags : roundCids.map((cid) => ({ name: cid, level: 1 })),
-      payload: ev.text,
+      id: shell(ctx.allocateEventId()),
+      t: shell(draft.world.clock),
+      seq: shell(seq),
+      kind: shell("world" as const),
+      ...(ev.location !== undefined ? { location: shell(ev.location) } : {}),
+      content: {
+        value: ev.text,
+        tags: ev.tags.length > 0 ? ev.tags : roundCids.map((cid) => ({ name: cid, level: 1 })),
+      },
     };
     draft.events.append(event);
     committed.push(event);
@@ -99,6 +108,6 @@ export function planGmAdjudication(draft: TruthStores, ctx: GmAdjudicationContex
     }
   }
   // 工作集清算（改到 GM 步，不再等正文步）
-  draft.world.setPipeline({ working_set: [] });
+  draft.sys.setPipeline({ working_set: [] });
   return { changes, committed };
 }

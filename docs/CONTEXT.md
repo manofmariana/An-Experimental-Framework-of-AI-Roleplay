@@ -5,11 +5,11 @@
 ## Language
 
 **Event（事件）**:
-真相层唯一记录单元，由 GM 裁决写入；`@CID` 占位，渲染时身份替换。**tags = 内容侧 TAG 挂载 `{name, level}[]`**——GM 为实际感知者挂 cid 类 TAG（level 1，谁实际感知挂谁），空数组 = 程序补全本轮全部行动者的 cid 类 TAG 一级；感知过滤 = 按读者有效 TAG 集求值（adr/0002），无地点成分、无其他通道。事件存结构化 clock 值，自然语言时间头在注入/显示时按世界包时段映射表机械渲染。**GM 每轮产出的事件数 = 其计划划分的新组数**：普通周期 = 1 个；组分裂/重组时各新组各一个事件。裁决包字段：`events[{text,tags,location?}]` / `narrativity` / `deltas` / `durations` / `location`，且**先写事件、后定 durations/location**——叙事推理自然约束变量分配。写作纪律（提示词协议层，不做程序强校验）：**摘要制**——不完整转述台词、对内容与情节做意义性总结；禁人称代词；保言行顺序、只记已发生；条目记录事实而非视角、禁止重合。
+真相层唯一记录单元，由 GM 裁决写入；`@CID` 占位，渲染时身份替换。**元素 = {id, t, seq, kind, location?, content} 全字段末端外壳**（{value, tags, formula?}，四大内容根同构——时间和地点同样是可挂 tags 的调取对象；实际挂哪些字段归 GM 输出契约）。可见性挂载落在 content 末端——GM 为实际感知者挂 cid 类 TAG（level 1，谁实际感知挂谁），空数组 = 程序补全本轮全部行动者的 cid 类 TAG 一级；感知过滤 = 引擎按读者有效 TAG 集逐末端求值（adr/0002），无地点成分、无其他通道。t 存结构化 clock 值，自然语言时间头在注入/显示时按 world.time 的 periods 时段表机械渲染。**GM 每轮产出的事件数 = 其计划划分的新组数**：普通周期 = 1 个；组分裂/重组时各新组各一个事件。裁决包字段：`events[{text,tags,location?}]` / `narrativity` / `deltas` / `durations` / `location`，且**先写事件、后定 durations/location**——叙事推理自然约束变量分配。写作纪律（提示词协议层，不做程序强校验）：**摘要制**——不完整转述台词、对内容与情节做意义性总结；禁人称代词；保言行顺序、只记已发生；条目记录事实而非视角、禁止重合。
 _Avoid_: 记忆条目、聊天记录；"摘要"（提示词层框架叫法，非领域术语）
 
 **World Clock（世界时钟）**:
-世界时间落盘唯一表示为 `world.time={y,m,d,h,min}`；逻辑 clock getter 以 y=365d、m=30d 派生绝对分钟，setClock 反写结构时间并记录可逆 `world.time` VarChange。自然语言头为"Y年M月D日·时段"。`time.json.start` 等于初始 world.time，仅保留开局锚与 periods 时段表。
+世界时间落盘唯一表示 = world 变量树的 time 系统分支（时间锚 {y,m,d,h,min} 五末端 + periods 时段表结构化数组）；逻辑 clock getter 以 y=365d、m=30d 从锚派生绝对分钟，setClock 反写锚末端（保留外壳 tags）并记录可逆 `world.time` VarChange。自然语言头为"Y年M月D日·时段"。初始时间 = 新档 world.time 锚（代码缺省原点开局；世界作者经状态直编调整，档内随 world.json）。
 _Avoid_: 回合数、轮次时间
 
 **Timer（到期时刻）**:
@@ -21,7 +21,7 @@ _Avoid_: 倒计时、剩余时间（注入层派生渲染，非变量）；"GM �
 _Avoid_: duration、偏移量、倒计时
 
 **Character（角色）**:
-主控角色（isPlayer=true，缺省 C0）与 NPC 的统称；所有角色状态完全同构：name/gender/age/personality/reaction/location/timer/group/initiative/level/omniscience/isPlayer/channel/acted/appearance/relations/long_term_memory/systemTags/vars（appearance = 在场位，见同名词条；relations = `{cid, name?, impression?}[]` 数组，消费侧按元素 cid 字段匹配；固有 TAG 不在顶层，存变量树 `vars.attachtags` 末端；systemTags = 系统末端内容侧 TAG 侧车，系统分支末端路径（数组层用 `键[下标]` 语法）→ {name, level}[]，只经直编修改）。角色决策包：`inner` 必填（内心活动与意图），`action` 与 `dialogue` 至少其一，关系实际变化时追加 `relations`，调度指令追加 `markers`，`visibility` 声明可见域（A = 只对同频道 / B = 只对同地，缺省 = 组内全体；条目级 TAG 挂载由程序按焊死映射派生，见 Working Set 词条）；角色决策不含时长，Span 仅供 GM 裁决包 `durations` 字段。
+主控角色（isPlayer=true，缺省 C0）与 NPC 的统称；所有角色状态完全同构：cid/name/gender/age/personality/reaction/location/timer/group/initiative/level/omniscience/isPlayer/channel/acted/appearance/relations/long_term_memory/systemTags/vars（**cid = 自身 CID 字符串，建角时物化（= manifest.id）、系统只读**（deltas/varWrite 拒写），投影视图呈 characters 根 `cid` 系统末端（`{characters[*].cid}` 可被路径调用、可被 vars-tags 附加规则瞄准）；appearance = 在场位，见同名词条；relations = `{cid, name?, impression?}[]` 数组，消费侧按元素 cid 字段匹配；固有 TAG 不在顶层，存变量树 `vars.attachtags` 末端；systemTags = 系统末端内容侧 TAG 侧车，系统分支末端路径（数组层用 `键[下标]` 语法）→ {name, level}[]，只经直编修改）。角色决策包：`inner` 必填（内心活动与意图），`action` 与 `dialogue` 至少其一，关系实际变化时追加 `relations`，调度指令追加 `markers`，`visibility` 声明可见域（A = 只对同频道 / B = 只对同地，缺省 = 组内全体；条目级 TAG 挂载由程序按焊死映射派生，见 Working Set 词条）；角色决策不含时长，Span 仅供 GM 裁决包 `durations` 字段。
 _Avoid_: 仅指 NPC；通用 `changes` 字段
 
 **isPlayer**:
@@ -75,7 +75,7 @@ _Avoid_: 主持人、旁白、DM
 _Avoid_: 圈、回合
 
 **Action Order Table（行动顺序表）**:
-顺序 = **派生**（只有前台组用得到）← 角色 initiative 变量（{先攻值，组编号}）现排；**已行动位 = 角色 acted 变量**（快照落盘，随 changes 落账、回溯可逆——程序在角色行动后置位，周期完成/后台重置时清零；不做 archive 回扫——恢复时无需判断步骤在不在本周期内）。成员增减兼容：接受者应答即程序置其已行动位（后台回归时 = 无视先攻次序的优先行动，插入对应先攻位置）；离开者从当前成员集移除，完成判定只看当前成员。**周期计数 X = `_sys` 程序键**（`world._sys.cycles_since_gm`）：周期完成 +1，任何 GM 激活后清零；X 达阈值 N → 周期末 GM。中途 GM 的补完自动成立（不动已行动位，无特例）。GM/正文步不参与调度语义。
+顺序 = **派生**（只有前台组用得到）← 角色 initiative 变量（{先攻值，组编号}）现排；**已行动位 = 角色 acted 变量**（快照落盘，随 changes 落账、回溯可逆——程序在角色行动后置位，周期完成/后台重置时清零；不做 archive 回扫——恢复时无需判断步骤在不在本周期内）。成员增减兼容：接受者应答即程序置其已行动位（后台回归时 = 无视先攻次序的优先行动，插入对应先攻位置）；离开者从当前成员集移除，完成判定只看当前成员。**周期计数 X = sys 根程序计数键**（`sys.cycles_since_gm`，经 `sys.*` VarChange 通道落账）：周期完成 +1，任何 GM 激活后清零；X 达阈值 N → 周期末 GM。中途 GM 的补完自动成立（不动已行动位，无特例）。GM/正文步不参与调度语义。
 _Avoid_: 轮游标、pipeline 快照、组级先攻排序存储、archive 回扫定行动状态
 
 **Continuous Scene（连续场景）**:
@@ -107,38 +107,45 @@ Incident GM 的产出：**非 Event 的描述文本 + 可选变量变更（delta
 _Avoid_: 突发事件记录、突发 Event
 
 **TAG（逻辑标签）**:
-（过滤内核、注册表、事件/lore/vars 三源过滤接入均已落地）一切可注入内容可见性的唯一判定通货。内容侧挂载 = {name, level}（level ∈ {1..7}，等级是挂载处的可调属性、与 TAG 身份解绑：同级 = 或、跨级 = 与）；判定式 T =（一级组取 ∨）∧ … ∧（七级组取 ∨），空组无约束，**无 TAG = 恒通过**。对象侧 = 纯名称集合（落盘 ∪ 程序派生——自身 cid 恒在、当前地点名、当前频道编号（若持有）、工具 AV 临时挂载（频道持有者及其同地成员持 A/V 纯名，组装时并入、不常驻变量）），无等级——`vars.tags` 池末端值即 string[] 纯名集合（程序消费角色 TAG 集唯一路径）；GM 授予/摘除角色 TAG = 经 deltas 直写 `vars.attachtags` 末端（string_list 纯名数组全量替换，注册名集合校验）。全知分层 = **全知权重** + 虚拟挂载（见"全知权重"词条）。过滤返回 = {status, content, matched}：status = pass/fail 显式枚举；matched = 共同持有记号集（含虚拟挂载；cid/channel/location 开放类别命中归一化为类别记号，每角色每类至多一个）；**匹配扁平**——等级只参与判定式，matched 从对象侧持有出发取交集。condition = 注册表可选比对内容（纯内容侧，按读者变量求真，被虚拟挂载覆盖的组跳过求值）。来源三路：世界包预设 / GM 运行期增改与授予 / 程序自动安插（挂载规则代码焊死）。判定代数见 adr/0007。
+（过滤内核、注册表、四大内容根统一引擎过滤均已落地）一切可注入内容可见性的唯一判定通货。内容侧挂载 = {name, level}（level ∈ {1..7}，等级是挂载处的可调属性、与 TAG 身份解绑：同级 = 或、跨级 = 与）；判定式 T =（一级组取 ∨）∧ … ∧（七级组取 ∨），空组无约束，**无 TAG = 恒通过**。对象侧 = 纯名称集合（落盘 ∪ 程序派生——自身 cid 恒在、当前地点名、当前频道编号（若持有）、工具 AV 临时挂载（频道持有者及其同地成员持 A/V 纯名，组装时并入、不常驻变量）），无等级——`vars.tags` 池末端值即 string[] 纯名集合（程序消费角色 TAG 集唯一路径）；GM 授予/摘除角色 TAG = 经 deltas 直写 `vars.attachtags` 末端（string_list 纯名数组全量替换，注册名集合校验）。全知分层 = **全知权重** + 虚拟挂载（见"全知权重"词条）。过滤返回 = {status, content, matched}：status = pass/fail 显式枚举；matched = 共同持有记号集（含虚拟挂载；cid/channel/location 开放类别命中归一化为类别记号，每角色每类至多一个）；**匹配扁平**——等级只参与判定式，matched 从对象侧持有出发取交集。condition = 注册表可选比对内容（纯内容侧，按读者变量求真，被虚拟挂载覆盖的组跳过求值）。来源三路：世界包预设 / GM 运行期增改与授予 / 程序自动安插（挂载规则代码焊死）。判定代数见 adr/0007。
 _Avoid_: 扁平文本标签各自解释（已废止）；反 TAG；对象侧必要/选择器/挂点 ID（ID 体系已废除）；充分/必要命名（等级表达式取代）
+
+**角色感知（TAG 挂载范式）**:
+让世界角色互见「谁在场」的声明式范式（baitan 为首个用例），代码侧零焊死挂载：TAG 注册表登记普通条目（非 system）；角色持有 = 各角色 manifest `attachtags` 纯名（人类挂载，程序不分发）；内容侧 = vars-tags 附加文件瞄准 characters 根 `cid` 系统末端（如 `{角色感知@1, cid 类@2}`——cid 类按属主分发；根级 `{cid 类@1}` 兜底条目级联在先，同名去重后 cid 末端实际挂载 = {自身 cid@1, 角色感知@1}，同级取或）。效果：持「角色感知」的读者全量遍历 `{characters[*].cid}` 时在场者皆放行，matched 区分自己（[cid, 角色感知]，开放类别命中归一化）/他人（[角色感知]），占位符分支据此给自我标注；name/location 末端附加 `{cid 类@1}` 保持只见自身（cast 保护）；后台角色由 fappear 虚拟挂载自然剔除。
 
 **全知权重（Omniscience Weight）**:
 角色恒定系统字段 `omniscience`（值域 0-6，默认 0；不进白名单写通道，改动走 WebUI 直编），0 = 常规角色；全知覆盖面的唯一语义来源（对象侧不挂字面"全知"TAG，matched 的"全知"记号由权重派生）。求值时（不落盘）按读者权重对每一级 ≤ N 的非空 TAG 组追加虚拟"全知"；**强制全知只对七级非空组追加、仅 GM 持有**（GM 与正文 = 权重 6 + 持强制全知 = 全集可见）。**全知打破** = 对权重 N 的角色隐瞒只需内容挂一个 N+1 级 TAG；GM 永不可被打破（不存在 8 级）。世界包角色定义给初值，GM 创建热角色时可设，之后恒定（不开放裁决包修改，改动走 WebUI 直编）。
 _Avoid_: 权重 7（与强制全知重复，不开放）；把"全知"当普通 TAG 挂给角色
 
 **Appearance（在场位）**:
-角色系统布尔变量 `appearance`（默认 false；结构编辑只展示不可改），程序维护、全部走 writeRaw 白名单通道随 changes 落账（回溯可逆）：**组弹出前台 → 成员置 true**（轮首 setup 段）；**结算进后台 → 置 false**（GM 裁决 durations 覆盖者）；**入组置 true**（远程 confirm 按组籍、召回）；**离组置 false**（leave 标记、频道清理 pass 的离场处理）；新会话初始前台组在 init 提交时置位。消费 = vars 源在场性过滤：对 `appearance=false` 角色的全部末端虚拟挂载 `{fappear, 6 级}`（不落盘、不污染 TAG 池、等级代码焊死；fappear = system 注册条目）——权重 6 全知（GM/正文）虚拟全知覆盖六级组恒见，权重 1-5 全知 NPC 不见后台，权重 0 常规角色不见后台，**对象侧持 fappear 纯名 = 感知后台 escape hatch**；**自豁免**：属主 = 读者的子树不挂载（自己的变量自己恒见——邀请应答时受邀者仍在后台，是后台读者的唯一场景）。vars 源不做任何专门抓取（一切读者全量遍历），snapshot/cast/group_members/contacts 等扁平源有自己的归属判断、不受影响。
+角色系统布尔变量 `appearance`（默认 false；结构编辑只展示不可改），程序维护、全部走 writeRaw 白名单通道随 changes 落账（回溯可逆）：**组弹出前台 → 成员置 true**（轮首 setup 段）；**结算进后台 → 置 false**（GM 裁决 durations 覆盖者）；**入组置 true**（远程 confirm 按组籍、召回）；**离组置 false**（leave 标记、频道清理 pass 的离场处理）；新会话初始前台组在 init 提交时置位。消费 = characters 根在场性过滤：对 `appearance=false` 角色的全部末端虚拟挂载 `{fappear, 6 级}`（不落盘、不污染 TAG 池、等级代码焊死；fappear = system 注册条目）——权重 6 全知（GM/正文）虚拟全知覆盖六级组恒见，权重 1-5 全知 NPC 不见后台，权重 0 常规角色不见后台，**对象侧持 fappear 纯名 = 感知后台 escape hatch**；**自豁免**：属主 = 读者的子树不挂载（自己的变量自己恒见——邀请应答时受邀者仍在后台，是后台读者的唯一场景）。characters 根不做任何专门抓取（一切读者全量遍历），snapshot/cast/group_members/contacts 等组装源有自己的归属判断、不受影响。
 _Avoid_: 把在场性当抓取层归属判断（已翻案）；fappear 落盘挂载
 
 **末端（Terminal）**:
-可注入内容的统一模型：事件/lore/工作集条目 = 天生末端；变量树末端 = **末端类型的实例**——末端类型 = 复合结构类型（对象/记录）且所有直接属性均为原始类型（number/string/boolean/string_list/tag_list，不再拥有子属性）的类型；判定静态（只看模板声明，与实例形态无关——"叶子对象"是派生事实，不是定义）。`{value, tags, formula?}` 外壳是唯一末端类型：模板不存在裸原始属性（`name: string` 是 `name: 外壳(string)` 的简写），故 types 结构别名与内联元素结构的直接属性必为复合（外壳或结构化数组）、其实例 = 容器对象或数组元素对象。tags = tag_list 原子值，其 {name, level} 值元素不是树节点（递归在定义上不存在）。结构化数组（`{array: 元素声明}`）不是末端：实例 = 元素对象数组，元素身份 = 数字下标（实例键不存在），tags 只落在元素内末端上——数组节点与元素对象自身没有挂载位，指向它们的附加条目扇出到其下全部末端。**只有末端携带 TAG、只有末端可被路径调用**：路径必须解析到末端实例（裸路径默认取 value，`.tags` 字段选择子原子返回 TAG 列表，路径不得穿越末端）；过滤逐末端求值，求值对象 = 末端实例的 tags 属性。
+可注入内容的统一模型：四大内容根（events/lores/characters/world）同构——事件元素（{id, t, seq, kind, location?, content}）与 lore 条目（{id, content, enabled?}）的**每个字段都是末端外壳**，变量树末端 = **末端类型的实例**——末端类型 = 复合结构类型（对象/记录）且所有直接属性均为原始类型（number/string/boolean/string_list/tag_list，不再拥有子属性）的类型；判定静态（只看模板声明，与实例形态无关——"叶子对象"是派生事实，不是定义）。`{value, tags, formula?}` 外壳是唯一末端类型：模板不存在裸原始属性（`name: string` 是 `name: 外壳(string)` 的简写），故 types 结构别名与内联元素结构的直接属性必为复合（外壳或结构化数组）、其实例 = 容器对象或数组元素对象。tags = tag_list 原子值，其 {name, level} 值元素不是树节点（递归在定义上不存在）。结构化数组（`{array: 元素声明}`）不是末端：实例 = 元素对象数组，元素身份 = 数字下标（实例键不存在），tags 只落在元素内末端上——数组节点与元素对象自身没有挂载位，指向它们的附加条目扇出到其下全部末端。**只有末端携带 TAG、只有末端可被路径调用**：路径必须解析到末端实例（裸路径默认取 value，`.tags` 字段选择子原子返回 TAG 列表，路径不得穿越末端）；过滤逐末端求值，求值对象 = 末端实例的 tags 属性。
 _Avoid_: 按实际数据形态判定可否挂 TAG（含"叶子对象"式实例判定）；把 tag_list 值元素当树节点
 
 **TAG 注册表**:
-世界包 `tags.json`（装配时读取，缺文件拒装），档内副本 = `world.json` 系统分支 `_sys.tagRegistry`。名称即键；条目 = {name, description?, condition?, category?, system?}，各字段均为外壳末端（name 冗余为末端使名称可被路径调用；condition = 容器，含 path/op/value 三原始值型末端）、tags 恒空（注册表分支恒不挂 TAG，可读性由抓取层控制）——GM 经占位符路由一处读全。category = 封闭枚举 {cid, channel, location}：有类别按类别声明登记（实例合法性程序判定；实例值 GM 经变量注入可见，不重复登记）——三个开放类别各有一条同名 system 类别条目（system + category 同现，加载时缺一条即拒装）；写值校验类别化（名称合法 = 条目名 ∪ cid 现存角色 CID 实例 ∪ channel/location 声明即放行；CID 形态名按 cid 判定，未知 CID 拒绝），无类别按名称登记。system 条目 = 程序化只读参考（真实挂载与求值逻辑由代码持有，加载校验与代码常量一致，任何层不得占用同名）；非程序化条目 = 求值真实数据源，GM 运行期增改走裁决包结构化字段、随 changes 落账。
+世界包 `tags.json`（装配时读取，缺文件拒装），档内副本 = 第五根 `sys.json` 的 tagRegistry。名称即键；条目 = {name, description?, condition?, category?, system?}，各字段均为外壳末端（name 冗余为末端使名称可被路径调用；condition = 容器，含 path/op/value 三原始值型末端）、tags 恒空（注册表分支恒不挂 TAG，可读性由抓取层控制）——GM 经占位符路由一处读全。category = 封闭枚举 {cid, channel, location}：有类别按类别声明登记（实例合法性程序判定；实例值 GM 经变量注入可见，不重复登记）——三个开放类别各有一条同名 system 类别条目（system + category 同现，加载时缺一条即拒装）；写值校验类别化（名称合法 = 条目名 ∪ cid 现存角色 CID 实例 ∪ channel/location 声明即放行；CID 形态名按 cid 判定，未知 CID 拒绝），无类别按名称登记。system 条目 = 程序化只读参考（真实挂载与求值逻辑由代码持有，加载校验与代码常量一致，任何层不得占用同名）；非程序化条目 = 求值真实数据源，GM 运行期增改走裁决包结构化字段、随 changes 落账。
 
 **Variable Tree（变量树）**:
 全部变量的统一模型（存储已落地）：容器/结构化数组/末端三类节点，末端 = `{value, tags, formula?}` 外壳类型的实例（唯一末端类型，见"末端"词条判定式）。末端身份由 **Variable Template** 静态声明，与实际数据形态无关；只有末端携带 TAG、可被路径调用。世界与角色同一树模型、不同根；系统字段存储层保持顶层专用通道，命名空间（统一路径语法）与树视图（只读分支投影）两层统一。容器子键 = 人类可读名称（禁保留名 value/tags/formula 与下标括号）；结构化数组 = `{array: 元素声明}`（元素 = `{type}` 引用 types 结构别名或 `{children}` 内联对象结构，元素根不得又是数组），路径经 `键[数字]`（精确下标）/ `键[*]`（通配）语法穿越（如 `items[0].name` / `items[*].name`）。valueType 封闭集 = number/string/boolean/string_list/tag_list（{name, level} 数组原子值；string_list 等扁平数组 = 一个末端值整体，与结构化数组不同类）。保留名约定：`attachtags` = 普通 string_list 末端（对象侧纯名集合），容器实例附加给属主的 TAG（角色根部 = 固有 TAG，GM 挂 TAG = 直写此末端）；character 模板根必含 `tags` 从动末端（tag 池 = string_list，恒从动，程序消费唯一路径 `characters.{cid}.vars.tags`）。**系统声明分支**（代码持有常量，不进世界包模板文件）：角色顶层字段与调度字段的声明子树，模板解析时并入 character 根（与世界作者声明同名 = 拒装），角色全部字段与 vars 树因而是同一棵树的标准末端（存储层物理布局不变，走投影）；系统末端外壳 tags 存 Character 的 systemTags 侧车。
 _Avoid_: vars 扁平表（已废除）
 
 **Variable Template（变量模板）**:
-末端身份的唯一出处：世界包 `vars-template.json`（装配时读取，缺文件拒装；档内副本 `_sys.varsTemplate`），{world, character, types} 三棵声明树（types = 纯结构别名注册表：每类型只能 `{children}`，引用必须可解析且无环，只作数组元素结构复用），character 声明树全体角色共享、个体差异在实例侧。配套的 TAG 附加文件（`vars-tags.json` / `_sys.varsTags`）与其同构（数组节点 = `{tags, array}` 整型挂载）：节点级条目向下级联到每个末端（根节点自身也可挂条目 = 级联到该根全部末端），按模板末端位置解析再映射到实例，cid 类 TAG 按实例属主分发（每角色仅自身 CID 一个；「每角色全部末端挂自身 CID」= character 根挂一条 {category:"cid"} 条目）。结构编辑与实例写值解耦：无声明的实例路径 = 校验拒绝，有声明无实例 = 取不到数的定义空行为。
+末端身份的唯一出处：世界包 `vars-template.json`（装配时读取，缺文件拒装；档内副本 = sys.json 的 varsTemplate），{world, character, types} 三棵声明树（types = 纯结构别名注册表：每类型只能 `{children}`，引用必须可解析且无环，只作数组元素结构复用），character 声明树全体角色共享、个体差异在实例侧。配套的 TAG 附加文件（`vars-tags.json` / sys.json 的 varsTags）与其同构（数组节点 = `{tags, array}` 整型挂载）：节点级条目向下级联到每个末端（根节点自身也可挂条目 = 级联到该根全部末端），按模板末端位置解析再映射到实例，cid 类 TAG 按实例属主分发（每角色仅自身 CID 一个；「每角色全部末端挂自身 CID」= character 根挂一条 {category:"cid"} 条目）。结构编辑与实例写值解耦：无声明的实例路径 = 校验拒绝，有声明无实例 = 取不到数的定义空行为。
 _Avoid_: 按实例实际形态推断结构
 
+**Content Roots（内容根 / 五根）**:
+存档数据的根分类：**四大内容根** events / lores / characters / world 全部同构——末端一律 {value, tags, formula?} 外壳、容器级联、路径路由（首段即根）、逐末端 TAG 过滤共用引擎同一套实现，四大根视为广义变量；**sys = 独立第五根**（sys.json：档内结构三件套 tagRegistry/varsTemplate/varsTags + 程序计数键 + pipeline + 全档唯一的 schema_version 盖章），不开放 GM deltas、不做内容过滤。archive.json 与 prompts.json 是独立文件，不在五根分类内。事件元素与 lore 条目的结构 = 系统固定结构（代码内登记供机检）；world/characters 的结构 = 变量模板声明。
+_Avoid_: 把 sys 当内容根参与 TAG 过滤；把 archive/prompts 算作内容根
+
 **Placeholder（占位符）**:
-提示词动态注入的唯一通道，全声明式、**定义读者无关**：定义 = {内容源引用, 段列}（静态段/条目段），取数范围由投影层按读者供给（角色经 TAG 过滤取可见内容、GM/正文取全量），同一占位符跨对象复用；存于档内副本 `prompts.json` 的 `placeholders` 键（出厂基线 = 世界包 `prompts/placeholders.json`，缺文件/校验失败拒装；Web「提示词」页结构化编辑，双模式——档内副本保存后下一轮激活生效、包基线新会话生效，整份提交过编辑期机检，失败零落盘）。条目段模板写全路由链路径，遍历 = 引擎沿路由链找差异点自动归并；条目 = 放行/不放行两侧缺省注入（放行框的路径调用 = 该条目允许的调用集）+ 各侧"匹配记号集 → 模板"精确匹配分支与缺省兜底；遍历序前置/置后两选项（置后条目首位轴须一致，编辑期机检）。扁平源条目 = 投影层已组装的扁平文本（`{_content}`），伪路径 `{_owner}` 暴露属主 CID。代码只保留两层非占位符逻辑：内容源投影（取数语义与派生逻辑）与身份替换后处理；输出保留 @CID。
-_Avoid_: 代码式 provider 注册表（已废除）；占位符内做身份替换；通配/有序子集分支匹配（归一化记号 + 精确匹配取代）
+提示词动态注入的唯一通道，全声明式、**定义读者无关**：定义 = {内容源二分类, 段列}（静态文本/条目）——**程序组装类**（source 在场，封闭枚举；每个组装源暴露 content/owner 两个固定可调用末端，命名路径 `{<source>.content}` / `{<source>.owner}`）｜ **本地落盘四根**（source 缺省，路径首段即根 events/lores/characters/world，模板直接写全路由链路径如 `{events[*].content}`）。取数范围由投影层按读者供给（四根全量供给、引擎逐末端过滤；仅 prose 读者两处取数截取 = 事件滑窗与 lores 参与者触发集），同一占位符跨对象复用；存于档内副本 `prompts.json` 的 `placeholders` 键（出厂基线 = 世界包 `prompts/placeholders.json`，缺文件/校验失败拒装；Web「提示词」页编辑 = nameplate 陈列 ↔ 编辑子页面 + 模板字段「引用」级联寻路插入原子 chip（菜单顶层两大类 = 路径 / 程序；存储仍为 `{路径}` 纯文本；**source 无手选控件——保存时由全部路径调用推导**，组装类全同一 source 且不混落盘根，本地预检 + 服务端机检同口径），双模式——档内副本保存后下一轮激活生效、包基线新会话生效，整份提交过编辑期机检，失败零落盘）。落盘根遍历 = 引擎沿路由链找差异点自动归并；条目 = 放行/不放行两侧缺省注入（放行框的路径调用 = 该条目允许的调用集）+ 各侧"匹配记号集 → 模板"精确匹配分支与缺省兜底；遍历序前置/置后两选项（置后条目首位轴须一致，编辑期机检）；**条目段可携 identity:false = 关闭本段身份替换后处理**（缺省 = 做；需要直接输出 @CID/cid 原文的条目使用）。代码只保留两层非占位符逻辑：内容源投影（取数语义与派生逻辑）与身份替换后处理（events 根 string 末端经引擎过 cid 模式）；输出保留 @CID。
+_Avoid_: 代码式 provider 注册表（已废除）；占位符内做身份替换；通配/有序子集分支匹配（归一化记号 + 精确匹配取代）；{_content}/{_owner} 伪路径（已弃用，命名路径取代）
 
 **Content Source Projection（内容源投影）**:
-占位符管线的第一道闸（抓取先于过滤）：RenderHost 实现，按读者限定同一内容源的取数范围（角色 = TAG 过滤后的可见事件/lore + 同值批隔离后逐条目过滤的工作集，GM/正文 = 全量；vars 源一切读者全量遍历、统一走第二道闸过滤），附 TAG 过滤上下文（读者有效 TAG 集 = 落盘池 ∪ 程序派生（自身 cid/当前地点名/当前频道编号/工具 AV 临时挂载）+ 全知权重）与身份替换后处理统一出口。全部取数逐调用从最新真相现算（cast 现建、lore 逐调用渲染档内副本），无跨调用缓存。占位符定义读者无关——读者差异全部收敛在本层。
+占位符管线的第一道闸（抓取先于过滤）：RenderHost 实现，按读者限定同一内容源的取数范围（落盘四根全量供给——仅 prose 读者的事件滑窗与 lores 参与者触发集两处截取；同值批隔离后逐条目过滤的工作集；过滤统一走引擎第二道闸），附 TAG 过滤上下文（读者有效 TAG 集 = 落盘池 ∪ 程序派生（自身 cid/当前地点名/当前频道编号/工具 AV 临时挂载）+ 全知权重）与身份替换后处理统一出口。characters 根每角色 = 系统分支投影（cid/name/location 等类型化字段呈标准末端）+ vars 树；world/characters 两根供给前做 vars-tags 附加的读取期合并（cid 类按属主分发、不物化进实例值）。全部取数逐调用从最新真相现算（cast 现建、lore 逐调用读档内副本），无跨调用缓存。占位符定义读者无关——读者差异全部收敛在本层。
 _Avoid_: 按对象分注册表/取数逻辑散落在 activation
 
 **Function Matrix（对象×功能矩阵）**:

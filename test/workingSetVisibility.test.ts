@@ -28,7 +28,7 @@ const CATALOG: PlaceholderCatalog = {
       {
         kind: "entry",
         pass: {
-          template: "{_content}",
+          template: "{working_set.content}",
           branches: [{ tokens: ["vis"], template: "【失聪】只看见 @C1001 嘴唇在动，听不清内容。" }],
         },
       },
@@ -40,7 +40,7 @@ const CATALOG: PlaceholderCatalog = {
     segments: [
       {
         kind: "entry",
-        pass: { template: "{_content}" },
+        pass: { template: "{working_set.content}" },
         fail: { template: "【感知到一阵动静，但无从得知内容】" },
       },
     ],
@@ -95,7 +95,7 @@ function makeTruth(): TruthStores {
     { cid: "C1001", decision: { inner: "内心", dialogue: CHANNEL_SPEECH, visibility: "A" } },
     { cid: "C1001", decision: { inner: "内心", action: LOCAL_ACTION, visibility: "B" } },
   ];
-  truth.world.setPipeline({ working_set: entries });
+  truth.sys.setPipeline({ working_set: entries });
   return truth;
 }
 

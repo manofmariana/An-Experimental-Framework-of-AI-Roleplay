@@ -10,24 +10,29 @@ import { ArchiveStore } from "../src/truth/archive.js";
 import { CharactersStore } from "../src/truth/charactersStore.js";
 import { EventsStore } from "../src/truth/events.js";
 import { LoreStore } from "../src/truth/loreStore.js";
-import { SAVE_SCHEMA_VERSION } from "../src/truth/saveSchema.js";
 import { cloneTruth, type TruthStores } from "../src/truth/stores.js";
-import { TimeStore } from "../src/truth/timeStore.js";
+import { SysStore } from "../src/truth/sysStore.js";
 import type { VarChange } from "../src/truth/varChanges.js";
 import { WorldStore } from "../src/truth/worldStore.js";
-import { buildManifest, buildPromptsStore, buildVarsTemplate, buildWorldSysRaw } from "./builders/index.js";
+import {
+  buildManifest,
+  buildPromptsStore,
+  buildSysFile,
+  buildVarsTemplate,
+  buildWorldTree,
+} from "./builders/index.js";
 
 // ---------------------------------------------------------------------------
 // prepareNextCommand（unit：纯内存 draft + 注入回调，零 IO）——
 // 空 rules 短路；固定点收敛 + commit 恰好一次；签名重复/超迭代上限 → 弃稿报错。
 // ---------------------------------------------------------------------------
 
-const START = { y: 0, m: 1, d: 1, h: 0, min: 0 };
 const DECL = buildVarsTemplate().characterVars;
 
 function makeTruth(): TruthStores {
   return {
-    world: WorldStore.initial({ time: START }, buildWorldSysRaw()),
+    world: new WorldStore(buildWorldTree(undefined, { y: 0, m: 1, d: 1, h: 0, min: 0 })),
+    sys: new SysStore(buildSysFile()),
     characters: CharactersStore.fromManifests(
       [buildManifest({ id: "C0", name: "玩家", isPlayer: true, timer: 0 })],
       0,
@@ -36,7 +41,6 @@ function makeTruth(): TruthStores {
     events: new EventsStore(),
     archive: new ArchiveStore(),
     loreStore: LoreStore.initFrom([]),
-    timeStore: new TimeStore({ schema_version: SAVE_SCHEMA_VERSION, start: START, periods: [{ key: "白天", from: 0, to: 24 }] }),
     promptsStore: buildPromptsStore(),
   };
 }

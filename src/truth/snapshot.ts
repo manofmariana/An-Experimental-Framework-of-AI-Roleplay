@@ -1,5 +1,5 @@
 import type { CharacterState } from "./charactersStore.js";
-import { minutesToWorldTime, type TimeAnchor } from "./timeStore.js";
+import { minutesToWorldTime, type TimeAnchor } from "../vars/systemWorld.js";
 
 /**
  * 快照注入/展示层的 timer 渲染：程序内部状态始终是"分钟标量"（或 null = 无计时器），

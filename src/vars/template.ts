@@ -41,6 +41,7 @@
 import { z } from "zod";
 import { compileFormula, type CompiledFormula } from "../shared/formula.js";
 import { SYSTEM_CHAR_CHILDREN, SYSTEM_CHAR_KEYS, SYSTEM_CHAR_TYPES } from "./systemChar.js";
+import { SYSTEM_WORLD_CHILDREN, SYSTEM_WORLD_KEYS } from "./systemWorld.js";
 
 // ---------------------------------------------------------------------------
 // 声明树类型（编译产物）
@@ -396,11 +397,21 @@ export function parseVarsTemplate(raw: unknown): VarsTemplate {
   };
 
   const worldPending: ConvertCtx["pendingFormulas"] = [];
-  const world = convertNode(parsed.world, { resolveType, pendingFormulas: worldPending }, "world");
-  if (world.kind !== "container") {
+  const worldAuthor = convertNode(parsed.world, { resolveType, pendingFormulas: worldPending }, "world");
+  if (worldAuthor.kind !== "container") {
     throw new Error("world 根必须是容器节点");
   }
-  compilePendingFormulas(world, worldPending);
+  compilePendingFormulas(worldAuthor, worldPending);
+  // world 根系统声明分支并入（time 容器：时间锚 + 时段表；同名 = 拒装，冲突报错带名）
+  for (const key of SYSTEM_WORLD_KEYS) {
+    if (Object.hasOwn(worldAuthor.children, key)) {
+      throw new Error(`world 根声明 "${key}" 与系统声明分支同名冲突`);
+    }
+  }
+  const world: ContainerDecl = {
+    kind: "container",
+    children: { ...SYSTEM_WORLD_CHILDREN, ...worldAuthor.children },
+  };
 
   const charPending: ConvertCtx["pendingFormulas"] = [];
   const characterVars = convertNode(parsed.character, { resolveType, pendingFormulas: charPending }, "character", true);

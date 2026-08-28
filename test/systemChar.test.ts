@@ -27,6 +27,7 @@ const TPL = parseVarsTemplate(TEMPLATE_RAW);
 
 function state(overrides?: Partial<CharacterProjectionInput>): CharacterProjectionInput {
   return {
+    cid: "C1001",
     name: "林雾",
     gender: "女",
     age: "26",
@@ -71,8 +72,8 @@ describe("系统声明分支并入", () => {
     assert.equal(TPL.resolve("character", "relations[*].cid").kind, "terminal");
   });
 
-  it("调度字段带 system 元数据；其余系统末端不带", () => {
-    for (const key of ["acted", "group", "channel", "timer", "isPlayer"]) {
+  it("cid 与调度字段带 system 元数据；其余系统末端不带", () => {
+    for (const key of ["cid", "acted", "group", "channel", "timer", "isPlayer"]) {
       assert.equal((TPL.character.children[key] as TerminalDecl).system, true, key);
     }
     for (const key of ["name", "reaction", "level", "omniscience", "long_term_memory"]) {
@@ -125,6 +126,7 @@ describe("系统声明分支并入", () => {
       categories: new Set(["cid"]),
       ownerCid: "C1001",
     });
+    assert.deepEqual(resolved.get("cid"), [{ name: "C1001", level: 1 }], "cid 系统末端同样可被附加规则瞄准");
     assert.deepEqual(resolved.get("name"), [{ name: "C1001", level: 1 }]);
     assert.deepEqual(resolved.get("location.name"), [{ name: "C1001", level: 1 }]);
     assert.deepEqual(resolved.get("relations[*].impression"), [{ name: "C1001", level: 1 }]);
@@ -140,6 +142,7 @@ describe("系统声明分支并入", () => {
 describe("projectCharacterTree", () => {
   it("系统分支值从类型化字段读出为标准末端外壳；relations 数组按下标投影；vars 树原样并入", () => {
     const tree = projectCharacterTree(state()) as Record<string, unknown>;
+    assert.deepEqual(tree["cid"], { value: "C1001", tags: [] });
     assert.deepEqual(tree["name"], { value: "林雾", tags: [] });
     assert.deepEqual(tree["reaction"], { value: 5, tags: [] });
     assert.deepEqual(tree["location"], {

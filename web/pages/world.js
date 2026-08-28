@@ -1,4 +1,4 @@
-/** 世界页：世界包选择器 + setting / tone-card 编辑器 + lorebook 条目表格（增删改、enabled 开关）
+/** 世界页：世界包选择器 + lorebook 条目表格（增删改、enabled 开关）
  *  + 变量结构区（变量模板声明树编辑 + TAG 附加编辑，双模式：有活跃会话 = 档内副本
  *  （GET /api/session/state/sys 取数，PUT /api/session/state 带 sys 保存，立即生效），
  *  无 = 包基线（PUT 包文件，新会话生效）；模式指示行常显）。
@@ -49,33 +49,9 @@ export async function renderWorld(root) {
   await load(picker.value);
 }
 
-/** 表单整体（两个 Markdown 编辑器 + lorebook 表格）；所有 URL 经捕获的 ctx 构造。 */
+/** 表单整体（lorebook 表格 + 变量结构区）；所有 URL 经捕获的 ctx 构造。 */
 async function renderWorldForm(host, ctx) {
   const data = await api(ctx.worldUrl());
-
-  // ---- 两个 Markdown 编辑器 ----
-  const editors = [
-    ["setting", "世界设定（GM 的 L1）", data.setting],
-    ["tone-card", "世界基调卡（正文的 L1）", data.toneCard],
-  ];
-  for (const [name, label, content] of editors) {
-    host.appendChild(el("h3", null, label));
-    const ta = el("textarea");
-    ta.rows = 10;
-    ta.value = content;
-    const save = el("button", "act", "保存");
-    const status = el("span", "muted");
-    save.onclick = async () => {
-      status.textContent = "";
-      try {
-        const resp = await api(ctx.worldFileUrl(name), "PUT", { content: ta.value });
-        status.textContent = ` ${resp.note}`;
-      } catch (err) {
-        status.textContent = ` 保存失败：${err.message}`;
-      }
-    };
-    host.append(ta, el("div"), save, status);
-  }
 
   // ---- lorebook 表格 ----
   host.appendChild(el("h3", null, "Lorebook 条目"));
@@ -99,18 +75,19 @@ async function renderWorldForm(host, ctx) {
       })
       .filter((t) => t.name !== "");
 
-  const addRow = (entry = { id: "", tags: [], content: "", enabled: true }) => {
+  // 条目 = {id, content, enabled?} 全末端外壳（TAG 挂载全部落在 content.tags）
+  const addRow = (entry) => {
     const tr = el("tr");
     const idIn = document.createElement("input");
-    idIn.value = entry.id;
+    idIn.value = entry?.id?.value ?? "";
     const tagsIn = document.createElement("input");
-    tagsIn.value = tagsToText(entry.tags);
+    tagsIn.value = tagsToText(entry?.content?.tags);
     const contentIn = el("textarea");
     contentIn.rows = 2;
-    contentIn.value = entry.content ?? "";
+    contentIn.value = entry?.content?.value ?? "";
     const enabledIn = document.createElement("input");
     enabledIn.type = "checkbox";
-    enabledIn.checked = entry.enabled !== false;
+    enabledIn.checked = entry?.enabled?.value !== false;
     const del = el("button", "act", "删");
     del.onclick = () => tr.remove();
     for (const node of [idIn, tagsIn, contentIn, enabledIn, del]) {
@@ -136,10 +113,9 @@ async function renderWorldForm(host, ctx) {
       const [idIn, tagsIn, contentIn, enabledIn] = inputs;
       if (!idIn.value.trim()) continue;
       entries.push({
-        id: idIn.value.trim(),
-        tags: textToTags(tagsIn.value),
-        content: contentIn.value,
-        enabled: enabledIn.checked,
+        id: { value: idIn.value.trim(), tags: [] },
+        content: { value: contentIn.value, tags: textToTags(tagsIn.value) },
+        enabled: { value: enabledIn.checked, tags: [] },
       });
     }
     try {
@@ -164,7 +140,7 @@ async function renderWorldForm(host, ctx) {
     mode = "session";
     varsTemplate = sysData.varsTemplate;
     varsTags = sysData.varsTags;
-    tagNames = Object.keys(sysData.tagRegistry ?? {}); // 档内模式注册表 = 会话 _sys.tagRegistry
+    tagNames = Object.keys(sysData.tagRegistry ?? {}); // 档内模式注册表 = 会话 sys 根 tagRegistry
     baseRevision = sysData.baseRevision;
   } catch (err) {
     if (!isNoActiveSession(err)) throw err;

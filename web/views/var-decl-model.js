@@ -595,8 +595,8 @@ export function createVarDeclModel({ template }) {
       } else {
         validateBaseName(spec.name);
       }
-      if (root === "world" && containerPath === "" && (spec.name === "time" || spec.name === "_sys")) {
-        throw new Error(`变量名 "${spec.name}" 与世界程序键冲突`);
+      if (root === "world" && containerPath === "" && spec.name === "time") {
+        throw new Error(`变量名 "${spec.name}" 与世界系统分支（时间锚）冲突`);
       }
       const r = resolveDeclPath(root, containerPath);
       if (r === null) throw new Error(`路径 "${containerPath || "<根>"}" 不是普通容器/内联元素结构`);

@@ -17,7 +17,6 @@ const SPEECH = "他说了一句至关重要的话。";
 const CATALOG: PlaceholderCatalog = {
   scene: {
     description: "当前场景言行（失聪降级三档）",
-    source: "vars",
     segments: [
       {
         kind: "entry",

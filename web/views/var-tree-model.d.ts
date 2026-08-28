@@ -101,4 +101,4 @@ export interface VarTreeModel {
 
 export function defaultValueFor(valueType: ValueType): unknown;
 
-export function createVarTreeModel(working: { world: any; characters: any }): VarTreeModel;
+export function createVarTreeModel(working: { world: any; characters: any; sys: any }): VarTreeModel;

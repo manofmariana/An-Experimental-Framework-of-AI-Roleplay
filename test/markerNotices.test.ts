@@ -42,11 +42,11 @@ function makeTruth(c0Pool: string[] = ["aud", "vis"]): TruthStores {
 }
 
 function noticesOf(truth: TruthStores): WorkingSetNoticeEntry[] {
-  return truth.world.pipeline.working_set.filter(isNoticeEntry);
+  return truth.sys.pipeline.working_set.filter(isNoticeEntry);
 }
 
 function speechOf(truth: TruthStores): WorkingSetSpeechEntry[] {
-  return truth.world.pipeline.working_set.filter((e): e is WorkingSetSpeechEntry => !isNoticeEntry(e));
+  return truth.sys.pipeline.working_set.filter((e): e is WorkingSetSpeechEntry => !isNoticeEntry(e));
 }
 
 describe("标记 → 通知条目（消费点生成，载荷纯参数无文本）", () => {
@@ -113,7 +113,7 @@ describe("标记 → 通知条目（消费点生成，载荷纯参数无文本�
       rollDice: () => 1,
     });
     planActorDecision(truth, { cid: "C1002", pkg: decision({ markers: [{ type: "leave" }] }), rollDice: () => 1 });
-    const materialized = truth.world.pipeline.working_set;
+    const materialized = truth.sys.pipeline.working_set;
 
     // 同一批步（archive 形态）投影重建
     const steps = [
@@ -132,7 +132,7 @@ describe("通知条目注入与生命周期", () => {
     scene: {
       description: "当前场景（通知条目注入）",
       source: "working_set",
-      segments: [{ kind: "entry", pass: { template: "{_content}" } }],
+      segments: [{ kind: "entry", pass: { template: "{working_set.content}" } }],
     },
   };
   const TEMPLATE: PromptTemplate = { id: "t", modules: [{ key: "m", role: "user", content: "{{scene}}" }] };
@@ -153,7 +153,7 @@ describe("通知条目注入与生命周期", () => {
     planActorDecision(blind, { cid: "C1001", pkg: decision({ markers: [{ type: "leave" }] }), rollDice: () => 1 });
     assert.ok(!render("C0", blind).includes("系统通知"));
     // GM 恒见（权重 6 恒过，无需特例）
-    assert.ok(renderScene(truth.world.pipeline.working_set).includes("【系统通知】@C1001 离开了当前场景"));
+    assert.ok(renderScene(truth.sys.pipeline.working_set).includes("【系统通知】@C1001 离开了当前场景"));
   });
 
   it("contact 通知：目标（持频道 + 工具 AV + 自身 cid 归属）见，非同地非目标不见", () => {
@@ -186,6 +186,6 @@ describe("通知条目注入与生命周期", () => {
       allocateEventId: () => `evt_${String((n += 1)).padStart(4, "0")}`,
       rollDice: () => 1,
     });
-    assert.deepEqual(truth.world.pipeline.working_set, []);
+    assert.deepEqual(truth.sys.pipeline.working_set, []);
   });
 });

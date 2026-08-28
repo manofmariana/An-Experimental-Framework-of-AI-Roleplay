@@ -11,10 +11,12 @@
  */
 
 /**
- * character 根系统声明子树：name 等顶层字段 + 调度字段 acted/group/channel/timer/
+ * character 根系统声明子树：cid/name 等顶层字段 + 调度字段 acted/group/channel/timer/
  * isPlayer/appearance（值只读语义在 var-tree-model 的 CHAR_SYSTEM_FIELDS 收窄，呈现层徽记）。
+ * cid = 自身 CID 字符串（建角时物化为类型化字段，系统只读）。
  */
 export const SYSTEM_CHAR_DECLS = {
+  cid: "string",
   name: "string",
   gender: "string",
   age: "string",

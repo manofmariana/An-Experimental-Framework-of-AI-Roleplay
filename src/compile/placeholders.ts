@@ -1,21 +1,27 @@
 /**
  * 占位符目录契约与编辑期机检（纯逻辑；compile → vars/tags 为合法边，审计守护）。
  *
- * 占位符全声明式、定义读者无关：条目 = {description, source, segments[]}，取数范围由
- * 投影层按读者供给（同一占位符跨对象复用）。source = 内容源封闭枚举（投影层清单）。
+ * 占位符全声明式、定义读者无关：条目 = {description, source?, segments[]}，取数范围由
+ * 投影层按读者供给（同一占位符跨对象复用）。source 二分类：
+ * - 程序组装类（source 在场，封闭枚举 ASSEMBLED_SOURCES）：投影层组装的扁平条目集，
+ *   每个源暴露 content/owner 两个固定可调用末端，命名路径 = {<source>.content} /
+ *   {<source>.owner}；
+ * - 本地落盘四根（source 缺省）：路径首段即根（events/lores/characters/world），
+ *   模板直接写全路由链路径（如 {events[*].content}）。
+ *
  * 段两类：静态段 {kind:"static", text} 原样输出；条目段 {kind:"entry", pass, fail?,
- * order?, separator?, merge?}——pass/fail 各 = {template, branches?}（该侧缺省注入 +
+ * order?, identity?, separator?, merge?}——pass/fail 各 = {template, branches?}（该侧缺省注入 +
  * "匹配记号集 → 模板"精确匹配分支，未命中走该侧缺省兜底；fail 缺省 = 空模板），
  * order = 前置（默认，条目轴独立滚完再进下一条目）/ 置后（与同首位轴的置后条目融合为
- * 逐实例组；同一占位符内全部置后条目首位轴必须一致，机检）。
+ * 逐实例组；同一占位符内全部置后条目首位轴必须一致，机检），identity = false 关闭本段
+ * 身份替换后处理（缺省 = 做；服务需要直接输出 @CID/cid 原文的条目）。
  *
  * 条目段模板的路径调用 = 单花括号 {路径}（字符集 [A-Za-z0-9_.[\]*]，单花括号 JSON 示例
- * 不含该字符集子串，不会被误捕）：
- * - 扁平源（vars 以外）：只允许伪路径 {_content}（投影层已组装的扁平文本）与
- *   {_owner}（属主 CID，无属主 = 空串）；
- * - vars 源：只允许全路由链路径——根 = world / characters（characters 下一段 = cid
- *   字面量或 [*] 轴），链内数组层 `键[数字]` / `键[*]`；必须解析到末端（tag_list 原子
- *   即止，不得穿越末端；`.tags` 字段选择子取 tag_list）。
+ * 不含该字符集子串，不会被误捕）。落盘四根路由链：characters 根下一段 = cid 字面量或
+ * [*] 轴，events/lores 根下一段 = 数组下标（[*] 轴或 [数字]）；链内数组层 `键[数字]` /
+ * `键[*]`；必须解析到末端（tag_list 原子即止，不得穿越末端；`.tags` 字段选择子取
+ * tag_list）。events/lores 的元素结构 = 系统固定结构（本文件登记的代码常量，
+ * EVENTS_ROOT_DECL/LORES_ROOT_DECL），world/characters 解析基准 = 档内变量模板。
  *
  * 遍历结构 = 引擎沿路由链找差异点自动归并（无独立轴声明）：条目内全部路径的路由链
  * 合并为一棵遍历树，公共前缀共享、[*] 差异点产生子循环；多路径兼容性机检 = 最前差异点
@@ -27,17 +33,19 @@
  */
 import { z } from "zod";
 import type { TagRegistry } from "../tags/registry.js";
-import { resolveDeclPath, splitVarPath, type VarsTemplate } from "../vars/template.js";
+import {
+  resolveDeclPath,
+  splitVarPath,
+  type ContainerDecl,
+  type DeclNode,
+  type VarsTemplate,
+} from "../vars/template.js";
 
 // ---------------------------------------------------------------------------
-// 内容源封闭枚举（投影层清单；收编四注册表全部 provider 归纳得出）
+// 程序组装类内容源封闭枚举（投影层清单）
 // ---------------------------------------------------------------------------
 
-export const PLACEHOLDER_SOURCES = [
-  "setting",
-  "tone_card",
-  "lore",
-  "events",
+export const ASSEMBLED_SOURCES = [
   "working_set",
   "prose_window",
   "last_prose",
@@ -54,12 +62,46 @@ export const PLACEHOLDER_SOURCES = [
   "snapshot",
   "group_members",
   "long_term_memory",
-  "self_name",
-  "self_cid",
-  "location",
-  "vars",
 ] as const;
-export type PlaceholderSource = (typeof PLACEHOLDER_SOURCES)[number];
+export type AssembledSource = (typeof ASSEMBLED_SOURCES)[number];
+
+// ---------------------------------------------------------------------------
+// 落盘内容根（路由链首段；events/lores 元素结构 = 系统固定结构，代码内登记供机检）
+// ---------------------------------------------------------------------------
+
+export const CONTENT_ROOTS = ["events", "lores", "characters", "world"] as const;
+export type ContentRoot = (typeof CONTENT_ROOTS)[number];
+
+function terminal(valueType: "number" | "string" | "boolean"): DeclNode {
+  return { kind: "terminal", valueType };
+}
+
+function elementDecl(children: Record<string, DeclNode>): ContainerDecl {
+  return { kind: "container", children };
+}
+
+/** events 根声明：事件元素 = {id, t, seq, kind, location?, content} 全末端外壳（系统固定结构）。 */
+export const EVENTS_ROOT_DECL: DeclNode = {
+  kind: "array",
+  element: elementDecl({
+    id: terminal("string"),
+    t: terminal("number"),
+    seq: terminal("number"),
+    kind: terminal("string"),
+    location: terminal("string"),
+    content: terminal("string"),
+  }),
+};
+
+/** lores 根声明：lore 条目 = {id, content, enabled?} 全末端外壳（系统固定结构）。 */
+export const LORES_ROOT_DECL: DeclNode = {
+  kind: "array",
+  element: elementDecl({
+    id: terminal("string"),
+    content: terminal("string"),
+    enabled: terminal("boolean"),
+  }),
+};
 
 // ---------------------------------------------------------------------------
 // 目录 schema（placeholders.json = 占位符名 → 条目；单文件全对象共享）
@@ -92,6 +134,8 @@ const EntrySegmentSchema = z
     fail: SideSchema.optional(),
     /** 遍历序：pre = 前置（默认）；post = 置后（同首位轴融合） */
     order: z.enum(["pre", "post"]).optional(),
+    /** 关闭身份过滤（缺省 = 做身份替换后处理；直接输出 @CID/cid 原文的条目置 false） */
+    identity: z.literal(false).optional(),
     /** 最外层实例（首位轴/条目轴）之间的拼接串（缺省 "\n"） */
     separator: z.string().optional(),
     /** 更深轴实例之间的拼接串（缺省 = separator） */
@@ -106,7 +150,8 @@ export type PlaceholderEntrySegment = z.infer<typeof EntrySegmentSchema>;
 const PlaceholderEntrySchema = z
   .object({
     description: z.string(),
-    source: z.enum(PLACEHOLDER_SOURCES),
+    /** 程序组装类源（封闭枚举）；缺省 = 本地落盘四根（路径首段判定） */
+    source: z.enum(ASSEMBLED_SOURCES).optional(),
     segments: z.array(PlaceholderSegmentSchema).min(1),
   })
   .strict();
@@ -156,9 +201,6 @@ export function parsePlaceholders(data: unknown): PlaceholderCatalog {
 /** 路径调用词法：{标识符/路由链}（字符集不含引号/冒号/空格——JSON 示例不会被误捕）。 */
 const PATH_CALL_RE = /\{([A-Za-z_][\w.\[\]*]*)\}/g;
 
-/** 扁平源伪路径：{_content} = 条目扁平文本；{_owner} = 属主 CID。 */
-export const PSEUDO_PATHS = ["_content", "_owner"] as const;
-
 /** 提取模板文本内全部路径调用（去重，按出现顺序）。 */
 export function extractPathCalls(text: string): string[] {
   const out: string[] = [];
@@ -168,13 +210,18 @@ export function extractPathCalls(text: string): string[] {
   return out;
 }
 
+/** 程序组装类命名路径：{<source>.content} / {<source>.owner}（每个组装源的两个固定可调用末端）。 */
+export function isAssembledPath(path: string, source: AssembledSource): boolean {
+  return path === `${source}.content` || path === `${source}.owner`;
+}
+
 // ---------------------------------------------------------------------------
-// 路由链（vars 源）
+// 路由链（落盘四根）
 // ---------------------------------------------------------------------------
 
 /** 解析后的路由链：根 + 段序列（characters 根的 cid/`*` 段含在 segs 内）+ .tags 选择子。 */
 export interface RoutingChain {
-  root: "world" | "characters";
+  root: ContentRoot;
   segs: string[];
   /** .tags 字段选择子（取末端 tag_list；裸路径 = value） */
   tagsSelector: boolean;
@@ -192,8 +239,8 @@ export function parseRoutingChain(raw: string): RoutingChain {
   }
   const segs = splitVarPath(path);
   const root = segs[0];
-  if (root !== "world" && root !== "characters") {
-    throw new Error(`路径 "${raw}" 的根必须是 world / characters`);
+  if (!(CONTENT_ROOTS as readonly string[]).includes(root ?? "")) {
+    throw new Error(`路径 "${raw}" 的根必须是 ${CONTENT_ROOTS.join(" / ")}（落盘四根）`);
   }
   if (root === "characters") {
     const cidSeg = segs[1];
@@ -201,13 +248,13 @@ export function parseRoutingChain(raw: string): RoutingChain {
       throw new Error(`路径 "${raw}" 的 characters 根下一段必须是 cid 字面量或 [*] 轴`);
     }
   }
-  return { root, segs, tagsSelector, raw };
+  return { root: root as ContentRoot, segs, tagsSelector, raw };
 }
 
 /** 链内全部 [*] 轴（按从左到右顺序；id = root:到该轴为止的段序列，段间用 "." 连接）。 */
 export interface ChainAxis {
   id: string;
-  root: "world" | "characters";
+  root: ContentRoot;
   /** 到该轴为止的段序列（含轴段 "*"） */
   prefix: string[];
 }
@@ -223,7 +270,7 @@ export function axesOfChain(chain: RoutingChain): ChainAxis[] {
   return out;
 }
 
-/** 条目段的首位轴 id（全部路径按收集序的首个 [*] 轴；无轴 = ""；扁平源条目轴 = "E"）。 */
+/** 条目段的首位轴 id（全部路径按收集序的首个 [*] 轴；无轴 = ""；组装源条目轴 = "E"）。 */
 export function firstAxisId(chains: readonly RoutingChain[]): string {
   for (const chain of chains) {
     const axes = axesOfChain(chain);
@@ -232,15 +279,28 @@ export function firstAxisId(chains: readonly RoutingChain[]): string {
   return "";
 }
 
+/** 根内声明（events/lores = 系统固定结构；world/characters = 档内变量模板）。 */
+function rootDeclOf(chain: RoutingChain, template: VarsTemplate): { decl: DeclNode; rest: string[] } {
+  switch (chain.root) {
+    case "events":
+      return { decl: EVENTS_ROOT_DECL, rest: chain.segs.slice(1) };
+    case "lores":
+      return { decl: LORES_ROOT_DECL, rest: chain.segs.slice(1) };
+    case "characters":
+      return { decl: template.character, rest: chain.segs.slice(2) };
+    default:
+      return { decl: template.world, rest: chain.segs.slice(1) };
+  }
+}
+
 /** 声明侧解析：路由链必须解析到末端（tag_list 原子即止；穿越末端/不可解析 = 抛错）。 */
 function resolveChainDecl(chain: RoutingChain, template: VarsTemplate): void {
-  const rest = chain.root === "world" ? chain.segs.slice(1) : chain.segs.slice(2);
+  const { decl, rest } = rootDeclOf(chain, template);
   if (rest.length === 0) {
     throw new Error(`路径 "${chain.raw}" 必须解析到末端（当前为根容器）`);
   }
-  const declRoot = chain.root === "world" ? template.world : template.character;
-  const decl = resolveDeclPath(declRoot, rest.join("."));
-  if (decl.kind !== "terminal") {
+  const node = resolveDeclPath(decl, rest.join("."));
+  if (node.kind !== "terminal") {
     throw new Error(`路径 "${chain.raw}" 必须解析到末端（当前为容器/数组）`);
   }
 }
@@ -276,7 +336,7 @@ function checkChainCompat(chains: readonly RoutingChain[], at: string): void {
 // ---------------------------------------------------------------------------
 
 export interface ValidatePlaceholdersDeps {
-  /** 档内变量模板（vars 源路径解析基准） */
+  /** 档内变量模板（world/characters 根路径解析基准） */
   template: VarsTemplate;
   /** 档内 TAG 注册表（分支记号合法性基准；全知/强制全知/开放类别 = 同名 system 条目） */
   registry: TagRegistry;
@@ -284,8 +344,9 @@ export interface ValidatePlaceholdersDeps {
 
 /**
  * 占位符目录语义机检（任何违规 = 抛错拒装，消息带占位符名）：
- * ① 扁平源条目段只允许 {_content}/{_owner} 伪路径；vars 源只允许路由链路径且至少一条；
- * ② vars 路径必须解析到末端（tag_list 原子即止，不得穿越末端）；
+ * ① 组装源条目段只允许 {<source>.content}/{<source>.owner} 命名路径；落盘四根条目段
+ *   只允许路由链路径且至少一条；
+ * ② 落盘路径必须解析到末端（tag_list 原子即止，不得穿越末端）；
  * ③ 条目内多路径路由链兼容性（最前差异点规则）；
  * ④ 置后条目首位轴一致（同一占位符内全部 order=post 条目段）；
  * ⑤ branches 记号合法性（注册表条目名——全知/强制全知/开放类别为同名 system 条目）。
@@ -301,17 +362,25 @@ export function validatePlaceholders(catalog: PlaceholderCatalog, deps: Validate
         for (const branch of side?.branches ?? []) texts.push(branch.template);
       }
       const paths = [...new Set(texts.flatMap(extractPathCalls))];
-      const pseudo = paths.filter((p) => (PSEUDO_PATHS as readonly string[]).includes(p));
-      const chains = paths.filter((p) => !(PSEUDO_PATHS as readonly string[]).includes(p));
 
-      if (entry.source === "vars") {
-        if (pseudo.length > 0) {
-          throw new Error(`${at}vars 源条目段不允许伪路径 {${pseudo.join("}、{")}}`);
+      if (entry.source !== undefined) {
+        const source = entry.source;
+        const bad = paths.filter((p) => !isAssembledPath(p, source));
+        if (bad.length > 0) {
+          throw new Error(
+            `${at}组装源（${source}）条目段只允许 {${source}.content}/{${source}.owner} 命名路径，收到 {${bad.join("}、{")}}`,
+          );
         }
-        if (chains.length === 0) {
-          throw new Error(`${at}vars 源条目段必须至少有一条路由链路径`);
+        if (segment.order === "post") postAxes.push("E");
+      } else {
+        const named = paths.filter((p) => !(CONTENT_ROOTS as readonly string[]).includes(splitVarPath(p)[0] ?? ""));
+        if (named.length > 0) {
+          throw new Error(`${at}落盘四根条目段只允许路由链路径（首段 = ${CONTENT_ROOTS.join("/")}），收到 {${named.join("}、{")}}`);
         }
-        const parsed = chains.map(parseRoutingChain);
+        if (paths.length === 0) {
+          throw new Error(`${at}落盘四根条目段必须至少有一条路由链路径`);
+        }
+        const parsed = paths.map(parseRoutingChain);
         for (const chain of parsed) {
           try {
             resolveChainDecl(chain, deps.template);
@@ -321,11 +390,6 @@ export function validatePlaceholders(catalog: PlaceholderCatalog, deps: Validate
         }
         checkChainCompat(parsed, at);
         if (segment.order === "post") postAxes.push(firstAxisId(parsed));
-      } else {
-        if (chains.length > 0) {
-          throw new Error(`${at}扁平源（${entry.source}）条目段只允许 {_content}/{_owner} 伪路径，收到 {${chains.join("}、{")}}`);
-        }
-        if (segment.order === "post") postAxes.push("E");
       }
 
       // branches 记号合法性（两側；加载期已规范化排序）

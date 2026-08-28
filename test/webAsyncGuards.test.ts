@@ -30,14 +30,15 @@ describe("竞态 1：createEpochGuard + fetchRunDetail", () => {
     assert.equal(guard.isCurrent(b), true);
   });
 
-  it("fetchRunDetail：五端点并发取数 + 形状归一（缺字段给默认值）", async () => {
+  it("fetchRunDetail：六端点并发取数 + 形状归一（缺字段给默认值）", async () => {
     const paths: string[] = [];
     const apiFn = async (path: string): Promise<unknown> => {
       paths.push(path);
       if (path.endsWith("/events")) return { events: [{ id: "e1", seq: 1 }] };
-      if (path.endsWith("/world")) return { world: { hp: 1 }, pipeline: { seq: 2 } };
+      if (path.endsWith("/world")) return { world: { hp: 1 } };
       if (path.endsWith("/characters")) return {}; // 缺 characters 字段 → 默认 {}
       if (path.endsWith("/archive")) return { entries: [{ seq: 1, kind: "input" }] };
+      if (path.endsWith("/sys")) return { pipeline: { seq: 2 } }; // pipeline 随 sys 根
       return [{ hit: 1 }]; // stats
     };
     const data = await fetchRunDetail(apiFn, "000001");
@@ -46,6 +47,7 @@ describe("竞态 1：createEpochGuard + fetchRunDetail", () => {
       "/api/sessions/000001/world",
       "/api/sessions/000001/characters",
       "/api/sessions/000001/archive",
+      "/api/sessions/000001/sys",
       "/api/sessions/000001/stats",
     ]);
     assert.deepEqual(data.events, [{ id: "e1", seq: 1 }]);

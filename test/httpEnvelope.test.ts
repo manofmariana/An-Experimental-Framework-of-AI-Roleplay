@@ -302,19 +302,17 @@ describe("world / characters 域", () => {
     const h = await serverHarness(t);
     const worlds = okData<{ sets: string[] }>(await callApi(h.port, "GET", "/api/worlds"));
     assert.deepEqual(worlds.sets, ["w"]);
-    const world = okData<{ setting: string; toneCard: string; lorebook: unknown }>(
+    const world = okData<{ lorebook: unknown }>(
       await callApi(h.port, "GET", "/api/world?set=w"),
     );
-    assert.ok(world.setting.includes("测试世界设定"));
+    assert.ok(Array.isArray(world.lorebook));
     failCode(await callApi(h.port, "GET", "/api/world?set=nope"), 404, "WORLD_SET_NOT_FOUND");
+    // setting/tone-card 已删除（静态文本内嵌进提示词模板）：文件名不再合法
+    failCode(await callApi(h.port, "PUT", "/api/world/setting?set=w", { content: "改写后的设定\n" }), 404, "UNKNOWN_ENDPOINT");
     const saved = okData<{ note: string }>(
-      await callApi(h.port, "PUT", "/api/world/setting?set=w", { content: "改写后的设定\n" }),
+      await callApi(h.port, "PUT", "/api/world/lorebook?set=w", []),
     );
     assert.equal(saved.note, "已保存，修改在新会话生效");
-    assert.equal(
-      fs.readFileSync(path.join(h.dirs.assetsDir, "w", "setting.md"), "utf8"),
-      "改写后的设定\n",
-    );
     failCode(await callApi(h.port, "PUT", "/api/world/bogus?set=w", { content: "x" }), 404, "UNKNOWN_ENDPOINT");
   });
 
@@ -470,18 +468,19 @@ describe("prompts 域", () => {
     // 声明式目录（全对象共享、读者无关，包基线取自包内 placeholders.json）：
     // entries = 条目名 + description + source + 段列全文；sources = source 封闭枚举清单（前端下拉候选）
     const ph = okData<{
-      entries: { key: string; description: string; source: string; segments: unknown[] }[];
+      entries: { key: string; description: string; source?: string; segments: unknown[] }[];
       sources: string[];
     }>(await callApi(h.port, "GET", "/api/prompts/placeholders?set=w"));
     const catalog = ph.entries;
     assert.ok(catalog.length > 0);
     for (const p of catalog) {
-      assert.ok(p.key.length > 0 && p.description.length > 0 && p.source.length > 0);
+      assert.ok(p.key.length > 0 && p.description.length > 0);
       assert.ok(Array.isArray(p.segments) && p.segments.length > 0);
-      assert.ok(ph.sources.includes(p.source), `${p.key} 的 source 应在封闭枚举内`);
+      // source 二分类：键缺省 = 落盘四根；在场 = 组装源封闭枚举成员
+      if (p.source !== undefined) assert.ok(ph.sources.includes(p.source), `${p.key} 的 source 应在封闭枚举内`);
     }
-    assert.ok(ph.sources.includes("vars") && ph.sources.includes("events"));
-    assert.ok(catalog.some((p) => p.key === "events" && p.source === "events"));
+    assert.ok(!ph.sources.includes("vars") && !ph.sources.includes("events"), "落盘四根不占 source 枚举");
+    assert.ok(catalog.some((p) => p.key === "events" && p.source === undefined), "events 条目 = 落盘根路由（无 source）");
     // 缺省包（baitan）不在 harness 资产根 → 404 WORLD_SET_NOT_FOUND
     failCode(await callApi(h.port, "GET", "/api/prompts/placeholders"), 404, "WORLD_SET_NOT_FOUND");
     // ?set=w 命中 harness 包（setupWorld 已拷入四份模板）→ 200 四模板（含 gm-incident 突发变体）
@@ -538,19 +537,23 @@ describe("prompts 域", () => {
     ws.send({ type: "new_session", worldSetId: "w", requestId: "r-new" });
     await ws.waitFor((m) => m.type === "snapshot");
 
-    const got = okData<{ entries: { key: string; description: string; source: string; segments: unknown[] }[] }>(
+    const got = okData<{ entries: { key: string; description: string; source?: string; segments: unknown[] }[] }>(
       await callApi(h.port, "GET", "/api/prompts/placeholders"),
     );
     const baseCatalog = () =>
-      Object.fromEntries(got.entries.map((e) => [e.key, { description: e.description, source: e.source, segments: e.segments }]));
+      Object.fromEntries(
+        got.entries.map((e) => [
+          e.key,
+          { description: e.description, ...(e.source !== undefined ? { source: e.source } : {}), segments: e.segments },
+        ]),
+      );
 
     // 档内模式机检 400（档内注册表口径：未知分支记号）→ 零落盘（revision 不前移）
     const badToken = baseCatalog();
     badToken["bad_token"] = {
       description: "d",
-      source: "events",
       segments: [
-        { kind: "entry", pass: { template: "{_content}", branches: [{ tokens: ["不存在记号"], template: "x" }] } },
+        { kind: "entry", pass: { template: "{events[*].content}", branches: [{ tokens: ["不存在记号"], template: "x" }] } },
       ],
     };
     const revisionBefore = h.coordinator.currentRevision;
@@ -559,7 +562,7 @@ describe("prompts 域", () => {
 
     // 合法整份提交（新增一个静态段条目）→ 200 附 revision，下一轮可见 = Store 已更新
     const catalog = baseCatalog();
-    catalog["test_ph"] = { description: "测试新增", source: "setting", segments: [{ kind: "static", text: "测试文本" }] };
+    catalog["test_ph"] = { description: "测试新增", source: "clock", segments: [{ kind: "static", text: "测试文本" }] };
     const put = await callApi(h.port, "PUT", "/api/prompts/placeholders", catalog);
     assert.equal(put.status, 200);
     const data = okData<{ note: string; revision: number }>(put);
@@ -581,18 +584,22 @@ describe("prompts 域", () => {
   it("PUT placeholders 包基线模式：写包文件新会话生效；机检 400 三连 + 未知 source 全部零落盘；未知包 404", async (t) => {
     const h = await serverHarness(t); // 不开会话 = 包基线模式
     const packFile = path.join(h.dirs.assetsDir, "w", "prompts", "placeholders.json");
-    const got = okData<{ entries: { key: string; description: string; source: string; segments: unknown[] }[] }>(
+    const got = okData<{ entries: { key: string; description: string; source?: string; segments: unknown[] }[] }>(
       await callApi(h.port, "GET", "/api/prompts/placeholders?set=w"),
     );
     const baseCatalog = () =>
-      Object.fromEntries(got.entries.map((e) => [e.key, { description: e.description, source: e.source, segments: e.segments }]));
+      Object.fromEntries(
+        got.entries.map((e) => [
+          e.key,
+          { description: e.description, ...(e.source !== undefined ? { source: e.source } : {}), segments: e.segments },
+        ]),
+      );
     const fileBefore = fs.readFileSync(packFile, "utf8");
 
     // 机检 400 ① 置后不同轴（characters[*] 轴 vs 无轴）
     const badAxis = baseCatalog();
     badAxis["bad_axis"] = {
       description: "d",
-      source: "vars",
       segments: [
         { kind: "entry", pass: { template: "{characters[*].attachtags}" }, order: "post" },
         { kind: "entry", pass: { template: "{world.omen}" }, order: "post" },
@@ -604,7 +611,6 @@ describe("prompts 域", () => {
     const badPath = baseCatalog();
     badPath["bad_path"] = {
       description: "d",
-      source: "vars",
       segments: [{ kind: "entry", pass: { template: "{world.region}" } }],
     };
     failCode(await callApi(h.port, "PUT", "/api/prompts/placeholders?set=w", badPath), 400, "VALIDATION_ERROR");
@@ -613,9 +619,8 @@ describe("prompts 域", () => {
     const badToken = baseCatalog();
     badToken["bad_token"] = {
       description: "d",
-      source: "events",
       segments: [
-        { kind: "entry", pass: { template: "{_content}", branches: [{ tokens: ["不存在记号"], template: "x" }] } },
+        { kind: "entry", pass: { template: "{events[*].content}", branches: [{ tokens: ["不存在记号"], template: "x" }] } },
       ],
     };
     failCode(await callApi(h.port, "PUT", "/api/prompts/placeholders?set=w", badToken), 400, "VALIDATION_ERROR");

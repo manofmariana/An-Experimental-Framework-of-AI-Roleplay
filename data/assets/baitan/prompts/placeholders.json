@@ -1,117 +1,113 @@
 {
-  "setting": {
-    "description": "世界设定全文",
-    "source": "setting",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
-  },
-  "tone_card": {
-    "description": "世界基调卡全文",
-    "source": "tone_card",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
-  },
   "lore": {
-    "description": "世界知识（角色 = 自身标签激活；GM = Lorebook 全文；正文 = 本轮参与者标签触发）",
-    "source": "lore",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+    "description": "世界知识（角色 = 自身标签激活；GM = 全量；正文 = 本轮参与者标签触发；逐末端 TAG 过滤在引擎）",
+    "segments": [{ "kind": "entry", "pass": { "template": "[{lores[*].id}] {lores[*].content}" }, "separator": "\n" }]
   },
   "events": {
-    "description": "已裁决事件（角色 = 可见事件按读者身份替换；GM = 全量 @CID 原文；正文 = 近期窗口按演员表渲染）",
-    "source": "events",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" }, "separator": "\n" }]
+    "description": "已裁决事件（角色 = 引擎逐末端 TAG 过滤 + 身份替换；GM = 全量 @CID 原文；正文 = 近期窗口按演员表渲染）",
+    "segments": [{ "kind": "entry", "pass": { "template": "{events[*].content}" }, "separator": "\n" }]
   },
   "current_scene": {
     "description": "本轮未裁决言行（角色视角带同值批隔离与突发前缀）",
     "source": "working_set",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+    "segments": [{ "kind": "entry", "pass": { "template": "{working_set.content}" } }]
   },
   "prose_window": {
     "description": "正文滑窗（角色 = 同场景连续窗；GM = 连续场景窗；正文 = 全量连续文风窗）",
     "source": "prose_window",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" }, "separator": "\n\n" }]
+    "segments": [{ "kind": "entry", "pass": { "template": "{prose_window.content}" }, "separator": "\n\n" }]
   },
   "last_prose": {
     "description": "上一轮正文",
     "source": "last_prose",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+    "segments": [{ "kind": "entry", "pass": { "template": "{last_prose.content}" } }]
   },
   "time": {
     "description": "结构时间机械渲染文本",
     "source": "clock",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+    "segments": [{ "kind": "entry", "pass": { "template": "{clock.content}" } }]
   },
   "cast": {
     "description": "演员表（@CID ↔ 显示名；角色视角自身标「我」）",
     "source": "cast",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" }, "separator": "\n" }]
+    "segments": [{ "kind": "entry", "pass": { "template": "{cast.content}" }, "separator": "\n" }]
   },
   "contacts": {
     "description": "可联系对象列表（后台且未持有频道；角色自身持频道或待答邀请时整体不可见）",
     "source": "contacts",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" }, "separator": "\n" }]
+    "segments": [{ "kind": "entry", "pass": { "template": "{contacts.content}" }, "separator": "\n" }]
   },
   "departure_notices": {
     "description": "本组未结算离场成员列表（可用 recall 标记召回）",
     "source": "departure_notices",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" }, "separator": "\n" }]
+    "segments": [{ "kind": "entry", "pass": { "template": "{departure_notices.content}" }, "separator": "\n" }]
   },
   "incoming_contact": {
     "description": "待答邀请通知（邀请者 + 途径 + 接受/拒绝方式）",
     "source": "incoming_contact",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+    "segments": [{ "kind": "entry", "pass": { "template": "{incoming_contact.content}" } }]
   },
   "timers": {
     "description": "各角色 timer 剩余时间",
     "source": "timers",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" }, "separator": "\n" }]
+    "segments": [{ "kind": "entry", "pass": { "template": "{timers.content}" }, "separator": "\n" }]
   },
   "fortune": {
     "description": "良恶/程度判定（机械渲染）",
     "source": "fortune",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+    "segments": [{ "kind": "entry", "pass": { "template": "{fortune.content}" } }]
   },
   "gm_event": {
     "description": "本轮 GM 事件包",
     "source": "gm_event",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+    "segments": [{ "kind": "entry", "pass": { "template": "{gm_event.content}" } }]
   },
   "target_group": {
     "description": "突发目标组（成员/地点/level/剩余休眠时长/错位度）",
     "source": "incident_target",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+    "segments": [{ "kind": "entry", "pass": { "template": "{incident_target.content}" } }]
   },
   "world_snapshot": {
-    "description": "世界内容快照（纯 JSON，不含 pipeline）",
+    "description": "世界变量树快照（纯 JSON，含 time 系统分支）",
     "source": "world_snapshot",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+    "segments": [{ "kind": "entry", "pass": { "template": "{world_snapshot.content}" } }]
   },
   "snapshot": {
     "description": "角色完整状态快照（纯 JSON；角色 = 自身，GM = 全体）",
     "source": "snapshot",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+    "segments": [{ "kind": "entry", "pass": { "template": "{snapshot.content}" } }]
   },
   "group_members": {
     "description": "同组角色表（CID/名字/地点；自身标「你」）",
     "source": "group_members",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" }, "separator": "\n" }]
+    "segments": [{ "kind": "entry", "pass": { "template": "{group_members.content}" }, "separator": "\n" }]
   },
   "long_term_memory": {
     "description": "本角色长期记忆",
     "source": "long_term_memory",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" }, "separator": "\n" }]
+    "segments": [{ "kind": "entry", "pass": { "template": "{long_term_memory.content}" }, "separator": "\n" }]
   },
-  "name": {
-    "description": "角色名",
-    "source": "self_name",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+  "self_name": {
+    "description": "自己的角色名（characters 根 name 系统末端；vars-tags 的 cid 类附加 = 只见自身，他人实例空渲染整条丢弃）",
+    "segments": [{ "kind": "entry", "pass": { "template": "{characters[*].name}" } }]
   },
-  "cid": {
-    "description": "角色 CID",
-    "source": "self_cid",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+  "self_location": {
+    "description": "自己的当前地点名（location 系统结构的 name 末端；同上只见自身）",
+    "segments": [{ "kind": "entry", "pass": { "template": "{characters[*].location.name}" } }]
   },
-  "location": {
-    "description": "当前地点名",
-    "source": "location",
-    "segments": [{ "kind": "entry", "pass": { "template": "{_content}" } }]
+  "present_characters": {
+    "description": "在场角色 CID 表（「角色感知」持有者可读全体在场者 cid；自己经 matched=[cid,角色感知] 分支标注「←这是你自己」；关闭身份过滤直出 cid 原文）",
+    "segments": [
+      { "kind": "static", "text": "##在场角色：" },
+      {
+        "kind": "entry",
+        "identity": false,
+        "pass": {
+          "template": "{characters[*].cid}",
+          "branches": [{ "tokens": ["cid", "角色感知"], "template": "{characters[*].cid}←这是你自己" }]
+        },
+        "separator": ","
+      }
+    ]
   }
 }

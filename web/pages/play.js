@@ -160,7 +160,7 @@ let editStateBtn = null;
 let sideView = "events";
 
 // ---------------------------------------------------------------------------
-// 状态面板 timer 结构化显示（移植自 src/truth/timeStore.ts 的 minutesToWorldTime：
+// 状态面板 timer 结构化显示（移植自 src/vars/systemWorld.ts 的 minutesToWorldTime：
 // y 0 基、m/d 1 基，30 日/月、12 月/年历法，每年 12 月承接 30 日月制余下的 5 天）——只改显示层，数据源不变
 // ---------------------------------------------------------------------------
 
@@ -375,7 +375,7 @@ export function renderPlay() {
   editStateBtn.disabled = true;
   editStateBtn.title = "直接编辑真相层（变量 + 事件）；LLM 运行中不可用";
   editStateBtn.onclick = () =>
-    openStateEditor({
+    void openStateEditor({
       el,
       api,
       getState: S,
@@ -383,7 +383,7 @@ export function renderPlay() {
       mountModal: (overlay) => document.body.appendChild(overlay),
       notifyError: (text) => streamView.appendLine("line-error", text),
       confirm: (msg) => window.confirm(msg),
-    });
+    }).catch((err) => streamView.appendLine("line-error", `[错误] ${err.message}`));
   btns.appendChild(editStateBtn);
   sideOut = el("pre", null, "（事件数据未到——等待服务端推送）");
   sidepanel.append(btns, sideOut);

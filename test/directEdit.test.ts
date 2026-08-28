@@ -5,7 +5,7 @@ import { describe, it } from "node:test";
 import type { GameSession } from "../src/application/gameSession.js";
 import { GenerationRepository } from "../src/truth/generationRepository.js";
 import { projectCharacterTree, type CharacterProjectionInput } from "../src/vars/systemChar.js";
-import { buildAdjudication as gmPkg } from "./builders/index.js";
+import { buildAdjudication as gmPkg, buildEvent } from "./builders/index.js";
 import { SessionHarness } from "./harness/session.js";
 
 // ---------------------------------------------------------------------------
@@ -89,18 +89,18 @@ describe("applyDirectEdit（状态栏直接编辑）", () => {
   it("整体替换 events：事件表生效，下一次激活注入即读新事件集（无状态 activation，无缓存可重建）", async () => {
     const { session, dir } = makeSession("events");
     const events = [
-      { id: "evt_e1", t: 0, seq: 1, kind: "world", tags: [{ name: "C1001", level: 1 }], payload: "替换后的事件" },
+      buildEvent({ id: "evt_e1", seq: 1, content: "替换后的事件", tags: [{ name: "C1001", level: 1 }] }),
     ];
 
     session.applyDirectEdit({ events });
 
-    assert.deepEqual(session.getEvents().map((e) => e.id), ["evt_e1"]);
+    assert.deepEqual(session.getEvents().map((e) => e.id.value), ["evt_e1"]);
     // agent 侧无事件缓存——直编后下一次角色激活的 prompt 直接读到新事件
     await session.continuePipeline(); // seq1 C1001 行动 → 停等玩家
     assert.ok(h.callsText("character:C1001", 1).includes("替换后的事件"));
     // 持久化：从磁盘 loadCurrent 读回
     const loaded = new GenerationRepository(dir).loadCurrent();
-    assert.deepEqual(loaded.save.events.map((e) => e.payload), ["替换后的事件"]);
+    assert.deepEqual(loaded.save.events.map((e) => e.content.value), ["替换后的事件"]);
   });
 
   it("直编删中段事件后：GM 步新事件 ID 按水位分配，不与现存冲突", async () => {
@@ -112,19 +112,19 @@ describe("applyDirectEdit（状态栏直接编辑）", () => {
     await session.handlePlayerInput("玩家行动"); // seq2 玩家 → seq3 GM（evt_0001）→ GM 后停
     await session.continuePipeline(); // seq4 正文 → seq5 C1001 → 停等玩家
     await session.handlePlayerInput("玩家行动"); // seq6 玩家 → seq7 GM（evt_0002）→ GM 后停
-    const e1 = session.getEvents().find((e) => e.id === "evt_0001");
+    const e1 = session.getEvents().find((e) => e.id.value === "evt_0001");
     assert.ok(e1, "前置：evt_0001 已提交");
 
     // 直编：删中段语义——事件表变为 evt_0001 + evt_0003（evt_0002 缺口）。
     // 长度推导会分配 evt_0003（与现存冲突）；水位推导应分配 evt_0004。
     session.applyDirectEdit({
-      events: [e1, { id: "evt_0003", t: e1.t, seq: e1.seq, kind: "world", tags: e1.tags, payload: "手工事件" }],
+      events: [e1, buildEvent({ id: "evt_0003", t: e1.t.value, seq: e1.seq.value, content: "手工事件", tags: [...e1.content.tags] })],
     });
 
     await session.continuePipeline(); // seq8 正文 → seq9 C1001 → 停等玩家
     await session.handlePlayerInput("玩家行动"); // seq10 玩家 → seq11 GM → GM 后停
 
-    const ids = session.getEvents().map((e) => e.id);
+    const ids = session.getEvents().map((e) => e.id.value);
     assert.ok(ids.includes("evt_0004"), `新事件应取水位后的 evt_0004，实为 ${ids.join(",")}`);
     assert.equal(new Set(ids).size, ids.length, `事件 ID 不得冲突：${ids.join(",")}`);
   });
@@ -505,35 +505,36 @@ describe("直编差异并入当前步 changes.effects（净额合并，回溯随
   });
 });
 
-describe("档内结构编辑（`_sys.varsTemplate` 替换 = 运行期扩充模板）", () => {
-  it("world 携带新 _sys：_sys 已替换、树按新模板 normalize、从动级联按新模板跑", () => {
+describe("档内结构编辑（sys 根 varsTemplate 替换 = 运行期扩充模板）", () => {
+  it("sys 携带新模板：sys 根已替换、树按新模板 normalize、从动级联按新模板跑", () => {
     const { session } = makeSession("sys-swap");
-    const { world } = stateClone(session);
-    const sys = world["_sys"] as Record<string, unknown>;
-    const tpl = JSON.parse(JSON.stringify(sys["varsTemplate"])) as { world: { children: Record<string, unknown> } };
+    const sysStructs = JSON.parse(JSON.stringify(session.snapshot().sys)) as {
+      varsTemplate: { world: { children: Record<string, unknown> } };
+    };
+    const tpl = sysStructs.varsTemplate;
     tpl.world.children["mana"] = "number"; // 运行期新增扁平末端
     tpl.world.children["hp2"] = { valueType: "number", formula: { expr: "hp * 2", binds: { hp: "hp" } } }; // 运行期新增从动末端
-    sys["varsTemplate"] = tpl;
+    const { world } = stateClone(session);
     world["hp"] = { value: 5, tags: [] }; // 顺带改实例值，验证级联取新值
     world["mana"] = 7; // 新声明的实例值随载荷上送（旧模板下 = 未声明键必拒）
 
-    session.applyDirectEdit({ world });
+    session.applyDirectEdit({ world, sys: { varsTemplate: tpl } });
 
     const after = h.worldVars(session);
-    assert.deepEqual(h.worldSys(session)["varsTemplate"], tpl); // _sys 已替换为提交值
+    assert.deepEqual(h.worldSys(session)["varsTemplate"], tpl); // sys 根已替换为提交值
     // mana 按新模板 normalize 落末端外壳（若仍按旧模板对拍，未声明键早已抛错）
     assert.equal((after["mana"] as { value: unknown }).value, 7);
     assert.equal((after["hp2"] as { value: unknown }).value, 10); // 从动级联按新模板计算（hp=5 → hp2=10）
   });
 
-  it("结构不合法：拒写且 live 零变化（_sys 与变量树原样、revision 不动）", () => {
+  it("结构不合法：拒写且 live 零变化（sys 与变量树原样、revision 不动）", () => {
     const { session } = makeSession("sys-bad");
     const before = JSON.parse(JSON.stringify(session.getState())) as unknown;
+    const sysBefore = JSON.stringify(session.snapshot().sys);
     const revBefore = session.revision;
-    const { world } = stateClone(session);
-    (world["_sys"] as Record<string, unknown>)["varsTemplate"] = { world: "垃圾" };
-    assert.throws(() => session.applyDirectEdit({ world }));
+    assert.throws(() => session.applyDirectEdit({ sys: { varsTemplate: { world: "垃圾" } } }));
     assert.equal(session.revision, revBefore);
     assert.deepEqual(JSON.parse(JSON.stringify(session.getState())), before); // draft 丢弃，live 原样
+    assert.equal(JSON.stringify(session.snapshot().sys), sysBefore);
   });
 });

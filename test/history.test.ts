@@ -56,7 +56,8 @@ function round(seq0: number, prose: string): ArchiveEntry[] {
 }
 
 function evt(id: string, payload: string): Event {
-  return { id, t: 0, seq: 1, kind: "world", tags: [{ name: "C0", level: 1 }], payload };
+  const shell = <T extends string | number>(value: T, tags: { name: string; level: number }[] = []): { value: T; tags: { name: string; level: number }[] } => ({ value, tags });
+  return { id: shell(id), t: shell(0), seq: shell(1), kind: shell("world" as const), content: shell(payload, [{ name: "C0", level: 1 }]) };
 }
 
 describe("buildHistory（按轮分组——一轮 = 若干 actor 步 + gm 步（+prose 步））", () => {

@@ -6,14 +6,15 @@
  * WORLD_SET_NOT_FOUND 404；包内文件 IO 在 resources/worldRepository，新会话生效）。
  * 结构 + 占位符校验（合法键集 = 当前模式占位符目录键集，compile/template）留在本路由层。
  * 模板键 = 封闭四值（character/gm/prose/gm-incident 突发变体）。
- * 占位符目录 = 声明式条目（全对象共享、读者无关）：GET 出平铺目录 + source 封闭枚举；
+ * 占位符目录 = 声明式条目（全对象共享、读者无关；source 二分类 = 程序组装类封闭枚举 /
+ * 落盘四根无 source）：GET 出平铺目录 + 组装源封闭枚举；
  * PUT 整份提交——parse（zod 形状 + 分支记号集规范化）+ validatePlaceholders 语义机检
  * （机检上下文按模式供给：档内 = 档内 `_sys` 模板与注册表，包基线 = 该包变量体系文件），
  * 失败 400 零落盘。
  */
 import {
+  ASSEMBLED_SOURCES,
   parsePlaceholders,
-  PLACEHOLDER_SOURCES,
   validatePlaceholders,
   type PlaceholderCatalog,
   type ValidatePlaceholdersDeps,
@@ -39,28 +40,28 @@ import {
   PROMPT_TEMPLATE_IDS,
   type PromptTemplateId,
 } from "../../../truth/promptsStore.js";
-import { parseWorldSys } from "../../../truth/varWrite.js";
+import { parseSys } from "../../../truth/sysStore.js";
 import { parseVarsTemplate } from "../../../vars/template.js";
 import { ApiError, toApiError, validate } from "../errors.js";
 import { parseJsonBody, readBody } from "../response.js";
 import type { ApiDeps, Route } from "../router.js";
 
-/** 目录只读视图（档内冻结副本与包基线解析产物同形）。 */
+/** 目录只读视图（档内冻结副本与包基线解析产物同形；source 缺省 = 本地落盘四根条目）。 */
 type CatalogView = Readonly<
-  Record<string, { readonly description: string; readonly source: string; readonly segments: readonly unknown[] }>
+  Record<string, { readonly description: string; readonly source?: string | undefined; readonly segments: readonly unknown[] }>
 >;
 
-/** 占位符平铺目录（GET /api/prompts/placeholders 的 entries 段）：条目名 + description + source + 段列全文。 */
+/** 占位符平铺目录（GET /api/prompts/placeholders 的 entries 段）：条目名 + description + source（缺省 = 落盘四根，键省略保证往返可写回）+ 段列全文。 */
 export function placeholdersCatalog(catalog: CatalogView): {
   key: string;
   description: string;
-  source: string;
+  source?: string;
   segments: readonly unknown[];
 }[] {
   return Object.entries(catalog).map(([key, entry]) => ({
     key,
     description: entry.description,
-    source: entry.source,
+    ...(entry.source !== undefined ? { source: entry.source } : {}),
     segments: entry.segments,
   }));
 }
@@ -121,8 +122,8 @@ export function promptRoutes(deps: ApiDeps): Route[] {
       pattern: "/api/prompts/placeholders",
       handler: ({ url }) => ({
         entries: placeholdersCatalog(catalogOf(url).catalog),
-        // source 封闭枚举清单（前端编辑器下拉候选）
-        sources: [...PLACEHOLDER_SOURCES],
+        // 程序组装类 source 封闭枚举清单（前端编辑器下拉候选；落盘四根条目无 source）
+        sources: [...ASSEMBLED_SOURCES],
       }),
     },
     {
@@ -132,10 +133,10 @@ export function promptRoutes(deps: ApiDeps): Route[] {
         const body = parseJsonBody(await readBody(req));
         const catalog = validate(() => parsePlaceholders(body));
         if (deps.coordinator.activePrompts() !== null) {
-          // 档内模式：机检上下文 = 档内 `_sys`（模板 + 注册表）
-          const world = deps.coordinator.activeWorld();
-          if (world === null) throw new ApiError(500, "INTERNAL_ERROR", "会话状态不可用");
-          const sys = parseWorldSys(world._sys);
+          // 档内模式：机检上下文 = 档内 sys 根（模板 + 注册表）
+          const sysData = deps.coordinator.activeSys();
+          if (sysData === null) throw new ApiError(500, "INTERNAL_ERROR", "会话状态不可用");
+          const sys = parseSys(sysData);
           validate(() => validatePlaceholders(catalog, { template: sys.template, registry: sys.tagRegistry }));
           // 走直编命令（串行队列 + CommitExecutor；域校验失败 → 400）
           try {

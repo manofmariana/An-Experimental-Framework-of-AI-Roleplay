@@ -7,6 +7,7 @@ import {
 import type { SessionFactory } from "../src/application/sessionFactory.js";
 import type { SessionTransition } from "../src/application/transitionProjection.js";
 import { RevisionConflictError, SessionSwitchedError } from "../src/truth/validation/errors.js";
+import { buildEvent } from "./builders/index.js";
 
 // ---------------------------------------------------------------------------
 // SessionCoordinator（单一命令协调器 + 消息身份/增量同步/会话切换隔离）：
@@ -74,7 +75,7 @@ class FakeSession {
     return { seq: 0, phase: "await_player", interrupted: false, kind: null };
   }
   getState(): unknown { return { world: {}, characters: {} }; }
-  getEvents(): unknown[] { return [`events-of-${this.runId}`]; }
+  getEvents(): unknown[] { return [buildEvent({ id: `events-of-${this.runId}` })]; }
   getArchive(): unknown[] { return []; }
   getPipelineCurrent(): null { return null; }
   getStats(): unknown[] { return []; }
@@ -170,7 +171,7 @@ describe("SessionCoordinator 一致快照 query", () => {
     assert.equal(snap.runId, "temp-run");
     assert.equal(snap.revision, 1);
     assert.deepEqual(snap.state, { world: {}, characters: {} });
-    assert.deepEqual(snap.events, ["events-of-temp-run"]);
+    assert.deepEqual((snap.events as unknown as { id: { value: string } }[]).map((e) => e.id.value), ["events-of-temp-run"]);
     assert.equal(snap.pipeline.phase, "await_player");
     assert.ok(snap.history !== null && typeof snap.history === "object");
     assert.deepEqual(coordinator.query("stats"), []);
@@ -260,7 +261,7 @@ describe("SessionCoordinator 会话切换与生命周期（强制切换隔离）
     const loaded = await coordinator.execute({ type: "load_session", runId: "run-b" });
     assert.equal(loaded.runId, "run-b");
     assert.equal(coordinator.currentRunId, "run-b");
-    assert.deepEqual(coordinator.query("snapshot").events, ["events-of-run-b"]);
+    assert.deepEqual((coordinator.query("snapshot").events as unknown as { id: { value: string } }[]).map((e) => e.id.value), ["events-of-run-b"]);
     coordinator.stop();
     assert.equal(a.aborted, 0); // 旧会话不可达
     assert.equal(b.aborted, 1);

@@ -121,7 +121,7 @@ async function main(): Promise<void> {
     }
     if (line === "/events") {
       for (const e of coordinator.query("snapshot").events) {
-        console.log(`[${e.id}] (${e.kind}) ${e.payload}`);
+        console.log(`[${e.id.value}] (${e.kind.value}) ${e.content.value}`);
       }
       continue;
     }

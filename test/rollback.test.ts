@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { CharactersStore } from "../src/truth/charactersStore.js";
 import { WorldStore } from "../src/truth/worldStore.js";
 import type { VarChange } from "../src/truth/varChanges.js";
-import { buildManifest, buildVarsTemplate, buildWorldSysRaw } from "./builders/index.js";
+import { buildManifest, buildVarsTemplate, buildWorldTree } from "./builders/index.js";
 
 const start = { y: 1, m: 12, d: 35, h: 23, min: 50 };
 const DECL = buildVarsTemplate().characterVars;
@@ -11,10 +11,17 @@ const manifest = buildManifest({ id: "C1001", name: "林雾", location: { name: 
 
 describe("结构时间与角色变更回溯", () => {
   it("world.time 跨年推进后通过 VarChange 逐字节恢复", () => {
-    const world = WorldStore.initial({ time: start, hp: 10 }, buildWorldSysRaw());
+    const worldTree = buildWorldTree();
+    const time = worldTree["time"] as Record<string, unknown>;
+    for (const key of ["y", "m", "d", "h", "min"] as const) time[key] = { value: start[key], tags: [] };
+    const world = new WorldStore({ ...worldTree, hp: 10 });
     const initial = JSON.stringify(world.world); const changes: VarChange[] = [];
     changes.push(world.writeRaw("hp", 7)); changes.push(world.setClock(world.clock + 20));
-    assert.deepEqual(world.world.time, { y: 2, m: 1, d: 1, h: 0, min: 10 });
+    const after = world.world["time"] as Record<string, { value: number }>;
+    assert.deepEqual(
+      Object.fromEntries(["y", "m", "d", "h", "min"].map((k) => [k, after[k]!.value])),
+      { y: 2, m: 1, d: 1, h: 0, min: 10 },
+    );
     for (const change of [...changes].reverse()) world.revertChange(change);
     assert.equal(JSON.stringify(world.world), initial);
   });

@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { validateAdjudicationRound } from "../src/agents/gm.js";
-import type { PlaceholderSource } from "../src/compile/placeholders.js";
+import type { AssembledSource } from "../src/compile/placeholders.js";
 import type { GameSession } from "../src/application/gameSession.js";
 import type { CharacterState } from "../src/truth/charactersStore.js";
 import { snapshotCharacterState, snapshotCharacterStates } from "../src/truth/snapshot.js";
-import { worldTimeToMinutes } from "../src/truth/timeStore.js";
+import { worldTimeToMinutes } from "../src/vars/systemWorld.js";
 import { AdjudicationPackageSchema } from "../src/types.js";
 import {
   buildAdjudication as gmPkg,
@@ -106,11 +106,7 @@ describe("中途 GM 的 durations 覆盖契约（同步组全体成员必须一�
     assert.equal(charState(session, "C1001").group, preGroup);
     assert.equal(charState(session, "C1001").acted, false, "未行动成员保持 acted=false");
     assert.equal(charState(session, "C0").acted, false, "组结算进后台：全员 acted 重置");
-    assert.equal(
-      ((session.getState().world as Record<string, unknown>)["_sys"] as Record<string, unknown>)["cycles_since_gm"],
-      0,
-      "组结算进后台：周期计数 X 归 0",
-    );
+    assert.equal(session.snapshot().sys.cycles_since_gm, 0, "组结算进后台：周期计数 X 归 0");
     // GM 注入的 timers 占位符按 acted 标注：C0 已行动 / C1001 未行动
     const gmPrompt = callsText("gm", 2);
     assert.ok(gmPrompt.includes("@C0：已到期（已行动）"));
@@ -178,7 +174,7 @@ function gmHost(states: Record<string, CharacterState>, clock?: number) {
 }
 
 /** 扁平源取数拼接（separator 与出厂目录一致 "\n"）。 */
-function joined(host: ReturnType<typeof charHost>, source: PlaceholderSource): string {
+function joined(host: ReturnType<typeof charHost>, source: AssembledSource): string {
   return host.entries(source).map((entry) => entry.content).join("\n");
 }
 

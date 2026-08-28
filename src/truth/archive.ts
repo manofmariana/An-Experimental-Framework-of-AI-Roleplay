@@ -1,12 +1,13 @@
 import { z } from "zod";
-import { StepChangesSchema, emptyStepChanges, type PipelineCurrent } from "./worldStore.js";
-import { SAVE_SCHEMA_VERSION } from "./saveSchema.js";
+import { StepChangesSchema, emptyStepChanges } from "./worldStore.js";
+import type { PipelineCurrent } from "./sysStore.js";
 
 export const ArchiveEntrySchema = z.object({
   seq: z.number(), kind: z.string(), result: z.unknown(), edited: z.boolean().optional(), changes: StepChangesSchema.optional(),
 });
 export type ArchiveEntry = z.infer<typeof ArchiveEntrySchema>;
-export const ArchiveFileSchema = z.object({ schema_version: z.literal(SAVE_SCHEMA_VERSION), entries: z.array(ArchiveEntrySchema) });
+/** archive.json 文件 codec（schema_version 单点化后本文件不再盖章）。 */
+export const ArchiveFileSchema = z.object({ entries: z.array(ArchiveEntrySchema) });
 export type ArchiveFile = z.infer<typeof ArchiveFileSchema>;
 
 export function buildArchiveEntry(current: PipelineCurrent | null): ArchiveEntry | null {

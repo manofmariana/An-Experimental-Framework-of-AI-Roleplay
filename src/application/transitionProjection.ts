@@ -129,7 +129,7 @@ function commonEventPrefix(prev: DeepReadonly<Event[]>, next: DeepReadonly<Event
   while (k < prev.length && k < next.length) {
     const a = prev[k]!;
     const b = next[k]!;
-    if (a === b || (a.id === b.id && a.seq === b.seq && sameJson(a, b))) k += 1;
+    if (a === b || (a.id.value === b.id.value && a.seq.value === b.seq.value && sameJson(a, b))) k += 1;
     else break;
   }
   return k;
@@ -169,7 +169,7 @@ export function buildTransition(
   if (notice.prev.events !== notice.next.events) {
     const k = commonEventPrefix(notice.prev.events, notice.next.events);
     if (k < notice.prev.events.length) {
-      changed.truncateEventsAfterSeq = k === 0 ? 0 : notice.prev.events[k - 1]!.seq;
+      changed.truncateEventsAfterSeq = k === 0 ? 0 : notice.prev.events[k - 1]!.seq.value;
     }
     if (k < notice.next.events.length) {
       changed.appendedEvents = notice.next.events.slice(k);

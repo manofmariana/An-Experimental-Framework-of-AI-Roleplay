@@ -9,8 +9,8 @@ import { buildProjectionHost, buildTruthStores } from "./builders/index.js";
 /** 出厂世界包目录（data/assets/baitan/）。 */
 const FACTORY_WORLD_DIR = resolveWorldDir();
 
-function state(name: string): CharacterState { return { name, gender: "女", age: "26", personality: `${name}性格`, reaction: 5, location: { name: "灯塔", level: 1 }, timer: 10, group: 1, initiative: null, channel: null, acted: false, level: 1, omniscience: 0, isPlayer: false, relations: [], appearance: false, long_term_memory: [`${name}记忆`], systemTags: {}, vars: { hp: 10 } }; }
-const states = { C1001: state("林雾"), C1002: state("周砚") };
+function state(name: string, cid = "C0"): CharacterState { return { cid, name, gender: "女", age: "26", personality: `${name}性格`, reaction: 5, location: { name: "灯塔", level: 1 }, timer: 10, group: 1, initiative: null, channel: null, acted: false, level: 1, omniscience: 0, isPlayer: false, relations: [], appearance: false, long_term_memory: [`${name}记忆`], systemTags: {}, vars: { hp: 10 } }; }
+const states = { C1001: state("林雾", "C1001"), C1002: state("周砚", "C1002") };
 const charHost = (selfCid: string, s: Record<string, CharacterState> = states): RenderHost =>
   buildProjectionHost({ kind: "character", cid: selfCid }, buildTruthStores({ characters: s }));
 

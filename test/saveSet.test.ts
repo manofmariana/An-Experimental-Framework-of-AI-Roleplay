@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import type { SaveSet } from "../src/truth/generationRepository.js";
 import { SaveLoadError } from "../src/truth/validation/errors.js";
 import { validateSaveSet } from "../src/truth/validation/saveSet.js";
-import { buildCharacterState, buildEvent, buildSaveSet } from "./builders/index.js";
+import { buildCharacterState, buildEvent, buildLoreEntry, buildSaveSet, buildSysFile } from "./builders/index.js";
 
 // ---------------------------------------------------------------------------
 // validateSaveSet（两级校验第二级：整档跨文件不变量）。
@@ -14,11 +14,13 @@ import { buildCharacterState, buildEvent, buildSaveSet } from "./builders/index.
 /** 进行中档基线：seq=2、GM 步在途、archive 一条角色步、事件 seq=2。 */
 function runningSave(overrides?: Partial<SaveSet>): SaveSet {
   return buildSaveSet({
-    pipeline: {
-      seq: 2,
-      working_set: [{ cid: "C0" }, { cid: "C1001" }],
-      current: { seq: 2, kind: "gm", result: null },
-    },
+    sys: buildSysFile({
+      pipeline: {
+        seq: 2,
+        working_set: [{ cid: "C0" }, { cid: "C1001" }],
+        current: { seq: 2, kind: "gm", result: null },
+      },
+    }),
     characters: { C0: buildCharacterState({ isPlayer: true }), C1001: buildCharacterState() },
     archive: [{ seq: 1, kind: "character:C1001", result: null, changes: { setup: [], effects: [] } }],
     events: [buildEvent({ id: "evt_1", seq: 2 })],
@@ -61,17 +63,17 @@ describe("validateSaveSet（可提交态基线）", () => {
 
 describe("validateSaveSet（pipeline / archive 边界）", () => {
   it("pipeline.seq 非整数 → invariant", () => {
-    expectInvariant(buildSaveSet({ pipeline: { seq: 1.5, working_set: [], current: null } }), /pipeline\.seq 必须为非负整数/);
+    expectInvariant(buildSaveSet({ sys: buildSysFile({ pipeline: { seq: 1.5, working_set: [], current: null } }) }), /pipeline\.seq 必须为非负整数/);
   });
 
   it("current.seq ≠ pipeline.seq → invariant", () => {
     const save = runningSave();
-    save.pipeline.current = { seq: 3, kind: "gm", result: null };
+    save.sys.pipeline.current = { seq: 3, kind: "gm", result: null };
     expectInvariant(save, /进行中步骤 seq（3）≠ pipeline\.seq（2）/);
   });
 
   it("current=null 但 pipeline.seq ≠ 0 → invariant", () => {
-    expectInvariant(buildSaveSet({ pipeline: { seq: 1, working_set: [], current: null } }), /current=null.*pipeline\.seq 必须为 0/);
+    expectInvariant(buildSaveSet({ sys: buildSysFile({ pipeline: { seq: 1, working_set: [], current: null } }) }), /current=null.*pipeline\.seq 必须为 0/);
   });
 
   it("current=null 但 archive 非空 → invariant", () => {
@@ -86,7 +88,7 @@ describe("validateSaveSet（pipeline / archive 边界）", () => {
         { seq: 1, kind: "gm", result: null, changes: { setup: [], effects: [] } },
       ],
     });
-    save.pipeline = { seq: 3, working_set: [], current: { seq: 3, kind: "gm", result: null } };
+    save.sys.pipeline = { seq: 3, working_set: [], current: { seq: 3, kind: "gm", result: null } };
     expectInvariant(save, /严格递增/);
   });
 
@@ -146,13 +148,13 @@ describe("validateSaveSet（events）", () => {
 describe("validateSaveSet（引用闭包与角色表）", () => {
   it("working_set 引用未知 cid → invariant", () => {
     const save = runningSave();
-    save.pipeline.working_set = [{ cid: "C0" }, { cid: "C9999" }];
+    save.sys.pipeline.working_set = [{ cid: "C0" }, { cid: "C9999" }];
     expectInvariant(save, /working_set 引用未知角色: C9999/);
   });
 
   it("working_set 通知条目引用未知 actor → invariant", () => {
     const save = runningSave();
-    save.pipeline.working_set = [
+    save.sys.pipeline.working_set = [
       { cid: "C0" },
       {
         id: "notice:leave",
@@ -182,17 +184,14 @@ describe("validateSaveSet（引用闭包与角色表）", () => {
 describe("validateSaveSet（lore）", () => {
   it("lore 条目 id 重复 → invariant", () => {
     const save = buildSaveSet();
-    save.lore.entries = [
-      { id: "lore_a", tags: [], content: "甲" },
-      { id: "lore_a", tags: [], content: "乙" },
-    ];
+    save.lores.entries = [buildLoreEntry("lore_a", "甲"), buildLoreEntry("lore_a", "乙")];
     expectInvariant(save, /lore 条目 id 重复: lore_a/);
   });
 
   it("lore changelog seq 非整数 → invariant", () => {
     const save = buildSaveSet();
-    save.lore.changelog = [
-      { seq: 1.5, op: "add", before: null, after: { id: "lore_a", tags: [], content: "甲" } },
+    save.lores.changelog = [
+      { seq: 1.5, op: "add", before: null, after: buildLoreEntry("lore_a", "甲") },
     ];
     expectInvariant(save, /lore changelog seq 必须为整数/);
   });

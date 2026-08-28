@@ -6,6 +6,16 @@
         "category": "cid",
         "level": 1
       }
-    ]
+    ],
+    "children": {
+      "cid": {
+        "tags": [
+          {
+            "name": "角色感知",
+            "level": 1
+          }
+        ]
+      }
+    }
   }
 }

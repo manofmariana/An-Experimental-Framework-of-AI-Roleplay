@@ -33,7 +33,7 @@ import {
 
 /** 系统声明分支键序（= character 根视图呈现序前缀）。 */
 const SYSTEM_KEYS = [
-  "name", "gender", "age", "personality", "reaction", "level", "omniscience",
+  "cid", "name", "gender", "age", "personality", "reaction", "level", "omniscience",
   "location", "initiative", "relations", "long_term_memory",
   "acted", "group", "channel", "timer", "isPlayer", "appearance",
 ];
@@ -207,7 +207,7 @@ describe("var-decl-model：结构新增", () => {
     assert.throws(() => m.addDecl("world", "", { name: "a.b", valueType: "number" }), /不得包含/);
     assert.throws(() => m.addDecl("world", "", { name: "a[0]", valueType: "number" }), /不得包含/);
     assert.throws(() => m.addDecl("world", "", { name: "hp", valueType: "number" }), /已存在/);
-    assert.throws(() => m.addDecl("world", "", { name: "_sys", valueType: "number" }), /程序键/);
+    assert.throws(() => m.addDecl("world", "", { name: "time", valueType: "number" }), /系统分支/);
     assert.throws(() => m.addDecl("world", "", { name: "x", valueType: "wat" as never }), /未知 valueType/);
     assert.throws(() => m.addDecl("world", "hp", { name: "x", valueType: "number" }), /不是普通容器/);
     assert.throws(() => m.addDecl("world", "bag[*]", { name: "x", valueType: "number" }), /不开放新增/);

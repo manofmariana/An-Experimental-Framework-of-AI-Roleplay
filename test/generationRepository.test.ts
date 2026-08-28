@@ -11,7 +11,7 @@ import {
 } from "../src/truth/generationRepository.js";
 import { SAVE_SCHEMA_VERSION } from "../src/truth/saveSchema.js";
 import { RevisionConflictError, SaveLoadError, type SaveLoadErrorKind } from "../src/truth/validation/errors.js";
-import { buildPromptsFile } from "./builders/index.js";
+import { buildEvent, buildPromptsFile, buildSysFile, buildWorldTree } from "./builders/index.js";
 import { tempDir } from "./harness/tempDir.js";
 
 // ---------------------------------------------------------------------------
@@ -20,17 +20,14 @@ import { tempDir } from "./harness/tempDir.js";
 // contract 层：真实临时文件系统 + RepoIo 故障注入。
 // ---------------------------------------------------------------------------
 
-const START = { y: 0, m: 1, d: 1, h: 6, min: 0 };
-
 function sampleSave(marker: string): SaveSet {
   return {
-    world: { time: START, note: marker, _sys: {} },
-    pipeline: { seq: 0, working_set: [], current: null },
+    world: { ...buildWorldTree(), note: marker },
+    sys: buildSysFile(),
     characters: {},
     events: [],
     archive: [],
-    lore: { schema_version: SAVE_SCHEMA_VERSION, entries: [], changelog: [] },
-    time: { schema_version: SAVE_SCHEMA_VERSION, start: START, periods: [{ key: "白天", from: 6, to: 18 }] },
+    lores: { entries: [], changelog: [] },
     prompts: buildPromptsFile(),
   };
 }
@@ -167,12 +164,17 @@ describe("GenerationRepository（布局与提交）", () => {
     assert.equal(loaded.revision, 1);
     assert.equal(loaded.recoveredFrom, undefined, "正常加载无灾备标记");
     assert.deepEqual(loaded.save, save);
-    // 信封：Generation 内七文件均带统一 schema_version
+    // 信封：schema_version 单点化——只有 sys.json 盖章，其余文件不携版本字面量
+    const sysRaw = JSON.parse(
+      fs.readFileSync(path.join(dir, "generations", "000001", "sys.json"), "utf8"),
+    ) as { schema_version: unknown };
+    assert.equal(sysRaw.schema_version, SAVE_SCHEMA_VERSION, "sys.json 版本盖章");
     for (const file of TRUTH_FILES) {
+      if (file === "sys.json") continue;
       const raw = JSON.parse(
         fs.readFileSync(path.join(dir, "generations", "000001", file), "utf8"),
-      ) as { schema_version: unknown };
-      assert.equal(raw.schema_version, SAVE_SCHEMA_VERSION, `${file} 版本`);
+      ) as { schema_version?: unknown };
+      assert.equal(raw.schema_version, undefined, `${file} 不再盖章`);
     }
   });
 
@@ -363,22 +365,19 @@ describe("loadCurrent 灾备回退", () => {
     const repo = new GenerationRepository(dir);
     repo.commit(0, sampleSave("一"));
     repo.commit(1, sampleSave("二"));
-    const file = path.join(dir, "generations", "000002", "events.json");
-    fs.writeFileSync(file, JSON.stringify({ schema_version: SAVE_SCHEMA_VERSION - 1, events: [] }));
-    expectKind(() => repo.loadCurrent(), "version", /核心文件版本混合/);
+    // 版本闸单点化：schema_version 只读 sys.json 一处
+    const file = path.join(dir, "generations", "000002", "sys.json");
+    const raw = JSON.parse(fs.readFileSync(file, "utf8")) as { schema_version: number };
+    raw.schema_version = SAVE_SCHEMA_VERSION - 1;
+    fs.writeFileSync(file, JSON.stringify(raw));
+    expectKind(() => repo.loadCurrent(), "version", /请新建会话\/重启服务/);
   });
 
-  it("旧版本存档拒装：v10 档（prompts.json 前的六文件布局末版）整代拒载", () => {
-    const dir = tempDir("airp-gen-v10-");
+  it("旧布局 Generation（缺 sys.json）→ version（旧档不迁移）", () => {
+    const dir = tempDir("airp-gen-");
     const repo = new GenerationRepository(dir);
     repo.commit(0, sampleSave("一"));
-    // 把整代七文件改写成 v10（上一版本号），模拟旧档；版本号钉死字面量，勿随存档版本更新
-    for (const name of TRUTH_FILES) {
-      const file = path.join(dir, "generations", "000001", name);
-      const raw = JSON.parse(fs.readFileSync(file, "utf8")) as { schema_version: number };
-      raw.schema_version = 10;
-      fs.writeFileSync(file, JSON.stringify(raw));
-    }
+    fs.rmSync(path.join(dir, "generations", "000001", "sys.json"));
     expectKind(() => repo.loadCurrent(), "version", /请新建会话\/重启服务/);
   });
 
@@ -422,13 +421,15 @@ describe("类型化加载错误（SaveLoadError 六类）", () => {
     expectKind(() => repoMissing.loadCurrent(), "incomplete", /缺核心文件/);
   });
 
-  it("version：schema_version 混合（措辞保留请新建会话）/ 旧平铺档", () => {
+  it("version：sys.json 版本字面量不符（措辞保留请新建会话）/ 旧平铺档", () => {
     const dirMixed = tempDir("airp-gen-");
     const repoMixed = new GenerationRepository(dirMixed);
     repoMixed.commit(0, sampleSave("x"));
-    const file = path.join(dirMixed, "generations", "000001", "events.json");
-    fs.writeFileSync(file, JSON.stringify({ schema_version: SAVE_SCHEMA_VERSION - 1, events: [] }));
-    expectKind(() => repoMixed.loadCurrent(), "version", /核心文件版本混合.*请新建会话\/重启服务/);
+    const file = path.join(dirMixed, "generations", "000001", "sys.json");
+    const raw = JSON.parse(fs.readFileSync(file, "utf8")) as { schema_version: number };
+    raw.schema_version = SAVE_SCHEMA_VERSION - 1;
+    fs.writeFileSync(file, JSON.stringify(raw));
+    expectKind(() => repoMixed.loadCurrent(), "version", /请新建会话\/重启服务/);
 
     const dirLegacy = tempDir("airp-gen-");
     fs.writeFileSync(path.join(dirLegacy, "world.json"), JSON.stringify({ schema_version: 5 }));
@@ -439,7 +440,7 @@ describe("类型化加载错误（SaveLoadError 六类）", () => {
     const dirTruncated = tempDir("airp-gen-");
     const repoTruncated = new GenerationRepository(dirTruncated);
     repoTruncated.commit(0, sampleSave("x"));
-    fs.writeFileSync(path.join(dirTruncated, "generations", "000001", "lore.json"), "{ 截断");
+    fs.writeFileSync(path.join(dirTruncated, "generations", "000001", "lores.json"), "{ 截断");
     expectKind(() => repoTruncated.loadCurrent(), "corrupt", /JSON 不可解析/);
 
     const dirBroken = tempDir("airp-gen-");
@@ -447,7 +448,7 @@ describe("类型化加载错误（SaveLoadError 六类）", () => {
     repoBroken.commit(0, sampleSave("x"));
     fs.writeFileSync(
       path.join(dirBroken, "generations", "000001", "events.json"),
-      JSON.stringify({ schema_version: SAVE_SCHEMA_VERSION, events: "不是数组" }),
+      JSON.stringify({ events: "不是数组" }),
     );
     expectKind(() => repoBroken.loadCurrent(), "corrupt", /结构校验失败/);
   });
@@ -488,11 +489,7 @@ describe("validateSaveSet 默认接入（B4 两级校验）", () => {
     fs.writeFileSync(
       path.join(dir, "generations", "000002", "events.json"),
       JSON.stringify({
-        schema_version: SAVE_SCHEMA_VERSION,
-        events: [
-          { id: "evt_1", t: 0, seq: 1, kind: "world", tags: [], payload: "甲" },
-          { id: "evt_1", t: 0, seq: 1, kind: "world", tags: [], payload: "乙" },
-        ],
+        events: [buildEvent({ id: "evt_1", seq: 1, content: "甲" }), buildEvent({ id: "evt_1", seq: 1, content: "乙" })],
       }),
     );
 
@@ -513,10 +510,7 @@ describe("validateSaveSet 默认接入（B4 两级校验）", () => {
     repo.commit(1, sampleSave("二"));
     fs.writeFileSync(
       path.join(dir, "generations", "000001", "events.json"),
-      JSON.stringify({
-        schema_version: SAVE_SCHEMA_VERSION,
-        events: [{ id: "", t: 0, seq: 1, kind: "world", tags: [], payload: "空 id" }],
-      }),
+      JSON.stringify({ events: [buildEvent({ id: "", seq: 1 })] }),
     );
     expectKind(() => repo.loadPrevious(), "invariant");
   });

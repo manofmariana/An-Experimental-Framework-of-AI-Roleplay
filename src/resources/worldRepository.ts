@@ -1,7 +1,7 @@
 /**
  * 世界设定集仓储。
  *
- * data/assets/{setId}/ 世界包：三文件（setting.md / tone-card.md / lorebook.json）、突发公式配置
+ * data/assets/{setId}/ 世界包：lores.json 世界书、突发公式配置
  * （incident.json）、变量体系文件（tags.json 注册表只读 + vars-template.json / vars-tags.json 可写，
  * 缺文件读 → null 由路由层给缺省空结构）、角色 manifest
  * （player.json + characters/*.json）、包内提示词模板（prompts/{agent}.prompt.json，每包一份
@@ -70,9 +70,7 @@ export function resolveWorldDir(worldsDir: string, setId: string | undefined, de
 // ---------------------------------------------------------------------------
 
 export const WORLD_FILES = {
-  setting: "setting.md",
-  "tone-card": "tone-card.md",
-  lorebook: "lorebook.json",
+  lorebook: "lores.json",
 } as const;
 export type WorldFileName = keyof typeof WORLD_FILES;
 
@@ -95,8 +93,8 @@ export function validateLorebookPayload(raw: unknown): LoreEntry[] {
   const entries = z.array(LoreEntrySchema).parse(raw);
   const seen = new Set<string>();
   for (const e of entries) {
-    if (seen.has(e.id)) throw new Error(`lorebook 条目 ID 重复: ${e.id}`);
-    seen.add(e.id);
+    if (seen.has(e.id.value)) throw new Error(`lorebook 条目 ID 重复: ${e.id.value}`);
+    seen.add(e.id.value);
   }
   return entries;
 }

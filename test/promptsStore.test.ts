@@ -7,8 +7,6 @@ import {
   PromptsStore,
   type PromptsFile,
 } from "../src/truth/promptsStore.js";
-import { SAVE_SCHEMA_VERSION } from "../src/truth/saveSchema.js";
-
 const t = (id: string, content = `${id}内容`): PromptTemplate => ({
   id,
   modules: [{ key: "m", role: "system", content }],
@@ -16,7 +14,6 @@ const t = (id: string, content = `${id}内容`): PromptTemplate => ({
 
 function sampleFile(): PromptsFile {
   return {
-    schema_version: SAVE_SCHEMA_VERSION,
     templates: {
       character: t("character"),
       gm: t("gm"),
@@ -43,7 +40,7 @@ describe("PromptsFileSchema（prompts.json 文件 codec）", () => {
     (extra.templates as Record<string, unknown>)["npc"] = t("npc");
     assert.throws(() => PromptsFileSchema.parse(extra));
 
-    // placeholders 键缺失同样拒装（信封 = {schema_version, templates, placeholders}）
+    // placeholders 键缺失同样拒装（信封 = {templates, placeholders}）
     const noCatalog = JSON.parse(JSON.stringify(sampleFile())) as Record<string, unknown>;
     delete noCatalog["placeholders"];
     assert.throws(() => PromptsFileSchema.parse(noCatalog));
@@ -54,7 +51,6 @@ describe("PromptsFileSchema（prompts.json 文件 codec）", () => {
     file.placeholders = {
       p: {
         description: "d",
-        source: "vars",
         segments: [
           {
             kind: "entry",
@@ -84,9 +80,9 @@ describe("PromptsFileSchema（prompts.json 文件 codec）", () => {
     assert.throws(() => PromptsFileSchema.parse(file), /与键名/);
   });
 
-  it("schema_version 不符拒装（literal 校验）", () => {
-    const file = JSON.parse(JSON.stringify(sampleFile())) as { schema_version: number };
-    file.schema_version = SAVE_SCHEMA_VERSION - 1;
+  it("schema_version 键拒装（盖章单点在 sys.json，本文件 strict 拒绝多键）", () => {
+    const file = JSON.parse(JSON.stringify(sampleFile())) as Record<string, unknown>;
+    file["schema_version"] = 15;
     assert.throws(() => PromptsFileSchema.parse(file));
   });
 });
@@ -121,11 +117,11 @@ describe("PromptsStore（档内副本；纯内存容器）", () => {
     store.replacePlaceholders({
       p: {
         description: "d",
-        source: "events",
+        source: "cast",
         segments: [
           {
             kind: "entry",
-            pass: { template: "{_content}", branches: [{ tokens: ["vis", "aud", "vis"], template: "b" }] },
+            pass: { template: "{cast.content}", branches: [{ tokens: ["vis", "aud", "vis"], template: "b" }] },
           },
         ],
       },

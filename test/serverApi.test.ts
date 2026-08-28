@@ -29,7 +29,7 @@ import { resolveWorldDir } from "../src/config.js";
 import { safeSegment } from "../src/shared/safeSegment.js";
 import { Lorebook } from "../src/truth/lorebook.js";
 import { CharacterManifestSchema } from "../src/agents/character.js";
-import { PLACEHOLDER_SOURCES } from "../src/compile/placeholders.js";
+import { ASSEMBLED_SOURCES } from "../src/compile/placeholders.js";
 import { loadPackPlaceholders } from "../src/application/sessionFactory.js";
 import { SAVE_SCHEMA_VERSION } from "../src/truth/saveSchema.js";
 import type { SessionCoordinator } from "../src/application/sessionCoordinator.js";
@@ -102,20 +102,24 @@ describe("validateFileConfig（contracts FileConfigSchema）", () => {
 });
 
 describe("validateLorebookPayload", () => {
-  it("合法条目数组通过", () => {
+  it("合法条目数组通过（全末端外壳；tags 落在 content 末端）", () => {
     const entries = validateLorebookPayload([
-      { id: "a", tags: [{ name: "白滩镇：常识", level: 1 }], content: "c", enabled: true },
+      {
+        id: { value: "a", tags: [] },
+        content: { value: "c", tags: [{ name: "白滩镇：常识", level: 1 }] },
+        enabled: { value: true, tags: [] },
+      },
     ]);
-    assert.equal(entries[0]!.id, "a");
+    assert.equal(entries[0]!.id.value, "a");
   });
 
   it("缺字段 / 重复 ID 拒绝", () => {
-    assert.throws(() => validateLorebookPayload([{ id: "a", tags: [] }]));
+    assert.throws(() => validateLorebookPayload([{ id: { value: "a", tags: [] } }]));
     assert.throws(
       () =>
         validateLorebookPayload([
-          { id: "a", tags: [], content: "1" },
-          { id: "a", tags: [], content: "2" },
+          { id: { value: "a", tags: [] }, content: { value: "1", tags: [] } },
+          { id: { value: "a", tags: [] }, content: { value: "2", tags: [] } },
         ]),
       /重复/,
     );
@@ -145,11 +149,12 @@ describe("listRuns / readRunArtifact（存档 v7 Generation 布局）", () => {
       const gen = path.join(d, "generations", "000001");
       fs.mkdirSync(gen, { recursive: true });
       fs.writeFileSync(path.join(d, "CURRENT"), "000001");
-      fs.writeFileSync(path.join(gen, "events.json"), `{"schema_version":${v},"events":[{"id":"evt_1","t":0,"seq":3}]}`);
-      fs.writeFileSync(path.join(gen, "world.json"), `{"schema_version":${v},"world":{"time":{"y":1,"m":1,"d":1,"h":0,"min":5},"weather":"雾"},"pipeline":{"seq":3,"working_set":[],"current":null}}`);
-      fs.writeFileSync(path.join(gen, "characters.json"), `{"schema_version":${v},"characters":{"C1001":{"name":"林雾","gender":"女","age":"26","personality":"寡言谨慎。","tags":[],"reaction":0,"location":{"name":"灯塔","level":1},"timer":5,"group":0,"initiative":null,"channel":null,"acted":false,"level":1,"isPlayer":false,"relations":[],"long_term_memory":[],"vars":{}}}}`);
-      fs.writeFileSync(path.join(gen, "archive.json"), `{"schema_version":${v},"entries":[{"seq":1,"kind":"player","result":{"input":"你好"},"changes":{"setup":[],"effects":[]}}]}`);
-      fs.writeFileSync(path.join(gen, "lore.json"), `{"schema_version":${v},"entries":[],"changelog":[]}`);
+      fs.writeFileSync(path.join(gen, "events.json"), `{"events":[{"id":{"value":"evt_1","tags":[]},"t":{"value":0,"tags":[]},"seq":{"value":3,"tags":[]},"kind":{"value":"world","tags":[]},"content":{"value":"甲","tags":[]}}]}`);
+      fs.writeFileSync(path.join(gen, "world.json"), `{"world":{"time":{"y":{"value":1,"tags":[]},"m":{"value":1,"tags":[]},"d":{"value":1,"tags":[]},"h":{"value":0,"tags":[]},"min":{"value":5,"tags":[]},"periods":[]},"weather":"雾"}}`);
+      fs.writeFileSync(path.join(gen, "characters.json"), `{"characters":{"C1001":{"name":"林雾","gender":"女","age":"26","personality":"寡言谨慎。","tags":[],"reaction":0,"location":{"name":"灯塔","level":1},"timer":5,"group":0,"initiative":null,"channel":null,"acted":false,"level":1,"isPlayer":false,"relations":[],"long_term_memory":[],"vars":{}}}}`);
+      fs.writeFileSync(path.join(gen, "archive.json"), `{"entries":[{"seq":1,"kind":"player","result":{"input":"你好"},"changes":{"setup":[],"effects":[]}}]}`);
+      fs.writeFileSync(path.join(gen, "lores.json"), `{"entries":[],"changelog":[]}`);
+      fs.writeFileSync(path.join(gen, "sys.json"), `{"schema_version":${v},"tagRegistry":{},"varsTemplate":{},"varsTags":{"world":{},"character":{}},"cycles_since_gm":0,"gm_trigger":false,"gm_trigger_batch":null,"pipeline":{"seq":3,"working_set":[],"current":null}}`);
       fs.utimesSync(d, mtime, mtime);
     };
     mk("run-old", new Date(2020, 0, 1));
@@ -163,16 +168,18 @@ describe("listRuns / readRunArtifact（存档 v7 Generation 布局）", () => {
     );
 
     assert.deepEqual(readRunArtifact(dir, "run-new", "events"), {
-      schema_version: v,
-      events: [{ id: "evt_1", t: 0, seq: 3 }],
+      events: [{ id: { value: "evt_1", tags: [] }, t: { value: 0, tags: [] }, seq: { value: 3, tags: [] }, kind: { value: "world", tags: [] }, content: { value: "甲", tags: [] } }],
     });
-    const world = readRunArtifact(dir, "run-new", "world") as { world: { time: { min: number } } };
-    assert.equal(world.world.time.min, 5);
+    const world = readRunArtifact(dir, "run-new", "world") as { world: { time: { min: { value: number } } } };
+    assert.equal(world.world.time.min.value, 5);
+    const sys = readRunArtifact(dir, "run-new", "sys") as { schema_version: number; pipeline: { seq: number } };
+    assert.equal(sys.schema_version, v);
+    assert.equal(sys.pipeline.seq, 3);
     const characters = readRunArtifact(dir, "run-new", "characters") as { characters: Record<string, { personality: string }> };
     assert.equal(characters.characters.C1001?.personality, "寡言谨慎。");
     const archive = readRunArtifact(dir, "run-new", "archive") as { entries: unknown[] };
     assert.equal(archive.entries.length, 1);
-    assert.deepEqual(readRunArtifact(dir, "run-new", "lore"), { schema_version: v, entries: [], changelog: [] });
+    assert.deepEqual(readRunArtifact(dir, "run-new", "lore"), { entries: [], changelog: [] });
     assert.deepEqual(readRunArtifact(dir, "run-new", "stats"), []); // 缺文件 → 空
     assert.throws(() => readRunArtifact(dir, "..", "events"), /非法名称/);
   });
@@ -236,26 +243,28 @@ describe("prompts API（提示词模板端点的纯逻辑）", () => {
     const catalog = placeholdersCatalog(loadPackPlaceholders(FACTORY_WORLD_DIR));
     const keys = catalog.map((p) => p.key);
     for (const k of [
-      "setting", "tone_card", "lore", "events", "current_scene", "prose_window", "last_prose",
+      "lore", "events", "current_scene", "prose_window", "last_prose",
       "time", "cast", "contacts", "departure_notices", "incoming_contact", "timers", "fortune",
       "gm_event", "target_group", "world_snapshot", "snapshot", "group_members",
-      "long_term_memory", "name", "cid", "location",
+      "long_term_memory", "self_name", "self_location", "present_characters",
     ]) {
       assert.ok(keys.includes(k), `目录缺 ${k}`);
     }
-    // 每项都带描述、合法内容源与段列全文（编辑器结构化数据）
+    // 每项都带描述与段列全文；source 二分类（组装源封闭枚举 / 键缺省 = 落盘四根）
     for (const p of catalog) {
       assert.ok(p.description.length > 0);
-      assert.ok((PLACEHOLDER_SOURCES as readonly string[]).includes(p.source));
+      assert.ok(p.source === undefined || (ASSEMBLED_SOURCES as readonly string[]).includes(p.source));
       assert.ok(Array.isArray(p.segments) && p.segments.length > 0);
     }
+    // setting/tone_card 占位符源已删除（静态文本内嵌进模板静态文案）
+    assert.ok(!keys.includes("setting") && !keys.includes("tone_card"));
   });
 
   it("validatePromptPayload：合法通过；未知占位符列出名字；id 不符拒绝", () => {
     const catalog = loadPackPlaceholders(FACTORY_WORLD_DIR);
     const ok = validatePromptPayload("gm", {
       id: "gm",
-      modules: [{ key: "m", role: "system", content: "设定：{{setting}}" }],
+      modules: [{ key: "m", role: "system", content: "设定：{{lore}}" }],
     }, catalog);
     assert.equal(ok.id, "gm");
 
@@ -271,7 +280,7 @@ describe("prompts API（提示词模板端点的纯逻辑）", () => {
       () =>
         validatePromptPayload("gm", {
           id: "character",
-          modules: [{ key: "m", role: "system", content: "{{setting}}" }],
+          modules: [{ key: "m", role: "system", content: "{{lore}}" }],
         }, catalog),
       /不一致/,
     );
@@ -322,23 +331,25 @@ describe("角色 manifest API/前端往返契约", () => {
 describe("lorebook 读写回环", () => {
   it("validateLorebookPayload → 写盘 → Lorebook.load 读回一致", () => {
     const dir = tempDir("airp-lore-");
-    const file = path.join(dir, "lorebook.json");
+    const file = path.join(dir, "lores.json");
     const entries = validateLorebookPayload([
-      { id: "b", tags: [{ name: "白滩镇：常识", level: 1 }], content: "B", enabled: false },
-      { id: "a", tags: [], content: "A" },
+      {
+        id: { value: "b", tags: [] },
+        content: { value: "B", tags: [{ name: "白滩镇：常识", level: 1 }] },
+        enabled: { value: false, tags: [] },
+      },
+      { id: { value: "a", tags: [] }, content: { value: "A", tags: [] } },
     ]);
     fs.writeFileSync(file, JSON.stringify(entries, null, 2) + "\n", "utf8");
 
     const book = Lorebook.load(file);
     assert.deepEqual(
-      book.all().map((e) => e.id),
+      book.all().map((e) => e.id.value),
       ["a", "b"], // all() 按 ID 排序
     );
-    assert.equal(book.getByIds(["b"])[0]!.content, "B");
-    assert.deepEqual(
-      book.getByTags({ tags: new Set(["白滩镇：常识"]) }, {}).map((e) => e.id),
-      ["a", "b"], // 无挂载条目 = 广播恒通过
-    );
+    assert.equal(book.getByIds(["b"])[0]!.content.value, "B");
+    // TAG 挂载全部落在 content 末端（过滤在引擎，不在本容器）
+    assert.deepEqual(book.getByIds(["b"])[0]!.content.tags, [{ name: "白滩镇：常识", level: 1 }]);
   });
 });
 
@@ -371,7 +382,7 @@ function mockRes(): { res: ServerResponse; out: { status: number; text: string }
 
 function stubDeps(
   applyDirectEdit: (payload: unknown) => void,
-  opts?: { activeWorld?: Record<string, unknown> | null; revision?: number },
+  opts?: { activeSys?: Record<string, unknown> | null; revision?: number },
 ): ApiDeps {
   const root = tempDir("airp-cfg-");
   const dirs = {
@@ -383,7 +394,7 @@ function stubDeps(
   return {
     coordinator: {
       applyDirectEdit,
-      activeWorld: () => opts?.activeWorld ?? null,
+      activeSys: () => opts?.activeSys ?? null,
       currentRevision: opts?.revision ?? 8,
     } as unknown as SessionCoordinator,
     dirs,
@@ -435,27 +446,24 @@ describe("PUT /api/session/state（直接编辑端点，envelope）", () => {
 
 // ---------------------------------------------------------------------------
 // 结构编辑档内模式（世界页「变量结构」双模式的会话侧）：
-// GET /api/session/state/sys = 档内取数（_sys 三键 + baseRevision；无会话 404 NO_ACTIVE_SESSION）；
-// PUT /api/session/state 带 sys = 服务端取当前 world 替换 _sys 对应键后走同一直编通道
-// （形状闸 400；sys 与 world 互斥；无会话 404；409 REVISION_CONFLICT 透传）。
+// GET /api/session/state/sys = 档内取数（sys 根三件套 + baseRevision；无会话 404 NO_ACTIVE_SESSION）；
+// PUT /api/session/state 带 sys = 原样并入直编载荷走同一通道（键白名单闸 400；
+// sys 与 world 是两个独立域、可同携；无会话 404；409 REVISION_CONFLICT 透传）。
 // ---------------------------------------------------------------------------
 
-const STUB_WORLD = {
-  time: { y: 0, m: 1, d: 1, h: 0, min: 0 },
-  hp: { value: 1, tags: [] },
-  _sys: {
-    tagRegistry: { sys_tag: { name: "sys_tag", system: true } },
-    varsTemplate: { world: { children: { hp: "number" } }, character: { children: {} } },
-    varsTags: { world: {}, character: {} },
-    cycles_since_gm: 0,
-    gm_trigger: false,
-    gm_trigger_batch: null,
-  },
+const STUB_SYS = {
+  tagRegistry: { sys_tag: { name: "sys_tag", system: true } },
+  varsTemplate: { world: { children: { hp: "number" } }, character: { children: {} } },
+  varsTags: { world: {}, character: {} },
+  cycles_since_gm: 0,
+  gm_trigger: false,
+  gm_trigger_batch: null,
+  pipeline: { seq: 0, working_set: [], current: null },
 };
 
 describe("GET /api/session/state/sys（结构编辑档内模式取数）", () => {
-  it("有活跃会话：返回 _sys 的 varsTemplate/varsTags/tagRegistry + baseRevision", async () => {
-    const handleApi = createApiHandler(stubDeps(() => {}, { activeWorld: STUB_WORLD, revision: 12 }));
+  it("有活跃会话：返回 sys 根的 varsTemplate/varsTags/tagRegistry + baseRevision", async () => {
+    const handleApi = createApiHandler(stubDeps(() => {}, { activeSys: STUB_SYS, revision: 12 }));
     const { res, out } = mockRes();
     assert.equal(await handleApi(mockReq("GET", "/api/session/state/sys"), res), true);
     assert.equal(out.status, 200);
@@ -464,14 +472,14 @@ describe("GET /api/session/state/sys（结构编辑档内模式取数）", () =>
       data: { varsTemplate: unknown; varsTags: unknown; tagRegistry: unknown; baseRevision: number };
     };
     assert.equal(body.ok, true);
-    assert.deepEqual(body.data.varsTemplate, STUB_WORLD._sys.varsTemplate);
-    assert.deepEqual(body.data.varsTags, STUB_WORLD._sys.varsTags);
-    assert.deepEqual(body.data.tagRegistry, STUB_WORLD._sys.tagRegistry);
+    assert.deepEqual(body.data.varsTemplate, STUB_SYS.varsTemplate);
+    assert.deepEqual(body.data.varsTags, STUB_SYS.varsTags);
+    assert.deepEqual(body.data.tagRegistry, STUB_SYS.tagRegistry);
     assert.equal(body.data.baseRevision, 12);
   });
 
   it("无活跃会话：404 NO_ACTIVE_SESSION（前端据此判包基线模式）", async () => {
-    const handleApi = createApiHandler(stubDeps(() => {}, { activeWorld: null }));
+    const handleApi = createApiHandler(stubDeps(() => {}, { activeSys: null }));
     const { res, out } = mockRes();
     await handleApi(mockReq("GET", "/api/session/state/sys"), res);
     assert.equal(out.status, 404);
@@ -482,14 +490,14 @@ describe("GET /api/session/state/sys（结构编辑档内模式取数）", () =>
 });
 
 describe("PUT /api/session/state sys 载荷（结构编辑档内副本）", () => {
-  it("sys 替换 _sys 对应键后走直编通道：其余程序分支保留，应答附 revision", async () => {
-    let captured: { world?: Record<string, unknown> } = {};
+  it("sys 原样并入直编载荷（独立域，不拼进 world），应答附 revision", async () => {
+    let captured: { sys?: Record<string, unknown>; world?: unknown } = {};
     const handleApi = createApiHandler(
       stubDeps(
         (payload) => {
           captured = payload as typeof captured;
         },
-        { activeWorld: STUB_WORLD, revision: 13 },
+        { activeSys: STUB_SYS, revision: 13 },
       ),
     );
     const newTemplate = { world: { children: { hp: "number", mana: "number" } }, character: { children: {} } };
@@ -497,34 +505,27 @@ describe("PUT /api/session/state sys 载荷（结构编辑档内副本）", () =
     const reqBody = { sys: { varsTemplate: newTemplate }, baseRevision: 12 };
     await handleApi(mockReq("PUT", "/api/session/state", reqBody), res);
     assert.equal(out.status, 200);
-    // 转发的 world = 当前 world 深拷贝 + _sys.varsTemplate 替换（varsTags/计数键原样保留）
-    const world = captured.world!;
-    const sys = world["_sys"] as Record<string, unknown>;
-    assert.deepEqual(sys["varsTemplate"], newTemplate);
-    assert.deepEqual(sys["varsTags"], STUB_WORLD._sys.varsTags);
-    assert.equal(sys["cycles_since_gm"], 0);
-    assert.equal(sys["gm_trigger"], false);
-    assert.deepEqual(world["time"], STUB_WORLD.time);
-    assert.deepEqual(world["hp"], STUB_WORLD.hp);
+    // sys 原样转发（合并/解析/级联归 GameSession 直编通道）
+    assert.deepEqual(captured.sys, { varsTemplate: newTemplate });
+    assert.equal(captured.world, undefined, "sys 不再拼进 world 载荷");
     // 应答附保存后 revision（前端保存不关窗时刷新闸值）
     assert.equal((JSON.parse(out.text) as { data: { revision: number } }).data.revision, 13);
   });
 
-  it("sys 形状非法（非对象/空对象/未知字段/与 world 同携）→ 400，不触达协调器", async () => {
+  it("sys 形状非法（非对象/空对象/未知字段）→ 400，不触达协调器；与 world 同携 = 两个独立域（合法）", async () => {
     let called = 0;
     const handleApi = createApiHandler(
       stubDeps(
         () => {
           called += 1;
         },
-        { activeWorld: STUB_WORLD },
+        { activeSys: STUB_SYS },
       ),
     );
     for (const body of [
       { sys: "不是对象" },
       { sys: {} },
       { sys: { tagRegistry: {} } },
-      { sys: { varsTags: { world: {}, character: {} } }, world: { time: {} } },
     ]) {
       const { res, out } = mockRes();
       await handleApi(mockReq("PUT", "/api/session/state", body), res);
@@ -532,10 +533,18 @@ describe("PUT /api/session/state sys 载荷（结构编辑档内副本）", () =
       assert.equal((JSON.parse(out.text) as { error: { code: string } }).error.code, "VALIDATION_ERROR");
     }
     assert.equal(called, 0);
+    // sys 与 world 同携 = 两个独立域，原样转发
+    const { res, out } = mockRes();
+    await handleApi(
+      mockReq("PUT", "/api/session/state", { sys: { varsTags: { world: {}, character: {} } }, world: { hp: 1 } }),
+      res,
+    );
+    assert.equal(out.status, 200);
+    assert.equal(called, 1);
   });
 
   it("无活跃会话：sys 载荷 → 404 NO_ACTIVE_SESSION", async () => {
-    const handleApi = createApiHandler(stubDeps(() => {}, { activeWorld: null }));
+    const handleApi = createApiHandler(stubDeps(() => {}, { activeSys: null }));
     const { res, out } = mockRes();
     await handleApi(mockReq("PUT", "/api/session/state", { sys: { varsTags: { world: {}, character: {} } } }), res);
     assert.equal(out.status, 404);
@@ -548,7 +557,7 @@ describe("PUT /api/session/state sys 载荷（结构编辑档内副本）", () =
         () => {
           throw new RevisionConflictError(12, 15);
         },
-        { activeWorld: STUB_WORLD },
+        { activeSys: STUB_SYS },
       ),
     );
     const { res, out } = mockRes();

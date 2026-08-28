@@ -94,9 +94,9 @@ async function runGmStep(session: GameSession): Promise<void> {
   await session.handlePlayerInput("玩家行动");
 }
 
-/** 当前步（= 刚停的 GM 步）effects 段变更记录（读档内 world.json 的 pipeline 分支）。 */
+/** 当前步（= 刚停的 GM 步）effects 段变更记录（读档内 sys.json 的 pipeline 分支）。 */
 function currentEffects(runId: string): VarChange[] {
-  const raw = JSON.parse(h.runFile(runId, "world.json")) as {
+  const raw = JSON.parse(h.runFile(runId, "sys.json")) as {
     pipeline: { current: { changes?: { effects?: VarChange[] } } | null };
   };
   return raw.pipeline.current?.changes?.effects ?? [];

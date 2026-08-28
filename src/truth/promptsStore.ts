@@ -1,5 +1,5 @@
 /**
- * 档内提示词副本（存档 Generation 内 prompts.json = {schema_version, templates, placeholders}）。
+ * 档内提示词副本（存档 Generation 内 prompts.json = {templates, placeholders}）。
  * 新会话把世界包 prompts/ 四份模板 + placeholders.json 占位符目录拷入存档，此后只动档内
  * 副本（防污染原始 data/）；templates 四键（character/gm/prose/gm-incident）必须齐备且无
  * 多键，模板 id 与键名一致；placeholders = 全对象共享的声明式占位符目录（缺键拒装，
@@ -15,7 +15,6 @@ import {
   type PlaceholderCatalog,
 } from "../compile/placeholders.js";
 import { PromptTemplateSchema, type PromptTemplate } from "../compile/template.js";
-import { SAVE_SCHEMA_VERSION } from "./saveSchema.js";
 
 /** 四份模板的封闭键集（三 activation + gm-incident 突发变体）。 */
 export const PROMPT_TEMPLATE_IDS = ["character", "gm", "prose", "gm-incident"] as const;
@@ -27,7 +26,6 @@ export function isPromptTemplateId(id: string): id is PromptTemplateId {
 
 export const PromptsFileSchema = z
   .object({
-    schema_version: z.literal(SAVE_SCHEMA_VERSION),
     templates: z
       .object({
         character: PromptTemplateSchema,
@@ -62,7 +60,7 @@ export class PromptsStore {
   static initFrom(templates: readonly PromptTemplate[], placeholders: unknown): PromptsStore {
     const record = Object.fromEntries(templates.map((template) => [template.id, template]));
     return new PromptsStore(
-      PromptsFileSchema.parse({ schema_version: SAVE_SCHEMA_VERSION, templates: record, placeholders }),
+      PromptsFileSchema.parse({ templates: record, placeholders }),
     );
   }
 
@@ -93,7 +91,6 @@ export class PromptsStore {
       throw new Error(`未知模板 id: ${template.id}（只允许 ${PROMPT_TEMPLATE_IDS.join(" / ")}）`);
     }
     this.data = {
-      schema_version: SAVE_SCHEMA_VERSION,
       templates: { ...this.data.templates, [template.id]: template },
       placeholders: this.data.placeholders,
     };
@@ -102,7 +99,6 @@ export class PromptsStore {
   /** 整体替换占位符目录（编辑通道写接口；zod 形状 + 分支规范化同装配口径）。 */
   replacePlaceholders(raw: unknown): void {
     this.data = {
-      schema_version: SAVE_SCHEMA_VERSION,
       templates: this.data.templates,
       placeholders: parsePlaceholders(raw),
     };
