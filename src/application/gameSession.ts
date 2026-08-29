@@ -70,7 +70,16 @@ import { diffStateTrees } from "../truth/varDiff.js";
 import { applyVarDeltas, cascadeDerived, varWriteDepsOf } from "../truth/varWrite.js";
 import { normalizeInstance, validateSystemTags } from "../vars/tree.js";
 import { DisposedSessionError } from "../truth/validation/errors.js";
-import { isNoticeEntry, renderScene, renderSpeech, type WorkingSetEntry } from "../truth/workingSet.js";
+import {
+  appendDirectives,
+  directiveEntryOf,
+  isDirectiveEntry,
+  isNoticeEntry,
+  renderScene,
+  renderSpeech,
+  type DirectiveMode,
+  type WorkingSetEntry,
+} from "../truth/workingSet.js";
 import {
   emptyStepChanges,
   flatChanges,
@@ -397,7 +406,7 @@ export class GameSession {
     // 流水线断点（工作集未清/有未归档步骤）：提示，按现算 phase 继续
     const p = this.sys.pipeline;
     if (p.working_set.length > 0 || p.current !== null) {
-      const pending = p.working_set.flatMap((e) => (isNoticeEntry(e) ? [] : [e.cid])).length;
+      const pending = p.working_set.flatMap((e) => (isNoticeEntry(e) || isDirectiveEntry(e) ? [] : [e.cid])).length;
       this.display?.summary(
         "session",
         `流水线断点恢复：seq=${p.seq} phase=${phaseOf(this.deriveCommand(this.liveTruth()))}（未裁决言行 ${pending} 条将并入后续裁决）`,
@@ -788,8 +797,8 @@ export class GameSession {
   private async stepGm(cmd: GmCommand): Promise<void> {
     const truth = this.liveTruth();
     const workingSet = truth.sys.pipeline.working_set;
-    // 本轮行动者 = 言行条目作者（系统通知条目无 cid，不计入行动者）
-    const roundCids = [...new Set(workingSet.flatMap((e) => (isNoticeEntry(e) ? [] : [e.cid])))];
+    // 本轮行动者 = 言行条目作者（系统通知条目与指令条目无 cid，不计入行动者）
+    const roundCids = [...new Set(workingSet.flatMap((e) => (isNoticeEntry(e) || isDirectiveEntry(e) ? [] : [e.cid])))];
     this.validateWorkingSetRound(roundCids);
     // roundCids（工作集行动者）语义不变；durations 契约基准另算（中途 GM 含同步组全体未行动成员）
     const durationCids = this.expectedGmDurationCids(truth, roundCids);
@@ -909,6 +918,8 @@ export class GameSession {
         participants: roundCids,
         scenes,
       };
+      // 指令条目当轮一次性：正文步提交清除 GM 清算豁免的残留（narrativity=skip 已在 GM 步全清）
+      this.sys.setPipeline({ working_set: this.sys.pipeline.working_set.filter((e) => !isDirectiveEntry(e)) });
       this.finishStep(seq, "prose", result, emptyStepChanges());
       // 前序 GM 轮召唤了正文 → 突发等到正文结束后才激活（评估输入 = 该轮 durations）
       settledDurations = adjudication.durations.map((d) => d.cid);
@@ -1164,6 +1175,21 @@ export class GameSession {
   }
 
   /**
+   * 指令提交（上帝/写作指令，WS directive 命令）：指令条目并入工作集（同 mode 固定 ID
+   * 复用，后来者居上），author = 主控角色 cid。一次 commitTruth 提交（revision 前移 +
+   * transition 广播），不产生 archive 步。受理窗口 = 有活跃会话且 LLM 不在途
+   * （与直接编辑同闸）；不校验 phase/interrupted——指令是工作集内容单元，
+   * 等玩家位与暂停态均可提交，随下一次 GM/正文激活生效（当轮一次性）。
+   */
+  submitDirective(mode: DirectiveMode, text: string): void {
+    if (this.llmBusy) throw new Error("LLM 运行中：请等待当前生成结束后再提交指令");
+    const draft = cloneTruth(this.liveTruth());
+    const entry = directiveEntryOf(mode, text, this.playerCid(draft));
+    draft.sys.setPipeline({ working_set: appendDirectives(draft.sys.pipeline.working_set, [entry]) });
+    this.commitTruth(draft, "admin_edit", []);
+  }
+
+  /**
    * 回溯到 targetSeq（= 回到第 targetSeq 步刚完成的位置）：
    * **倒序反向执行变量变更**——先反向当前步（若 current.seq > targetSeq），
    * 再逐条弹出 archive 中 seq > targetSeq 的条目并反向其 StepChanges
@@ -1288,7 +1314,7 @@ export class GameSession {
       // 该角色旧决策标记派生的通知条目一并摘除（重放按新决策重新生成）
       draft.sys.setPipeline({
         working_set: draft.sys.pipeline.working_set.filter((entry) =>
-          isNoticeEntry(entry) ? entry.notice.actor !== cid : entry.cid !== cid,
+          isNoticeEntry(entry) ? entry.notice.actor !== cid : isDirectiveEntry(entry) ? true : entry.cid !== cid,
         ),
       });
       const effects = planActorDecision(draft, {
@@ -1317,7 +1343,7 @@ export class GameSession {
       if (current.interrupted === true) {
         // 暂停态：效应从未应用（effects 空段）——直接按编辑包补做（工作集仍是 GM 前的完整轮）
         const roundCids = [
-          ...new Set(draft.sys.pipeline.working_set.flatMap((e) => (isNoticeEntry(e) ? [] : [e.cid]))),
+          ...new Set(draft.sys.pipeline.working_set.flatMap((e) => (isNoticeEntry(e) || isDirectiveEntry(e) ? [] : [e.cid]))),
         ];
         validateAdjudicationRound(pkg, this.expectedGmDurationCids(draft, roundCids));
         const roundScenes = previous?.round_scenes ?? Object.fromEntries(roundCids.map((cid) => [cid, draft.characters.get(cid).group]));
@@ -1336,7 +1362,7 @@ export class GameSession {
         // draft 上先整体反向（变量倒序 + 事件按 seq 截断）、后校验编辑包：
         // 校验失败 → draft 整体丢弃，live 内存/CURRENT/磁盘三不变。
         const preSet = projectWorkingSet(draft.archive.readAll(), this.playerCid(draft));
-        const roundCids = [...new Set(preSet.flatMap((e) => (isNoticeEntry(e) ? [] : [e.cid])))];
+        const roundCids = [...new Set(preSet.flatMap((e) => (isNoticeEntry(e) || isDirectiveEntry(e) ? [] : [e.cid])))];
         // 变量反向先行（setup 保留：编辑不触碰调度落账）：状态回到 GM 前后才能按 GM 前视角派生 durations 覆盖契约
         this.revertVarChanges(draft, current.changes?.effects ?? []);
         validateAdjudicationRound(pkg, this.expectedGmDurationCids(draft, roundCids));
@@ -1395,7 +1421,11 @@ export class GameSession {
       edited.result = { raw: text, prose: text, participants: previous.participants, scenes: previous.scenes };
       if (current.changes !== undefined) edited.changes = current.changes;
       const draft = cloneTruth(this.liveTruth());
-      draft.sys.setPipeline({ current: edited });
+      // 编辑补全 = 正文步提交：一并清除残留的指令条目（与 stepProse 同一口径）
+      draft.sys.setPipeline({
+        current: edited,
+        working_set: draft.sys.pipeline.working_set.filter((e) => !isDirectiveEntry(e)),
+      });
       this.commitTruth(draft, "admin_edit", flatChanges(edited.changes));
       // 正文编辑 = 该步的一次新输出：结算轮重置——按当前步重挂突发命中评估，续跑/玩家输入前重投
       this.armPendingIncidentEval();
@@ -1586,7 +1616,7 @@ export class GameSession {
           ...state,
           // 系统末端 tags 侧车校验（系统分支末端路径 + level 1-7 + 名称校验同口径）
           systemTags: validateSystemTags(state.systemTags, parsedSys.template.character, editDeps),
-          vars: normalizeInstance(state.vars, parsedSys.template.characterVars, cid, editDeps) as Record<string, unknown>,
+          vars: normalizeInstance(state.vars, parsedSys.template.characterVars, cid, editDeps, true) as Record<string, unknown>,
         };
       }
       draft.characters.restoreSnapshot(normalized);

@@ -14,13 +14,17 @@
  * 如 items[0].name / items[*].name；解析期统一拆为段序列（splitVarPath）。
  *
  * 末端可带 formula：{expr, binds?} = 数值公式（compileFormula 编译 + 变量闭包校验，
- * binds 值 = 同根模板路径、须解析到 number 末端）；{op: "union_attach", paths} =
- * 内置算子（paths = 同根模板路径、须解析到容器/数组声明；空数组 = 仅自身 attachtags）。
- * expr 只允许挂在 number 末端，union_attach 只允许挂在 string_list 末端。数组内联元素
- * 内的 formula 以元素结构根为基准声明（与 types 类型内 formula 同口径）。
+ * binds 值 = 同根模板路径、须解析到 number 末端）；{op: "union", terms} =
+ * 内置算子（terms = 非空项数组，按序并集、按名去重先取者胜；项 = {attach: paths}
+ * ——自身 attachtags ∪ 各子树路径下全部 attachtags 末端值，paths = 同根模板路径、
+ * 须解析到容器/数组声明，空数组 = 仅自身 attachtags——或 {sys: "cid"|"location"|"channel"}
+ * ——读属主角色系统字段，只允许出现在 character 根，terms 内不得重复）。
+ * expr 只允许挂在 number 末端，union 只允许挂在 string_list 末端。数组内联元素
+ * 内的 formula 以元素结构根为基准声明（与 types 类型内 formula 同口径；types 为
+ * 双根共享结构别名，sys 项一律拒）。
  *
  * character 根保留名：attachtags（普通 string_list 末端，无 formula；对象侧 TAG 纯名
- * 集合）与 tags（string_list 末端，formula 必须是 union_attach）。world 根无要求。
+ * 集合）与 tags（string_list 末端，formula 必须是 union）。world 根无要求。
  *
  * 系统声明分支（src/vars/systemChar.ts，代码持有常量）：解析时并入 character 根
  * （relations 的系统类型 relation 并入 types），与世界作者声明同名 = 拒装（冲突
@@ -57,10 +61,15 @@ export interface TagMount {
   level: number;
 }
 
+/** union 算子项：attach = 自身 attachtags ∪ 各子树路径下全部 attachtags 末端值；sys = 属主角色系统字段。 */
+export type UnionTermDecl =
+  | { kind: "attach"; paths: readonly string[] }
+  | { kind: "sys"; sys: "cid" | "location" | "channel" };
+
 /** 编译后的公式声明（判别联合）。 */
 export type FormulaDecl =
   | { kind: "expr"; expr: string; binds: Record<string, string>; compiled: CompiledFormula }
-  | { kind: "unionAttach"; paths: readonly string[] };
+  | { kind: "union"; terms: readonly UnionTermDecl[] };
 
 export interface TerminalDecl {
   kind: "terminal";
@@ -130,14 +139,21 @@ export function isIndexSegment(seg: string): boolean {
 
 /**
  * 缺省空模板：世界包缺 vars-template.json 时 GET 的缺省结构（PUT 创建同形文件）。
- * character 根 = 最小保留名声明（attachtags 普通 string_list 末端 + tags union_attach 从动池）。
+ * character 根 = 最小保留名声明（attachtags 普通 string_list 末端 + tags union 从动池，
+ * terms = 自身/子树 attachtags ∪ cid/location/channel 系统字段常驻项）。
  */
 export const EMPTY_VARS_TEMPLATE: unknown = {
   world: { children: {} },
   character: {
     children: {
       attachtags: "string_list",
-      tags: { valueType: "string_list", formula: { op: "union_attach", paths: [] } },
+      tags: {
+        valueType: "string_list",
+        formula: {
+          op: "union",
+          terms: [{ attach: [] }, { sys: "cid" }, { sys: "location" }, { sys: "channel" }],
+        },
+      },
     },
   },
   types: {},
@@ -148,10 +164,17 @@ export const EMPTY_VARS_TAGS: unknown = { world: {}, character: {} };
 
 const ValueTypeSchema = z.enum(VALUE_TYPES);
 
+/** union sys 项名封闭集（属主角色系统字段：cid / 当前地点名 / 当前频道号）。 */
+export const SYS_TERM_NAMES = ["cid", "location", "channel"] as const;
+export type SysTermName = (typeof SYS_TERM_NAMES)[number];
+
+/** union 算子原始项：{attach: 子树路径数组} | {sys: 系统字段名}。 */
+export type RawUnionTerm = { attach: string[] } | { sys: SysTermName };
+
 /** 原始公式声明（模板与实例外壳共用 schema）。 */
 export type RawFormula =
   | { expr: string; binds?: Record<string, string> | undefined }
-  | { op: "union_attach"; paths: string[] };
+  | { op: "union"; terms: RawUnionTerm[] };
 
 /** 数组元素声明：{type} 引用 types 结构别名 / {children} 内联对象结构（元素根不得又是数组——schema 无 array 键保证）。 */
 type RawElement = { type: string } | { children: Record<string, RawNode> };
@@ -162,9 +185,14 @@ type RawNode =
   | { children: Record<string, RawNode> }
   | { array: RawElement };
 
+const UnionTermSchema: z.ZodType<RawUnionTerm> = z.union([
+  z.object({ attach: z.array(z.string().min(1)) }).strict(),
+  z.object({ sys: z.enum(SYS_TERM_NAMES) }).strict(),
+]);
+
 const FormulaSpecSchema: z.ZodType<RawFormula> = z.union([
   z.object({ expr: z.string().min(1), binds: z.record(z.string(), z.string().min(1)).optional() }).strict(),
-  z.object({ op: z.literal("union_attach"), paths: z.array(z.string().min(1)) }).strict(),
+  z.object({ op: z.literal("union"), terms: z.array(UnionTermSchema).min(1) }).strict(),
 ]);
 
 const NodeSchema: z.ZodType<RawNode> = z.lazy(() =>
@@ -225,27 +253,45 @@ export function resolveDeclPath(root: DeclNode, dottedPath: string): DeclNode {
 
 /**
  * 校验并编译一份原始公式声明：expr = 编译 + 闭包校验（引用标识符 ⊆ binds 键集）
- * + binds 路径可解析且指向 number 末端；union_attach = paths 可解析且指向容器/数组声明。
- * rootDecl = 同根声明树（binds/paths 的解析基准；数组内联元素内公式以元素结构根为基准）；
- * atPath 仅用于报错定位。
+ * + binds 路径可解析且指向 number 末端；union = 逐 term 校验（attach 路径可解析且指向
+ * 容器/数组声明；sys 项须 allowSys（仅 character 根）且 terms 内不得重复）。
+ * rootDecl = 同根声明树（binds/attach 路径的解析基准；数组内联元素内公式以元素结构根
+ * 为基准）；atPath 仅用于报错定位。
  */
 export function validateFormulaSpec(
   raw: RawFormula,
   valueType: ValueType,
   rootDecl: DeclNode,
   atPath: string,
+  allowSys: boolean,
 ): FormulaDecl {
   if ("op" in raw) {
     if (valueType !== "string_list") {
-      throw new Error(`公式 union_attach 只能挂在 string_list 末端（${atPath} 为 ${valueType}）`);
+      throw new Error(`公式 union 只能挂在 string_list 末端（${atPath} 为 ${valueType}）`);
     }
-    for (const p of raw.paths) {
-      const target = resolveDeclPath(rootDecl, p);
-      if (target.kind === "terminal") {
-        throw new Error(`union_attach 子树路径 "${p}" 必须解析到容器/数组声明（${atPath}）`);
+    const seenSys = new Set<string>();
+    const terms: UnionTermDecl[] = [];
+    for (const term of raw.terms) {
+      if ("attach" in term) {
+        for (const p of term.attach) {
+          const target = resolveDeclPath(rootDecl, p);
+          if (target.kind === "terminal") {
+            throw new Error(`union attach 子树路径 "${p}" 必须解析到容器/数组声明（${atPath}）`);
+          }
+        }
+        terms.push({ kind: "attach", paths: [...term.attach] });
+        continue;
       }
+      if (!allowSys) {
+        throw new Error(`union sys 项 "${term.sys}" 只允许出现在 character 根（${atPath}）`);
+      }
+      if (seenSys.has(term.sys)) {
+        throw new Error(`union terms 内 sys 项 "${term.sys}" 重复（${atPath}）`);
+      }
+      seenSys.add(term.sys);
+      terms.push({ kind: "sys", sys: term.sys });
     }
-    return { kind: "unionAttach", paths: [...raw.paths] };
+    return { kind: "union", terms };
   }
   if (valueType !== "number") {
     throw new Error(`数值公式只能挂在 number 末端（${atPath} 为 ${valueType}）`);
@@ -318,6 +364,8 @@ interface ConvertCtx {
   resolveType: (name: string) => ContainerDecl;
   /** 待校验公式的末端（解析期暂存原始声明，根建成后再编译）。 */
   pendingFormulas: Array<{ decl: TerminalDecl; spec: RawFormula; path: string }>;
+  /** union sys 项是否放行（仅 character 根；world 根与 types 结构别名一律拒）。 */
+  allowSys: boolean;
 }
 
 function convertNode(raw: RawNode, ctx: ConvertCtx, path: string, allowTagsChild = false): DeclNode {
@@ -334,7 +382,7 @@ function convertNode(raw: RawNode, ctx: ConvertCtx, path: string, allowTagsChild
     if (element.kind !== "container") {
       throw new Error(`数组元素必须是对象结构（${path}）`);
     }
-    compilePendingFormulas(element, pending);
+    compilePendingFormulas(element, pending, ctx.allowSys);
     return { kind: "array", element };
   }
   if ("children" in raw) {
@@ -361,9 +409,9 @@ function convertNode(raw: RawNode, ctx: ConvertCtx, path: string, allowTagsChild
 }
 
 /** 编译根下全部待校验公式并回填末端声明。 */
-function compilePendingFormulas(root: DeclNode, pending: ConvertCtx["pendingFormulas"]): void {
+function compilePendingFormulas(root: DeclNode, pending: ConvertCtx["pendingFormulas"], allowSys: boolean): void {
   for (const { decl, spec, path } of pending) {
-    decl.formula = validateFormulaSpec(spec, decl.valueType, root, path || "<根>");
+    decl.formula = validateFormulaSpec(spec, decl.valueType, root, path || "<根>", allowSys);
   }
 }
 
@@ -387,21 +435,21 @@ export function parseVarsTemplate(raw: unknown): VarsTemplate {
       throw new Error(`引用了未声明的类型 "${name}"`);
     }
     const pending: ConvertCtx["pendingFormulas"] = [];
-    const decl = convertNode(rawType, { resolveType, pendingFormulas: pending }, name);
+    const decl = convertNode(rawType, { resolveType, pendingFormulas: pending, allowSys: false }, name);
     if (decl.kind !== "container") {
       throw new Error(`类型 "${name}" 必须是 {children} 结构别名`);
     }
     typeDecls.set(name, decl);
-    compilePendingFormulas(decl, pending);
+    compilePendingFormulas(decl, pending, false);
     return decl;
   };
 
   const worldPending: ConvertCtx["pendingFormulas"] = [];
-  const worldAuthor = convertNode(parsed.world, { resolveType, pendingFormulas: worldPending }, "world");
+  const worldAuthor = convertNode(parsed.world, { resolveType, pendingFormulas: worldPending, allowSys: false }, "world");
   if (worldAuthor.kind !== "container") {
     throw new Error("world 根必须是容器节点");
   }
-  compilePendingFormulas(worldAuthor, worldPending);
+  compilePendingFormulas(worldAuthor, worldPending, false);
   // world 根系统声明分支并入（time 容器：时间锚 + 时段表；同名 = 拒装，冲突报错带名）
   for (const key of SYSTEM_WORLD_KEYS) {
     if (Object.hasOwn(worldAuthor.children, key)) {
@@ -414,13 +462,13 @@ export function parseVarsTemplate(raw: unknown): VarsTemplate {
   };
 
   const charPending: ConvertCtx["pendingFormulas"] = [];
-  const characterVars = convertNode(parsed.character, { resolveType, pendingFormulas: charPending }, "character", true);
+  const characterVars = convertNode(parsed.character, { resolveType, pendingFormulas: charPending, allowSys: true }, "character", true);
   if (characterVars.kind !== "container") {
     throw new Error("character 根必须是容器节点");
   }
-  compilePendingFormulas(characterVars, charPending);
+  compilePendingFormulas(characterVars, charPending, true);
 
-  // character 根保留名：attachtags = 普通 string_list 末端；tags = union_attach 从动末端
+  // character 根保留名：attachtags = 普通 string_list 末端；tags = union 从动末端
   const attachtags = characterVars.children["attachtags"];
   if (
     attachtags === undefined ||
@@ -435,9 +483,9 @@ export function parseVarsTemplate(raw: unknown): VarsTemplate {
     tags === undefined ||
     tags.kind !== "terminal" ||
     tags.valueType !== "string_list" ||
-    tags.formula?.kind !== "unionAttach"
+    tags.formula?.kind !== "union"
   ) {
-    throw new Error(`character 根必须声明 tags 为 union_attach 公式的 string_list 末端`);
+    throw new Error(`character 根必须声明 tags 为 union 公式的 string_list 末端`);
   }
 
   // 系统声明分支并入（与世界作者声明同名 = 拒装，冲突报错带名）

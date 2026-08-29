@@ -18,14 +18,15 @@
  *
  * 落地：经 store 低层写入口（writeRaw）写入，产出真相根路径 VarChange。每写落一条
  * delta 后对该根做整根从动级联：按依赖图拓扑序重算全部从动末端（expr 公式 +
- * union_attach，含实例携带 formula 与结构化数组 "*" 段元素枚举），值变则写回并追加
- * 该末端的 VarChange（级联写回是程序内部写，不走 GM 拒写闸）。
+ * union 算子，含实例携带 formula 与结构化数组 "*" 段元素枚举；character 根 union
+ * sys 项由级联现取该角色 cid/location/channel 供值），值变则写回并追加该末端的
+ * VarChange（级联写回是程序内部写，不走 GM 拒写闸）。
  *
  * sys 根严格解析（parseSys）在 sysStore.ts（与容器同文件维护）。
  */
 import type { TagCategory } from "../tags/registry.js";
 import type { StateDelta } from "../types.js";
-import { buildRootDerivedPlan, evalDerivedTarget } from "../vars/derived.js";
+import { buildRootDerivedPlan, evalDerivedTarget, type UnionSysValues } from "../vars/derived.js";
 import { SYSTEM_CHAR_KEYS } from "../vars/systemChar.js";
 import {
   splitVarPath,
@@ -80,9 +81,11 @@ export interface VarWriteStores {
 // ---------------------------------------------------------------------------
 
 /**
- * 整根从动级联：按该根依赖图拓扑序重算全部从动末端（expr 公式 + union_attach，
+ * 整根从动级联：按该根依赖图拓扑序重算全部从动末端（expr 公式 + union 算子，
  * 含实例携带 formula 与结构化数组 "*" 段元素枚举），值变则写回并追加该末端的
  * VarChange（真相根路径）；值不变/依赖末端无实例（跳过重算）不产生记录。
+ * character 根 union sys 项由级联现取该角色 cid/location/channel 供值（系统字段
+ * 变化自身不触发本级联——setVars 专用通道重算池）。
  * 从动集合小，不做细粒度失效分析——任一根写落后整根全量重算。
  */
 export function cascadeDerived(
@@ -92,17 +95,19 @@ export function cascadeDerived(
 ): VarChange[] {
   const declRoot = root.kind === "world" ? deps.template.world : deps.template.characterVars;
   let instanceRoot: InstanceNode;
+  let sysValues: UnionSysValues | undefined;
   if (root.kind === "world") {
     instanceRoot = stores.world.world as InstanceNode;
   } else {
     const state = stores.characters.all()[root.cid];
     if (state === undefined) throw new Error(`未知角色 CID: ${root.cid}`);
     instanceRoot = state.vars as InstanceNode;
+    sysValues = { cid: state.cid, locationName: state.location.name, channel: state.channel };
   }
   const changes: VarChange[] = [];
   // 逐目标求值并立即写回：下游从动末端读到上游的新值（拓扑序保证）
   for (const target of buildRootDerivedPlan(declRoot, instanceRoot)) {
-    const value = evalDerivedTarget(target, declRoot, instanceRoot);
+    const value = evalDerivedTarget(target, declRoot, instanceRoot, sysValues);
     if (value === undefined) continue;
     const existing = getByPath(instanceRoot, target.path);
     const shell = isTerminalInstance(existing) ? existing : undefined;
@@ -148,10 +153,11 @@ function computeWriteValue(
   delta: StateDelta,
   atPath: string,
   deps: VarWriteDeps,
+  allowSys: boolean,
 ): unknown {
   if (decl.kind !== "terminal") {
     if (delta.op !== "=") throw new Error(`${delta.op} 只能用于 number 末端（${atPath} 为容器/数组）`);
-    return normalizeInstance(delta.value, decl, atPath, deps);
+    return normalizeInstance(delta.value, decl, atPath, deps, allowSys);
   }
   if (decl.formula !== undefined) {
     throw new Error(`从动末端拒写（${atPath} 由程序按 formula 维护）`);
@@ -168,7 +174,7 @@ function computeWriteValue(
     if (isPlainObject(delta.value)) {
       throw new Error(`末端写值必须是原始值而非外壳对象（${atPath}，声明类型 ${decl.valueType}）`);
     }
-    const shell = normalizeInstance(delta.value, decl, atPath, deps) as TerminalInstance;
+    const shell = normalizeInstance(delta.value, decl, atPath, deps, allowSys) as TerminalInstance;
     return { value: shell.value, tags: existingTags };
   }
   if (decl.valueType !== "number") {
@@ -193,7 +199,7 @@ function applyWorldDelta(stores: VarWriteStores, delta: StateDelta, deps: VarWri
   const rel = segs.join(".");
   const decl = resolvePath(deps.template.world, rel);
   const before = getByPath(stores.world.world, rel);
-  const change = stores.world.writeRaw(rel, computeWriteValue(decl, before, delta, delta.path, deps));
+  const change = stores.world.writeRaw(rel, computeWriteValue(decl, before, delta, delta.path, deps, false));
   return [change, ...cascadeDerived(stores, { kind: "world" }, deps)];
 }
 
@@ -223,7 +229,7 @@ function applyCharacterDelta(stores: VarWriteStores, delta: StateDelta, deps: Va
   const decl = rel === "" ? deps.template.characterVars : resolvePath(deps.template.characterVars, rel);
   const before = rel === "" ? state.vars : getByPath(state.vars, rel);
   const storePath = rel === "" ? "vars" : `vars.${rel}`;
-  const change = stores.characters.writeRaw(cid, storePath, computeWriteValue(decl, before, delta, delta.path, deps));
+  const change = stores.characters.writeRaw(cid, storePath, computeWriteValue(decl, before, delta, delta.path, deps, true));
   return [change, ...cascadeDerived(stores, { kind: "character", cid }, deps)];
 }
 

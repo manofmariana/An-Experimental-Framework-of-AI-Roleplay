@@ -85,6 +85,7 @@
     "test/perceptionDegrade.test.ts",
     "test/workingSetVisibility.test.ts",
     "test/markerNotices.test.ts",
+    "test/directive.test.ts",
     "test/sessionCoordinator.test.ts",
     "test/configService.test.ts",
     "test/incidentFlow.test.ts",

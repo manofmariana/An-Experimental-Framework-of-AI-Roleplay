@@ -9,7 +9,7 @@
  * - 删除声明：摘声明（容器级联）、character 根必需声明保护、引用类型数组元素内拒绝；
  * - 类型区：新建类型（命名空结构体）、类型字段增删（只摘声明不波及实例——世界包编辑
  *   无实例）、删除类型前端预检引用（含数组元素 {type} 引用）；
- * - formula 声明编辑：简写升级完整形 / 清空、expr/union_attach 校验、character 根
+ * - formula 声明编辑：简写升级完整形 / 清空、expr/union 校验、character 根
  *   attachtags/tags 模板契约保护；类型声明内末端 formula 编辑（路径以类型根为基准，
  *   数组层经 [*] 段）；
  * - getTemplate 返回编辑后的模板工作副本本体；
@@ -55,7 +55,10 @@ function makeTemplate() {
     character: {
       children: {
         attachtags: "string_list",
-        tags: { valueType: "string_list", formula: { op: "union_attach", paths: [] } },
+        tags: {
+          valueType: "string_list",
+          formula: { op: "union", terms: [{ attach: [] as string[] }, { sys: "cid" }, { sys: "location" }, { sys: "channel" }] },
+        },
         mood: "string",
         str: "number",
         double_str: { valueType: "number", formula: { expr: "str * 2", binds: { str: "str" } } },
@@ -125,7 +128,12 @@ describe("var-decl-model：视图模型", () => {
     const tags = childAt(view, "tags") as DeclTerminalNode;
     assert.equal(tags.canDelete, false);
     assert.equal(tags.derived, true);
-    assert.deepEqual(tags.formula, { kind: "unionAttach", paths: [] });
+    assert.deepEqual(tags.formula, {
+      kind: "union",
+      paths: [],
+      sys: { cid: true, location: true, channel: true },
+      hasAttach: true,
+    });
     const dbl = childAt(view, "double_str") as DeclTerminalNode;
     assert.deepEqual(dbl.formula, { kind: "expr", expr: "str * 2", binds: { str: "str" } });
     assert.equal((childAt(view, "mood") as DeclTerminalNode).canDelete, true);
@@ -334,15 +342,24 @@ describe("var-decl-model：formula 声明编辑", () => {
     assert.equal((childAt(m.buildRootView("world"), "hp") as DeclTerminalNode).derived, false);
   });
 
-  it("union_attach：仅 string_list 末端；paths 须解析到同根容器/数组声明", () => {
+  it("union：仅 string_list 末端；attach 路径须解析到同根容器/数组声明；sys 项 world 根拒", () => {
     const t = makeTemplate();
     const m = modelOf(t);
-    m.setDeclFormula("world", "pool", { op: "union_attach", paths: ["loc", "bag"] });
-    assert.deepEqual((t.world.children as any).pool, { valueType: "string_list", formula: { op: "union_attach", paths: ["loc", "bag"] } });
+    m.setDeclFormula("world", "pool", { op: "union", terms: [{ attach: ["loc", "bag"] }] });
+    assert.deepEqual((t.world.children as any).pool, {
+      valueType: "string_list",
+      formula: { op: "union", terms: [{ attach: ["loc", "bag"] }] },
+    });
 
-    assert.throws(() => m.setDeclFormula("world", "hp", { op: "union_attach", paths: [] }), /string_list/);
-    assert.throws(() => m.setDeclFormula("world", "pool", { op: "union_attach", paths: ["loc.name"] }), /容器\/数组声明/);
-    assert.throws(() => m.setDeclFormula("world", "pool", { op: "union_attach", paths: ["nosuch"] }), /不可解析/);
+    assert.throws(() => m.setDeclFormula("world", "hp", { op: "union", terms: [{ attach: [] }] }), /string_list/);
+    assert.throws(() => m.setDeclFormula("world", "pool", { op: "union", terms: [{ attach: ["loc.name"] }] }), /容器\/数组声明/);
+    assert.throws(() => m.setDeclFormula("world", "pool", { op: "union", terms: [{ attach: ["nosuch"] }] }), /不可解析/);
+    assert.throws(() => m.setDeclFormula("world", "pool", { op: "union", terms: [{ sys: "cid" }] }), /只允许出现在 character 根/);
+    assert.throws(() => m.setDeclFormula("world", "pool", { op: "union", terms: [] }), /terms/);
+    assert.throws(
+      () => m.setDeclFormula("character", "tags", { op: "union", terms: [{ sys: "cid" }, { sys: "cid" }] }),
+      /重复/,
+    );
   });
 
   it("expr：仅 number 末端；binds 须解析到同根 number 末端（数组层经下标段）；标识符合法", () => {
@@ -358,17 +375,17 @@ describe("var-decl-model：formula 声明编辑", () => {
     assert.throws(() => m.setDeclFormula("world", "hp", { wat: true } as never), /formula 须为/);
   });
 
-  it("character 根模板契约保护：attachtags 不得挂 formula；tags 必须保持 union_attach", () => {
+  it("character 根模板契约保护：attachtags 不得挂 formula；tags 必须保持 union", () => {
     const m = modelOf(makeTemplate());
-    assert.throws(() => m.setDeclFormula("character", "attachtags", { op: "union_attach", paths: [] }), /attachtags/);
-    assert.throws(() => m.setDeclFormula("character", "tags", null), /union_attach/);
+    assert.throws(() => m.setDeclFormula("character", "attachtags", { op: "union", terms: [{ attach: [] }] }), /attachtags/);
+    assert.throws(() => m.setDeclFormula("character", "tags", null), /union/);
   });
 
-  it("character 根 tags 维持 union_attach 的合法改写放行", () => {
+  it("character 根 tags 维持 union 的合法改写放行（attach + sys 项）", () => {
     const t = makeTemplate();
     const m = modelOf(t);
-    m.setDeclFormula("character", "tags", { op: "union_attach", paths: ["gear"] });
-    assert.deepEqual((t.character.children as any).tags.formula, { op: "union_attach", paths: ["gear"] });
+    m.setDeclFormula("character", "tags", { op: "union", terms: [{ attach: ["gear"] }, { sys: "cid" }] });
+    assert.deepEqual((t.character.children as any).tags.formula, { op: "union", terms: [{ attach: ["gear"] }, { sys: "cid" }] });
   });
 });
 
@@ -406,17 +423,18 @@ describe("var-decl-model：类型内 formula 编辑", () => {
     assert.throws(() => m.setTypeDeclFormula("item", "note", { expr: "1" }), /number 末端/);
   });
 
-  it("union_attach 仅 string_list 末端；paths 以类型根为基准解析到容器/数组", () => {
+  it("union 仅 string_list 末端；attach 路径以类型根为基准解析到容器/数组；sys 项类型内一律拒", () => {
     const t = makeTemplate();
     const m = modelOf(t);
     m.addTypeField("item", "", { name: "attachtags", valueType: "string_list" });
-    m.setTypeDeclFormula("item", "attachtags", { op: "union_attach", paths: ["parts"] });
+    m.setTypeDeclFormula("item", "attachtags", { op: "union", terms: [{ attach: ["parts"] }] });
     assert.deepEqual((t.types as any).item.children.attachtags, {
       valueType: "string_list",
-      formula: { op: "union_attach", paths: ["parts"] },
+      formula: { op: "union", terms: [{ attach: ["parts"] }] },
     });
-    assert.throws(() => m.setTypeDeclFormula("item", "count", { op: "union_attach", paths: [] }), /string_list/);
-    assert.throws(() => m.setTypeDeclFormula("item", "attachtags", { op: "union_attach", paths: ["count"] }), /容器\/数组声明/);
+    assert.throws(() => m.setTypeDeclFormula("item", "count", { op: "union", terms: [{ attach: [] }] }), /string_list/);
+    assert.throws(() => m.setTypeDeclFormula("item", "attachtags", { op: "union", terms: [{ attach: ["count"] }] }), /容器\/数组声明/);
+    assert.throws(() => m.setTypeDeclFormula("item", "attachtags", { op: "union", terms: [{ sys: "cid" }] }), /只允许出现在 character 根/);
   });
 
   it("引用类型数组元素内的末端不开放（到其类型上编辑）；不可解析拒绝", () => {
@@ -524,7 +542,7 @@ describe("var-decl-model：系统声明分支并入", () => {
     assert.throws(() => m.addDecl("character", "", { name: "isPlayer", valueType: "boolean" }), /系统声明分支同名冲突/);
   });
 
-  it("作者 formula 可绑系统 number 末端 / union_attach 可指系统容器或数组（与服务端并入后解析口径一致）", () => {
+  it("作者 formula 可绑系统 number 末端 / union attach 项可指系统容器或数组（与服务端并入后解析口径一致）", () => {
     const t = makeTemplate();
     const m = modelOf(t);
     m.setDeclFormula("character", "str", { expr: "level * 2", binds: { level: "level" } });
@@ -532,8 +550,8 @@ describe("var-decl-model：系统声明分支并入", () => {
       valueType: "number",
       formula: { expr: "level * 2", binds: { level: "level" } },
     });
-    m.setDeclFormula("character", "tags", { op: "union_attach", paths: ["gear", "location", "relations"] });
-    assert.deepEqual((t.character.children as any).tags.formula, { op: "union_attach", paths: ["gear", "location", "relations"] });
+    m.setDeclFormula("character", "tags", { op: "union", terms: [{ attach: ["gear", "location", "relations"] }] });
+    assert.deepEqual((t.character.children as any).tags.formula, { op: "union", terms: [{ attach: ["gear", "location", "relations"] }] });
     // 系统 string 末端不是合法 binds 目标
     assert.throws(() => m.setDeclFormula("character", "str", { expr: "x + 1", binds: { x: "name" } }), /number 末端/);
   });

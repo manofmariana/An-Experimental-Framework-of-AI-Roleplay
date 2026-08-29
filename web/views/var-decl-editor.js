@@ -9,8 +9,9 @@
  *   （引用类型或内联结构）——纯声明，无初始值/实例列）；类型区「+」= 新建类型，
  *   类型/内联数组字段上同一表单逐字段定义；删除（声明/类型/类型字段）一点即删
  *   （模型保护 character 根必需声明）；
- * - ƒ 开 formula 行内表单（expr = 表达式 + binds 每行 `标识符=路径`；union_attach =
- *   paths 每行一个；选「无」清空），从动末端带「从动」徽记 + formula 可读文本；
+ * - ƒ 开 formula 行内表单（expr = 表达式 + binds 每行 `标识符=路径`；union =
+ *   attach paths 每行一个 + sys 项三勾选 get_cid/get_location/get_channel；选「无」
+ *   清空），从动末端带「从动」徽记 + formula 可读文本；
  * - character 根的系统声明分支节点带「系统」徽记，全部结构操作（+/×/ƒ）不渲染
  *   （只读展示；模型层对系统路径写操作同样抛错兜底）。
  *
@@ -42,7 +43,12 @@ function formulaLabel(f) {
     const binds = Object.entries(f.binds).map(([k, p]) => `${k}=${p}`).join("，");
     return `ƒ ${f.expr}${binds ? `（${binds}）` : ""}`;
   }
-  return `ƒ union_attach(${f.paths.join(", ")})`;
+  const parts = [];
+  if (f.hasAttach) parts.push(`union_attach(${f.paths.join(", ")})`);
+  if (f.sys.cid) parts.push("get_cid()");
+  if (f.sys.location) parts.push("get_location()");
+  if (f.sys.channel) parts.push("get_channel()");
+  return `ƒ ${parts.join(" + ")}`;
 }
 
 /**
@@ -57,7 +63,7 @@ export function createVarDeclEditor({ el, model }) {
   const folded = new Set(); // 折叠的容器 `${root}|${path}`
   const secFolded = new Set(); // 折叠的区块 `${root}|${section}`
   let addForm = null; // {target, root, path, typeName, name, kind, typeRef}
-  let formulaForm = null; // {path, mode, exprText, bindsText, pathsText}
+  let formulaForm = null; // {path, mode, exprText, bindsText, pathsText, sysCid, sysLocation, sysChannel}
 
   const rootEl = el("div", "vte");
   const errEl = el("div", "vte-error");
@@ -182,13 +188,13 @@ export function createVarDeclEditor({ el, model }) {
     return form;
   }
 
-  /** formula 行内表单：无 / expr 公式（表达式 + binds 每行 标识符=路径）/ union_attach（paths 每行一个）。 */
+  /** formula 行内表单：无 / expr 公式（表达式 + binds 每行 标识符=路径）/ union（attach paths 每行一个 + sys 项三勾选）。 */
   function renderFormulaForm() {
     const form = el("div", "vte-form-col");
     const head = el("div", "vte-form");
     head.appendChild(el("span", "muted", "formula"));
     const mode = el("select");
-    for (const [value, label] of [["none", "无（普通末端）"], ["expr", "expr 公式"], ["unionAttach", "union_attach"]]) {
+    for (const [value, label] of [["none", "无（普通末端）"], ["expr", "expr 公式"], ["union", "union 并集"]]) {
       const opt = el("option", null, label);
       opt.value = value;
       mode.appendChild(opt);
@@ -202,7 +208,7 @@ export function createVarDeclEditor({ el, model }) {
     form.appendChild(head);
     if (formulaForm.target === "type") {
       const hint = el("div", "vte-form");
-      hint.appendChild(el("span", "muted", "类型内公式路径以类型为根"));
+      hint.appendChild(el("span", "muted", "类型内公式路径以类型为根（sys 项不可用）"));
       form.appendChild(hint);
     }
 
@@ -222,15 +228,28 @@ export function createVarDeclEditor({ el, model }) {
         formulaForm.bindsText = binds.value;
       };
       form.append(expr, binds);
-    } else if (formulaForm.mode === "unionAttach") {
+    } else if (formulaForm.mode === "union") {
       const paths = el("textarea", "vte-list");
       paths.rows = 2;
-      paths.placeholder = "paths（每行一个同根模板路径）";
+      paths.placeholder = "attach paths（每行一个同根模板路径；空 = 仅自身 attachtags）";
       paths.value = formulaForm.pathsText;
       paths.onchange = () => {
         formulaForm.pathsText = paths.value;
       };
       form.appendChild(paths);
+      const sysRow = el("div", "vte-form");
+      for (const [field, name] of [["sysCid", "get_cid"], ["sysLocation", "get_location"], ["sysChannel", "get_channel"]]) {
+        const box = el("input");
+        box.type = "checkbox";
+        box.checked = formulaForm[field];
+        box.onchange = () => {
+          formulaForm[field] = box.checked;
+        };
+        const label = el("label", "muted", ` ${name}()`);
+        label.prepend(box);
+        sysRow.appendChild(label);
+      }
+      form.appendChild(sysRow);
     }
 
     const foot = el("div", "vte-form");
@@ -248,11 +267,14 @@ export function createVarDeclEditor({ el, model }) {
             binds[t.slice(0, eq).trim()] = t.slice(eq + 1).trim();
           }
           formula = { expr: formulaForm.exprText.trim(), binds };
-        } else if (formulaForm.mode === "unionAttach") {
-          formula = {
-            op: "union_attach",
-            paths: formulaForm.pathsText.split("\n").map((s) => s.trim()).filter((s) => s !== ""),
-          };
+        } else if (formulaForm.mode === "union") {
+          const terms = [
+            { attach: formulaForm.pathsText.split("\n").map((s) => s.trim()).filter((s) => s !== "") },
+          ];
+          if (formulaForm.sysCid) terms.push({ sys: "cid" });
+          if (formulaForm.sysLocation) terms.push({ sys: "location" });
+          if (formulaForm.sysChannel) terms.push({ sys: "channel" });
+          formula = { op: "union", terms };
         }
         if (formulaForm.target === "type") model.setTypeDeclFormula(formulaForm.typeName, formulaForm.path, formula);
         else model.setDeclFormula(root, formulaForm.path, formula);
@@ -316,7 +338,10 @@ export function createVarDeclEditor({ el, model }) {
               node.formula !== null && node.formula.kind === "expr"
                 ? Object.entries(node.formula.binds).map(([k, p]) => `${k}=${p}`).join("\n")
                 : "",
-            pathsText: node.formula !== null && node.formula.kind === "unionAttach" ? node.formula.paths.join("\n") : "",
+            pathsText: node.formula !== null && node.formula.kind === "union" ? node.formula.paths.join("\n") : "",
+            sysCid: node.formula !== null && node.formula.kind === "union" ? node.formula.sys.cid : false,
+            sysLocation: node.formula !== null && node.formula.kind === "union" ? node.formula.sys.location : false,
+            sysChannel: node.formula !== null && node.formula.kind === "union" ? node.formula.sys.channel : false,
           };
           render();
         }),
@@ -460,7 +485,10 @@ export function createVarDeclEditor({ el, model }) {
               node.formula != null && node.formula.kind === "expr"
                 ? Object.entries(node.formula.binds).map(([k, p]) => `${k}=${p}`).join("\n")
                 : "",
-            pathsText: node.formula != null && node.formula.kind === "unionAttach" ? node.formula.paths.join("\n") : "",
+            pathsText: node.formula != null && node.formula.kind === "union" ? node.formula.paths.join("\n") : "",
+            sysCid: node.formula != null && node.formula.kind === "union" ? node.formula.sys.cid : false,
+            sysLocation: node.formula != null && node.formula.kind === "union" ? node.formula.sys.location : false,
+            sysChannel: node.formula != null && node.formula.kind === "union" ? node.formula.sys.channel : false,
           };
           render();
         }),

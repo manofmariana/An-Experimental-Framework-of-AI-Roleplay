@@ -34,8 +34,9 @@
  *   空结构体；删除类型前端预检引用（含数组元素 {type} 引用；服务端保存时严格解析
  *   仍是最终闸）；
  * - setDeclFormula：末端 formula 声明编辑/清空（expr + binds 仅 number 末端，
- *   binds 值 = 同根 number 末端路径；union_attach 仅 string_list 末端，paths = 同根
- *   容器/数组路径；character 根 attachtags 不得挂 formula、tags 必须保持 union_attach）；
+ *   binds 值 = 同根 number 末端路径；union 仅 string_list 末端，terms = attach 子树
+ *   路径项 + sys 系统字段项（仅 character 根、不重复）；character 根 attachtags 不得
+ *   挂 formula、tags 必须保持 union）；
  * - setTypeDeclFormula：类型声明内末端 formula 编辑/清空（binds/paths 以类型根为
  *   基准校验与展示；引用类型数组元素内的末端不开放，到其类型上编辑）。
  */
@@ -108,16 +109,63 @@ export function validateBaseName(name) {
   if (RESERVED_NAMES.has(name)) throw new Error(`变量名 "${name}" 为保留名`);
 }
 
-/** formula 原始声明 → 结构化视图（expr / unionAttach；不可判别 = null）。 */
+/** union sys 项名封闭集（与服务端模板契约一致）。 */
+const SYS_TERM_NAMES = ["cid", "location", "channel"];
+
+/**
+ * formula 原始声明 → 结构化视图（expr / union；不可判别 = null）。
+ * union 视图扁平化：paths = 全部 attach 项路径序接，sys = 三个系统字段项勾选态，
+ * hasAttach = 含至少一个 attach 项（编辑器按「一个 attach 块 + 三个 sys 勾选」重写 terms）。
+ */
 export function formulaViewOf(raw) {
   if (!isPlainObject(raw)) return null;
-  if (raw.op === "union_attach") {
-    return { kind: "unionAttach", paths: Array.isArray(raw.paths) ? [...raw.paths] : [] };
+  if (raw.op === "union") {
+    const paths = [];
+    const sys = { cid: false, location: false, channel: false };
+    let hasAttach = false;
+    for (const term of Array.isArray(raw.terms) ? raw.terms : []) {
+      if (isPlainObject(term) && Array.isArray(term.attach)) {
+        hasAttach = true;
+        paths.push(...term.attach);
+      } else if (isPlainObject(term) && Object.hasOwn(sys, term.sys)) {
+        sys[term.sys] = true;
+      }
+    }
+    return { kind: "union", paths, sys, hasAttach };
   }
   if (typeof raw.expr === "string") {
     return { kind: "expr", expr: raw.expr, binds: isPlainObject(raw.binds) ? { ...raw.binds } : {} };
   }
   return null;
+}
+
+/**
+ * union terms 校验（与服务端 parse 同口径）：terms 非空；attach 路径经 resolveTarget
+ * 对拍（须解析到容器/数组声明）；sys 项须 allowSys 且不重复。
+ * resolveTarget(p) 返回 {kind} 或 null（不可解析）。
+ */
+function checkUnionTerms(terms, allowSys, resolveTarget, scopeLabel) {
+  if (!Array.isArray(terms) || terms.length === 0) throw new Error("union 须带非空 terms 数组");
+  const seenSys = new Set();
+  for (const term of terms) {
+    if (isPlainObject(term) && Array.isArray(term.attach)) {
+      for (const p of term.attach) {
+        if (typeof p !== "string" || p.trim() === "") throw new Error("union attach 含空路径");
+        const target = resolveTarget(p);
+        if (target === null) throw new Error(`union attach 路径 "${p}" 在${scopeLabel}内不可解析`);
+        if (target.kind === "terminal") throw new Error(`union attach 路径 "${p}" 必须解析到容器/数组声明`);
+      }
+      continue;
+    }
+    if (isPlainObject(term) && typeof term.sys === "string") {
+      if (!SYS_TERM_NAMES.includes(term.sys)) throw new Error(`未知 union sys 项 "${term.sys}"`);
+      if (!allowSys) throw new Error(`union sys 项 "${term.sys}" 只允许出现在 character 根`);
+      if (seenSys.has(term.sys)) throw new Error(`union terms 内 sys 项 "${term.sys}" 重复`);
+      seenSys.add(term.sys);
+      continue;
+    }
+    throw new Error('union term 须为 {attach: [...]} 或 {sys: "cid|location|channel"}');
+  }
 }
 
 /** 收集原始声明子树内全部类型引用名（含数组元素 {type} 引用）。 */
@@ -373,18 +421,12 @@ export function createVarDeclModel({ template }) {
     return { children, key, raw, info };
   }
 
-  /** 类型内 formula 校验（binds/paths 以类型根为基准；formula = null 直接放行）。 */
+  /** 类型内 formula 校验（binds/attach 路径以类型根为基准；types 双根共享，sys 项一律拒；formula = null 直接放行）。 */
   function validateTypeFormula(typeName, valueType, formula) {
     if (formula === null) return;
-    if (isPlainObject(formula) && formula.op === "union_attach") {
-      if (valueType !== "string_list") throw new Error("union_attach 只能挂在 string_list 末端");
-      if (!Array.isArray(formula.paths)) throw new Error("union_attach 须带 paths 数组");
-      for (const p of formula.paths) {
-        if (typeof p !== "string" || p.trim() === "") throw new Error("union_attach paths 含空路径");
-        const target = resolveInType(typeName, p);
-        if (target === null) throw new Error(`union_attach 路径 "${p}" 在类型 "${typeName}" 内不可解析`);
-        if (target.kind === "terminal") throw new Error(`union_attach 路径 "${p}" 必须解析到容器/数组声明`);
-      }
+    if (isPlainObject(formula) && formula.op === "union") {
+      if (valueType !== "string_list") throw new Error("union 只能挂在 string_list 末端");
+      checkUnionTerms(formula.terms, false, (p) => resolveInType(typeName, p), `类型 "${typeName}"`);
       return;
     }
     if (isPlainObject(formula) && typeof formula.expr === "string") {
@@ -401,7 +443,7 @@ export function createVarDeclModel({ template }) {
       }
       return;
     }
-    throw new Error("formula 须为 {expr, binds?} 或 {op: \"union_attach\", paths} 或 null");
+    throw new Error('formula 须为 {expr, binds?} 或 {op: "union", terms} 或 null');
   }
 
   // ---- 视图模型构建 ---------------------------------------------------------
@@ -469,18 +511,20 @@ export function createVarDeclModel({ template }) {
     throw new Error(`未知种类 "${kind}"`);
   }
 
-  /** formula 声明校验（expr / union_attach，对拍同根模板；formula = null 直接放行）。 */
+  /** formula 声明校验（expr / union，对拍同根模板；sys 项仅 character 根放行；formula = null 直接放行）。 */
   function validateFormula(root, valueType, formula) {
     if (formula === null) return;
-    if (isPlainObject(formula) && formula.op === "union_attach") {
-      if (valueType !== "string_list") throw new Error("union_attach 只能挂在 string_list 末端");
-      if (!Array.isArray(formula.paths)) throw new Error("union_attach 须带 paths 数组");
-      for (const p of formula.paths) {
-        if (typeof p !== "string" || p.trim() === "") throw new Error("union_attach paths 含空路径");
-        const target = resolveDeclPath(root, p);
-        if (target === null) throw new Error(`union_attach 路径 "${p}" 在同根模板中不可解析`);
-        if (target.info.kind === "terminal") throw new Error(`union_attach 路径 "${p}" 必须解析到容器/数组声明`);
-      }
+    if (isPlainObject(formula) && formula.op === "union") {
+      if (valueType !== "string_list") throw new Error("union 只能挂在 string_list 末端");
+      checkUnionTerms(
+        formula.terms,
+        root === "character",
+        (p) => {
+          const r = resolveDeclPath(root, p);
+          return r === null ? null : r.info;
+        },
+        "同根模板",
+      );
       return;
     }
     if (isPlainObject(formula) && typeof formula.expr === "string") {
@@ -497,7 +541,7 @@ export function createVarDeclModel({ template }) {
       }
       return;
     }
-    throw new Error("formula 须为 {expr, binds?} 或 {op: \"union_attach\", paths} 或 null");
+    throw new Error('formula 须为 {expr, binds?} 或 {op: "union", terms} 或 null');
   }
 
   // ---- 对外接口 -------------------------------------------------------------
@@ -675,9 +719,10 @@ export function createVarDeclModel({ template }) {
     /**
      * 末端 formula 声明编辑/清空（formula = null 清空；只动声明层，简写声明升级为
      * {valueType, formula} 完整形）。校验：expr 仅 number 末端（binds 键 = 标识符、
-     * 值 = 同根 number 末端路径），union_attach 仅 string_list 末端（paths = 同根容器/
-     * 数组路径）；character 根 attachtags 不得挂 formula、tags 必须保持 union_attach
-     * （模板契约保护）；系统分支路径拒写（显示注入，不落模板）。
+     * 值 = 同根 number 末端路径），union 仅 string_list 末端（terms = attach 同根
+     * 容器/数组路径项 + sys 系统字段项，sys 仅 character 根且不重复）；character 根
+     * attachtags 不得挂 formula、tags 必须保持 union（模板契约保护）；系统分支路径
+     * 拒写（显示注入，不落模板）。
      */
     setDeclFormula(root, path, formula) {
       assertNotSystemDecl(root, path);
@@ -687,8 +732,8 @@ export function createVarDeclModel({ template }) {
         throw new Error("character 根 attachtags 不得携带 formula（模板契约）");
       }
       if (root === "character" && path === "tags") {
-        if (formula === null || formula.op !== "union_attach") {
-          throw new Error("character 根 tags 必须保持 union_attach formula（模板契约）");
+        if (formula === null || formula.op !== "union") {
+          throw new Error("character 根 tags 必须保持 union formula（模板契约）");
         }
       }
       validateFormula(root, r.info.valueType, formula);
@@ -703,7 +748,7 @@ export function createVarDeclModel({ template }) {
     },
 
     /**
-     * 类型声明内末端 formula 编辑/清空（formula = null 清空；binds/paths 以类型根为
+     * 类型声明内末端 formula 编辑/清空（formula = null 清空；binds/attach 路径以类型根为
      * 基准校验——界面提示「类型内公式路径以类型为根」；服务端 rebase 已有，无需改）。
      * 引用类型数组元素内的末端不开放（到其类型上编辑）。
      */

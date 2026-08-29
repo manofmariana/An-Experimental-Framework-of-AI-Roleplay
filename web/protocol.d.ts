@@ -10,6 +10,7 @@ export interface PauseOptionsPayload {
 }
 export type ClientCommandPayload =
   | { type: "player_input"; text: string }
+  | { type: "directive"; mode: "god" | "writing"; text: string }
   | { type: "continue" }
   | { type: "rollback"; targetSeq: number }
   | { type: "rollback_and_continue"; targetSeq: number }

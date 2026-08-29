@@ -1,5 +1,5 @@
 /**
- * 工作集（当前轮未裁决言行暂存区）：条目并集 = 言行条目 | 通知条目。
+ * 工作集（当前轮未裁决言行暂存区）：条目并集 = 言行条目 | 通知条目 | 指令条目。
  *
  * 言行条目 = {cid, input?, decision?}（decision 引用与落账/投影同形，逐字节还原）；
  * 可见域 = decision.visibility（A = 只对同频道 / B = 只对同地 / 缺省 = 组内全体），
@@ -11,8 +11,17 @@
  * 的程序生成注入镜像；载荷纯结构化参数、无文本（文案由投影层机械组装 + 占位符模板渲染）。
  * id 同 type 固定复用（临时内容、昙花一现——同类型后来者居上）；生命周期随工作集清算。
  * 标记机制本身（触发 GM/邀请投影）与通知条目并行，互不替代。
+ *
+ * 指令条目 = {id, author, directive:{mode:"god"|"writing", text}, tags}：玩家元层指令
+ * （上帝 = 对世界/剧情、写作 = 对正文文风/写法）的内容单元；author = 主控角色 cid。
+ * id 同 mode 固定复用（directive:{mode}，后来者居上）；创建时挂强制全知 7 级（结构就位，
+ * 实际供给不过 TAG 求值——投影层按读者轴直接供给：god 仅 GM 读者、writing 仅正文读者，
+ * 角色读者恒不见，场景/台词渲染一律跳过）。
+ * 生命周期 = 当轮一次性：豁免 GM 清算（narrativity ≠ skip 时；正文取数不走工作集，
+ * 写作指令须活到 prose 步），narrativity = skip 随工作集全清，正文步提交清除残留。
  */
 import { z } from "zod";
+import { FORCE_OMNISCIENT_TAG } from "../tags/registry.js";
 import { DecisionPackageSchema, TagMountRefSchema, type Marker, type TagMountRef } from "../types.js";
 import { normalizeCid } from "./identity.js";
 
@@ -53,16 +62,75 @@ export const WorkingSetNoticeEntrySchema = z
   .strict();
 export type WorkingSetNoticeEntry = z.infer<typeof WorkingSetNoticeEntrySchema>;
 
-export const WorkingSetEntrySchema = z.union([WorkingSetSpeechEntrySchema, WorkingSetNoticeEntrySchema]);
+/** 指令模式封闭枚举：god = 上帝指令（对世界/剧情）；writing = 写作指令（对正文文风/写法）。 */
+export const DIRECTIVE_MODES = ["god", "writing"] as const;
+export type DirectiveMode = (typeof DIRECTIVE_MODES)[number];
+
+/** 指令载荷：模式 + 文本（原样透传，不做身份替换后处理）。 */
+export const WorkingSetDirectiveSchema = z
+  .object({
+    mode: z.enum(DIRECTIVE_MODES),
+    text: z.string().min(1),
+  })
+  .strict();
+export type WorkingSetDirective = z.infer<typeof WorkingSetDirectiveSchema>;
+
+export const WorkingSetDirectiveEntrySchema = z
+  .object({
+    /** 同 mode 固定复用（directive:{mode}；当轮一次性的临时内容不做独立分配） */
+    id: z.string(),
+    /** 主控角色 cid（提交时由协调层填入） */
+    author: z.string(),
+    directive: WorkingSetDirectiveSchema,
+    /** 条目级 TAG 挂载（创建时挂强制全知 7 级；结构就位——实际供给走读者轴，不过 TAG 求值） */
+    tags: z.array(TagMountRefSchema),
+  })
+  .strict();
+export type WorkingSetDirectiveEntry = z.infer<typeof WorkingSetDirectiveEntrySchema>;
+
+export const WorkingSetEntrySchema = z.union([
+  WorkingSetSpeechEntrySchema,
+  WorkingSetNoticeEntrySchema,
+  WorkingSetDirectiveEntrySchema,
+]);
 export type WorkingSetEntry = z.infer<typeof WorkingSetEntrySchema>;
 
 export function isNoticeEntry(entry: WorkingSetEntry): entry is WorkingSetNoticeEntry {
   return "notice" in entry;
 }
 
+export function isDirectiveEntry(entry: WorkingSetEntry): entry is WorkingSetDirectiveEntry {
+  return "directive" in entry;
+}
+
 /** 通知条目固定 ID（同 type 复用）。 */
 export function noticeIdOf(type: WorkingSetNoticeType): string {
   return `notice:${type}`;
+}
+
+/** 指令条目固定 ID（同 mode 复用）。 */
+export function directiveIdOf(mode: DirectiveMode): string {
+  return `directive:${mode}`;
+}
+
+/** 指令条目构造（纯函数）：id 同 mode 固定复用，tags 挂强制全知 7 级。 */
+export function directiveEntryOf(mode: DirectiveMode, text: string, author: string): WorkingSetDirectiveEntry {
+  return {
+    id: directiveIdOf(mode),
+    author,
+    directive: { mode, text },
+    tags: [{ name: FORCE_OMNISCIENT_TAG, level: 7 }],
+  };
+}
+
+/** 指令条目并入工作集（同 ID 复用：先摘后附，后来者居上；返回新数组）。 */
+export function appendDirectives(
+  entries: readonly WorkingSetEntry[],
+  directives: readonly WorkingSetDirectiveEntry[],
+): WorkingSetEntry[] {
+  if (directives.length === 0) return [...entries];
+  const ids = new Set(directives.map((d) => d.id));
+  return [...entries.filter((e) => !isDirectiveEntry(e) || !ids.has(e.id)), ...directives];
 }
 
 /** 通知条目 TAG 挂载（焊死映射）：contact = 感知 1 级 + 目标 cid 2 级 + 手段 A/V 3 级；其余 = {vis@1}。 */
@@ -163,12 +231,13 @@ export function renderNoticeText(notice: WorkingSetNotice): string {
   }
 }
 
-/** 单条目的场景行（renderScene 的逐条目因子；投影层逐条目扁平文本同形复用）。 */
+/** 单条目的场景行（renderScene 的逐条目因子；投影层逐条目扁平文本同形复用）。指令条目不进场景文本。 */
 export function renderEntryLines(
   entry: WorkingSetEntry,
   viewerCid?: string,
   remoteCids?: ReadonlySet<string>,
 ): string[] {
+  if (isDirectiveEntry(entry)) return [];
   if (isNoticeEntry(entry)) return [renderNoticeText(entry.notice)];
   const lines: string[] = [`##@${entry.cid}${remoteCids?.has(entry.cid) === true ? "（远程）" : ""}`];
   if (entry.input !== undefined) lines.push(`  言行：${entry.input}`);
@@ -192,11 +261,11 @@ export function renderScene(
   return entries.flatMap((entry) => renderEntryLines(entry, viewerCid, remoteCids)).join("\n");
 }
 
-/** 正文取材（台词+内心）：通知条目不是叙事素材，跳过。 */
+/** 正文取材（台词+内心）：通知条目与指令条目不是叙事素材，跳过。 */
 export function renderSpeech(entries: readonly WorkingSetEntry[]): string {
   const lines: string[] = [];
   for (const entry of entries) {
-    if (isNoticeEntry(entry)) continue;
+    if (isNoticeEntry(entry) || isDirectiveEntry(entry)) continue;
     lines.push(`##@${entry.cid}`);
     if (entry.input !== undefined) lines.push(`  言行：${entry.input}`);
     if (entry.decision !== undefined) {

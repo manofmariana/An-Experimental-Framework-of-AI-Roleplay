@@ -15,10 +15,10 @@ export interface TagMount {
   level: number;
 }
 
-/** formula 结构化只读标注（expr 公式 / union_attach 内置算子）。 */
+/** formula 结构化只读标注（expr 公式 / union 内置算子：attach 项路径序接 + sys 项勾选态）。 */
 export type FormulaView =
   | { kind: "expr"; expr: string; binds: Record<string, string> }
-  | { kind: "unionAttach"; paths: string[] };
+  | { kind: "union"; paths: string[]; sys: { cid: boolean; location: boolean; channel: boolean }; hasAttach: boolean };
 
 interface NodeBase {
   /** 显示名（容器/末端子键、数组元素下标）。 */

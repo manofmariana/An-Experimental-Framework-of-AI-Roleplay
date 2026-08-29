@@ -26,6 +26,7 @@ import type { CacheStat } from "../types.js";
 import type { GameSession, PauseOptions } from "./gameSession.js";
 import { buildHistory, type HistoryPayload } from "./historyProjection.js";
 import { productionSessionFactory, type SessionFactory } from "./sessionFactory.js";
+import type { DirectiveMode } from "../truth/workingSet.js";
 import {
   buildTransition,
   type CommitNotice,
@@ -54,6 +55,7 @@ export interface DirectEditPayload {
  */
 export type SessionCommand =
   | { type: "player_input"; text: string; baseRevision?: number }
+  | { type: "directive"; mode: DirectiveMode; text: string; baseRevision?: number }
   | { type: "continue"; baseRevision?: number }
   | { type: "rollback"; targetSeq: number; baseRevision?: number }
   | { type: "rollback_and_continue"; targetSeq: number; baseRevision?: number }
@@ -267,6 +269,15 @@ export class SessionCoordinator {
         return this.enqueue(() => this.load(cmd.runId) as R);
       case "player_input":
         return this.runOnSession(cmd, (s) => s.handlePlayerInput(cmd.text)) as Promise<R>;
+      case "directive":
+        // 指令落账不调 LLM：与 direct_edit 同走裸队列（串行队列即空闲闸），不置 busy——
+        // GameSession.submitDirective 见 llmBusy 即拒（受理窗口 = 有活跃会话且无在途步）；
+        // 不自动建会话（指令必须有活跃会话）
+        return this.enqueue(() => {
+          if (this.session === null) throw new Error("没有活跃会话：请先开始会话再提交指令");
+          this.checkRevision(this.session, cmd.baseRevision);
+          this.session.submitDirective(cmd.mode, cmd.text);
+        }) as Promise<R>;
       case "continue":
         return this.runOnSession(cmd, async (s) => {
           await s.continuePipeline();

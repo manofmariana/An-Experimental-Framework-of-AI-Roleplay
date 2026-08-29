@@ -2,23 +2,27 @@
  * 从动变量纯逻辑（禁 IO/LLM/server/truth/application，审计守护）。
  *
  * 从动末端 = 带 formula 的末端声明：expr = 数值公式（binds 逐键取值求值）；
- * union_attach = 内置算子（实例根部 attachtags 末端值 ∪ 各子树路径下所有名为
- * attachtags 的末端实例值——对象侧 TAG 纯名集合（string[]），按名去重——先取者胜：
- * 自身优先，子树按 paths 顺序）。
+ * union = 内置算子（terms 按序并集、按名去重——先取者胜；attach 项 = 实例根部
+ * attachtags 末端值 ∪ 各子树路径下所有名为 attachtags 的末端实例值（string[] 纯名
+ * 集合，子树按项内 paths 顺序）；sys 项 = 属主角色系统字段：cid → [cid]、location →
+ * [当前地点名]、channel → 无频道时 [] 否则 [频道号字符串]，sys 项求值需要调用方
+ * 提供属主系统字段 sysValues）。
  *
- * buildDerivedPlan = 依赖图构建：expr 依赖 = binds 值路径（精确）；union_attach
- * 依赖 = paths（粗粒度：子树任意写入触发重算，即子树下每个从动末端都是被依赖项）。
- * 拓扑排序输出求值顺序供写时级联重算；成环 = 抛错（消息带环路径）。同根限定：
- * 依赖路径不得含 world./characters. 前缀（纯相对模板路径）。结构化数组在静态计划
- * 中按通配段 "*" 展开一次（实例无关的依赖形状）。
+ * buildDerivedPlan = 依赖图构建：expr 依赖 = binds 值路径（精确）；union 依赖 =
+ * 各 attach 项 paths（粗粒度：子树任意写入触发重算，即子树下每个从动末端都是被
+ * 依赖项）；sys 项不产生图边（系统字段不是从动末端，其变化经 CharactersStore.setVars
+ * 专用通道重算池）。拓扑排序输出求值顺序供写时级联重算；成环 = 抛错（消息带环路径）。
+ * 同根限定：依赖路径不得含 world./characters. 前缀（纯相对模板路径）。结构化数组在
+ * 静态计划中按通配段 "*" 展开一次（实例无关的依赖形状）。
  *
  * buildRootDerivedPlan = 写时级联用的根级计划：模板声明 formula ∪ 实例携带 formula
  * （实例覆盖同路径模板声明），拓扑排序后把 "*" 通配段按实例树枚举为元素下标，输出
- * 实例侧求值目标序列。数组元素结构内的 formula 的 binds/paths 以元素结构根为基准，
- * 并入计划时按挂载路径补齐前缀（"*" 段在求值时逐位替换为具体下标）。
+ * 实例侧求值目标序列。数组元素结构内的 formula 的 binds/attach paths 以元素结构根为
+ * 基准，并入计划时按挂载路径补齐前缀（"*" 段在求值时逐位替换为具体下标）。
  *
  * evalDerived = 按声明的 formula 求值：expr 逐键经 scope.resolve 取 number 后走
- * 编译闭包；union_attach 走本模块算子（需要 scope.declRoot 做子树路径解析）。
+ * 编译闭包；union 走本模块算子（需要 scope.declRoot 做子树路径解析；含 sys 项时
+ * 需要 scope.sysValues）。
  * evalDerivedTarget = 求值一个实例侧目标：expr 依赖末端无实例（取不到值）时返回
  * undefined（跳过重算，保持现值），不报错。
  */
@@ -29,12 +33,20 @@ import {
   type DeclNode,
   type FormulaDecl,
   type TerminalDecl,
+  type UnionTermDecl,
 } from "./template.js";
 import { isTerminalInstance, readTerminal, type InstanceNode } from "./tree.js";
 
 // ---------------------------------------------------------------------------
-// union_attach 算子
+// union 算子
 // ---------------------------------------------------------------------------
+
+/** union sys 项求值所需的属主角色系统字段（character 根调用方注入；world 根无 sys 项）。 */
+export interface UnionSysValues {
+  cid: string;
+  locationName: string;
+  channel: number | null;
+}
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -69,14 +81,16 @@ function collectAttachTags(node: unknown, sink: (items: readonly string[]) => vo
 }
 
 /**
- * union_attach 求值：实例根部 attachtags 末端值 ∪ 各子树路径下所有名为 attachtags
- * 的末端实例值；按名去重（先取者胜：自身 attachtags 优先，子树按 paths 顺序）。
- * 子树路径必须解析到容器/数组声明；实例子树缺失按空集处理。
+ * union 求值：terms 按序并集、按名去重（先取者胜）。attach 项 = 实例根部 attachtags
+ * 末端值 ∪ 各子树路径下所有名为 attachtags 的末端实例值（子树路径必须解析到容器/数组
+ * 声明；实例子树缺失按空集处理）；sys 项 = 属主系统字段（sysValues 缺供 = 抛错，
+ * world 根校验期已拒 sys 项，正常路径不会到此）。
  */
-export function unionAttach(
+export function unionTerms(
   instanceRoot: InstanceNode,
   declRoot: DeclNode,
-  subtreePaths: readonly string[],
+  terms: readonly UnionTermDecl[],
+  sysValues?: UnionSysValues,
 ): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -87,28 +101,39 @@ export function unionAttach(
       out.push(item);
     }
   };
-  pushAll((readTerminal(instanceRoot, declRoot, "attachtags") as string[] | undefined) ?? []);
-  for (const p of subtreePaths) {
-    const decl = resolveDeclPath(declRoot, p);
-    if (decl.kind === "terminal") {
-      throw new Error(`union_attach 子树路径 "${p}" 必须解析到容器/数组声明`);
+  for (const term of terms) {
+    if (term.kind === "attach") {
+      pushAll((readTerminal(instanceRoot, declRoot, "attachtags") as string[] | undefined) ?? []);
+      for (const p of term.paths) {
+        const decl = resolveDeclPath(declRoot, p);
+        if (decl.kind === "terminal") {
+          throw new Error(`union attach 子树路径 "${p}" 必须解析到容器/数组声明`);
+        }
+        collectAttachTags(instanceAtPath(instanceRoot, p), pushAll);
+      }
+      continue;
     }
-    collectAttachTags(instanceAtPath(instanceRoot, p), pushAll);
+    if (sysValues === undefined) {
+      throw new Error("union sys 项求值需要属主系统字段（sysValues）");
+    }
+    if (term.sys === "cid") pushAll([sysValues.cid]);
+    else if (term.sys === "location") pushAll([sysValues.locationName]);
+    else if (sysValues.channel !== null) pushAll([String(sysValues.channel)]);
   }
   return out;
 }
 
 /**
- * character 根 tags 池求值：按根 tags 末端声明的 union_attach paths 求 unionAttach
- * （模板解析已保证该末端存在且为 union_attach 从动末端）。
+ * character 根 tags 池求值：按根 tags 末端声明的 union terms 求 unionTerms
+ * （模板解析已保证该末端存在且为 union 从动末端；sysValues = 属主角色系统字段）。
  */
-export function evalTagsPool(instanceRoot: InstanceNode, characterDecl: ContainerDecl): string[] {
+export function evalTagsPool(instanceRoot: InstanceNode, characterDecl: ContainerDecl, sysValues: UnionSysValues): string[] {
   const tagsDecl = characterDecl.children["tags"] as TerminalDecl;
   const formula = tagsDecl.formula;
-  if (formula?.kind !== "unionAttach") {
-    throw new Error("character 根 tags 末端必须是 union_attach 从动末端");
+  if (formula?.kind !== "union") {
+    throw new Error("character 根 tags 末端必须是 union 从动末端");
   }
-  return unionAttach(instanceRoot, characterDecl, formula.paths);
+  return unionTerms(instanceRoot, characterDecl, formula.terms, sysValues);
 }
 
 // ---------------------------------------------------------------------------
@@ -118,7 +143,7 @@ export function evalTagsPool(instanceRoot: InstanceNode, characterDecl: Containe
 export interface DerivedPlan {
   /** 从动末端路径按求值顺序排列（被依赖者在前） */
   order: string[];
-  /** 每个从动末端的直接依赖路径（expr = binds 值；union_attach = paths） */
+  /** 每个从动末端的直接依赖路径（expr = binds 值；union = 各 attach 项 paths；sys 项无边） */
   deps: Readonly<Record<string, readonly string[]>>;
 }
 
@@ -130,9 +155,12 @@ function checkRelativePath(path: string, atPath: string): void {
   }
 }
 
-/** 提取 formula 的直接依赖路径（expr = binds 值；union_attach = paths）并做同根限定。 */
+/** 提取 formula 的直接依赖路径（expr = binds 值；union = 各 attach 项 paths，sys 项无边）并做同根限定。 */
 function formulaDeps(path: string, f: FormulaDecl): readonly string[] {
-  const list = f.kind === "expr" ? Object.values(f.binds) : [...f.paths];
+  const list =
+    f.kind === "expr"
+      ? Object.values(f.binds)
+      : f.terms.flatMap((t) => (t.kind === "attach" ? [...t.paths] : []));
   for (const p of list) checkRelativePath(p, path);
   return list;
 }
@@ -206,8 +234,8 @@ function topoSortDerived(nodes: readonly PlanNode[]): PlanNode[] {
 
 /**
  * 构建从动依赖图并拓扑排序：expr 依赖 = binds 值路径（精确匹配从动末端建边）；
- * union_attach 依赖 = paths（粗粒度：子树下每个从动末端都建边）。成环 = 抛错
- * （消息带环路径）。
+ * union 依赖 = 各 attach 项 paths（粗粒度：子树下每个从动末端都建边；sys 项无边）。
+ * 成环 = 抛错（消息带环路径）。
  */
 export function buildDerivedPlan(declRoot: DeclNode): DerivedPlan {
   const derived: Array<{ path: string; decl: TerminalDecl }> = [];
@@ -230,11 +258,13 @@ export function buildDerivedPlan(declRoot: DeclNode): DerivedPlan {
 export interface DerivedScope {
   /** 按同根相对路径取值（expr 公式 binds 用） */
   resolve: (path: string) => unknown;
-  /** 同根声明树（union_attach 子树路径解析用；expr 公式可不传） */
+  /** 同根声明树（union attach 子树路径解析用；expr 公式可不传） */
   declRoot?: DeclNode | undefined;
+  /** 属主角色系统字段（union sys 项求值用；无 sys 项可不传） */
+  sysValues?: UnionSysValues | undefined;
 }
 
-/** 按声明的 formula 求值：expr = binds 逐键 resolve 取 number；union_attach 走算子。 */
+/** 按声明的 formula 求值：expr = binds 逐键 resolve 取 number；union 走算子。 */
 export function evalDerived(
   declNode: TerminalDecl,
   instanceRoot: InstanceNode,
@@ -256,9 +286,9 @@ export function evalDerived(
     return f.compiled.evaluate(values);
   }
   if (scope.declRoot === undefined) {
-    throw new Error("union_attach 求值需要 scope.declRoot");
+    throw new Error("union 求值需要 scope.declRoot");
   }
-  return unionAttach(instanceRoot, scope.declRoot, f.paths);
+  return unionTerms(instanceRoot, scope.declRoot, f.terms, scope.sysValues);
 }
 
 // ---------------------------------------------------------------------------
@@ -348,7 +378,7 @@ function mountPrefixOf(patternPath: string): string {
   return last < 0 ? "" : segs.slice(0, last + 1).join(".");
 }
 
-/** 数组元素结构内的 formula 改写到挂载路径基准（binds/paths 补前缀；"*" 段求值时替换为元素下标）。 */
+/** 数组元素结构内的 formula 改写到挂载路径基准（binds/attach paths 补前缀，sys 项原样；"*" 段求值时替换为元素下标）。 */
 function rebaseFormula(f: FormulaDecl, mount: string): FormulaDecl {
   if (mount === "") return f;
   if (f.kind === "expr") {
@@ -356,7 +386,12 @@ function rebaseFormula(f: FormulaDecl, mount: string): FormulaDecl {
     for (const [key, p] of Object.entries(f.binds)) binds[key] = `${mount}.${p}`;
     return { ...f, binds };
   }
-  return { kind: "unionAttach", paths: f.paths.map((p) => `${mount}.${p}`) };
+  return {
+    kind: "union",
+    terms: f.terms.map((t): UnionTermDecl =>
+      t.kind === "attach" ? { kind: "attach", paths: t.paths.map((p) => `${mount}.${p}`) } : t,
+    ),
+  };
 }
 
 /**
@@ -405,12 +440,14 @@ export function buildRootDerivedPlan(declRoot: DeclNode, instanceRoot: InstanceN
 /**
  * 求值一个实例侧从动目标：expr = binds 逐键 readTerminal 取值（路径中的 "*" 段按
  * 目标具体路径逐位替换为元素下标），任一依赖末端无实例（取不到值）= 返回 undefined
- * （跳过重算，保持现值，不报错）；union_attach = 内置算子（子树缺失按空集）。
+ * （跳过重算，保持现值，不报错）；union = 内置算子（attach 子树缺失按空集；含 sys
+ * 项时由调用方经 sysValues 供属主系统字段）。
  */
 export function evalDerivedTarget(
   target: DerivedTarget,
   declRoot: DeclNode,
   instanceRoot: InstanceNode,
+  sysValues?: UnionSysValues,
 ): unknown {
   const segs = target.path.split(".");
   const subst = (p: string): string =>
@@ -431,7 +468,12 @@ export function evalDerivedTarget(
   const decl: TerminalDecl = {
     kind: "terminal",
     valueType: "string_list",
-    formula: { kind: "unionAttach", paths: f.paths.map(subst) },
+    formula: {
+      kind: "union",
+      terms: f.terms.map((t): UnionTermDecl =>
+        t.kind === "attach" ? { kind: "attach", paths: t.paths.map(subst) } : t,
+      ),
+    },
   };
-  return evalDerived(decl, instanceRoot, { resolve: () => undefined, declRoot });
+  return evalDerived(decl, instanceRoot, { resolve: () => undefined, declRoot, sysValues });
 }

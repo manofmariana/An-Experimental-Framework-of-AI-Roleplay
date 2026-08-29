@@ -50,7 +50,7 @@ function makeWorking() {
     character: {
       children: {
         attachtags: "string_list",
-        tags: { valueType: "string_list", formula: { op: "union_attach", paths: [] } },
+        tags: { valueType: "string_list", formula: { op: "union", terms: [{ attach: [] }] } },
         mood: "string",
         str: "number",
         double_str: { valueType: "number", formula: { expr: "str * 2", binds: { str: "str" } } },
@@ -189,9 +189,14 @@ describe("var-tree-model：视图模型", () => {
     assert.equal(dbl.derived, true);
     assert.deepEqual(dbl.formula, { kind: "expr", expr: "str * 2", binds: { str: "str" } });
 
-    const tags = terminalOf(char, "tags"); // union_attach 从动
+    const tags = terminalOf(char, "tags"); // union 从动
     assert.equal(tags.derived, true);
-    assert.deepEqual(tags.formula, { kind: "unionAttach", paths: [] });
+    assert.deepEqual(tags.formula, {
+      kind: "union",
+      paths: [],
+      sys: { cid: false, location: false, channel: false },
+      hasAttach: true,
+    });
   });
 
   it("角色树：系统声明分支投影在前（系统调度字段只读徽记）、vars 树随后，同一棵树不分区", () => {

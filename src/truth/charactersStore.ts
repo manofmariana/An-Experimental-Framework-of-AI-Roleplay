@@ -3,7 +3,7 @@ import type { CharacterManifest } from "../agents/character.js";
 import { InitiativeSchema, LocationSchema, PLAYER_CID, type RelationUpdate } from "../types.js";
 import { evalTagsPool } from "../vars/derived.js";
 import type { ContainerDecl } from "../vars/template.js";
-import { normalizeInstance, TagMountSchema, type InstanceNode, type TerminalInstance } from "../vars/tree.js";
+import { isTerminalInstance, normalizeInstance, TagMountSchema, type InstanceNode, type TerminalInstance } from "../vars/tree.js";
 import { RelationsDataSchema, normalizeCid, type RelationEntry } from "./identity.js";
 import { deleteByPath, getByPath, makeVarChange, setByPath, type VarChange } from "./varChanges.js";
 
@@ -45,11 +45,18 @@ export type CharacterVarPatch = Partial<Pick<CharacterState, (typeof CHARACTER_V
 
 /**
  * manifest → 初始角色状态：vars 按 character 模板 normalize（简写展开）后
- * 物化 tags 池末端（union_attach 初值）。
+ * 物化 tags 池末端（union 初值，含 cid/location/channel 系统字段常驻项）。
  */
 function fromManifest(manifest: CharacterManifest, startMinutes: number, characterDecl: ContainerDecl): CharacterState {
-  const vars = normalizeInstance(manifest.vars, characterDecl, manifest.id) as Record<string, unknown>;
-  vars["tags"] = { value: evalTagsPool(vars as InstanceNode, characterDecl), tags: [] } satisfies TerminalInstance;
+  const vars = normalizeInstance(manifest.vars, characterDecl, manifest.id, undefined, true) as Record<string, unknown>;
+  vars["tags"] = {
+    value: evalTagsPool(vars as InstanceNode, characterDecl, {
+      cid: manifest.id,
+      locationName: manifest.location.name,
+      channel: manifest.channel,
+    }),
+    tags: [],
+  } satisfies TerminalInstance;
   return {
     cid: manifest.id,
     name: manifest.name, gender: manifest.gender, age: manifest.age, personality: manifest.personality,
@@ -69,7 +76,11 @@ function fromManifest(manifest: CharacterManifest, startMinutes: number, charact
 export class CharactersStore {
   private data: Record<string, CharacterState>;
 
-  constructor(characters: Record<string, CharacterState>) {
+  /**
+   * @param characterDecl 档内 character 模板根（setVars 系统字段级联重算 tags 池用；
+   *   缺省 = 不重算——存档安全网在提交边界兜底比对）。
+   */
+  constructor(characters: Record<string, CharacterState>, readonly characterDecl?: ContainerDecl | undefined) {
     this.data = JSON.parse(JSON.stringify(characters)) as Record<string, CharacterState>;
   }
 
@@ -82,7 +93,7 @@ export class CharactersStore {
       if (manifest.id !== PLAYER_CID && manifest.isPlayer) throw new Error(`只有 ${PLAYER_CID} 可以标记为玩家: ${manifest.id}`);
       characters[manifest.id] = fromManifest(manifest, startMinutes, characterDecl);
     }
-    return new CharactersStore(characters);
+    return new CharactersStore(characters, characterDecl);
   }
 
   /** 整代提交的写盘数据源（characters.json 的 characters 载荷）。 */
@@ -147,6 +158,12 @@ export class CharactersStore {
     return makeVarChange(`characters.${cid}.long_term_memory`, before, after);
   }
 
+  /**
+   * 系统字段白名单写通道（timer/group/initiative/channel/acted/level/location）。
+   * location/channel 变更后重算该角色 tags 池（池经 union sys 项常驻这两项；cid 不可变，
+   * 其余键不影响池）：值变才经 writeRaw 写回并追加池的 VarChange（回溯随批覆盖），
+   * 不变不追加；未持有模板（characterDecl 缺省）时跳过重算，存档安全网在提交边界兜底。
+   */
   setVars(cid: string, patch: CharacterVarPatch): VarChange[] {
     const state = this.get(cid); const changes: VarChange[] = []; const next = { ...state } as Record<string, unknown>;
     for (const key of CHARACTER_VAR_KEYS) {
@@ -156,8 +173,27 @@ export class CharactersStore {
     }
     if (changes.length > 0) {
       this.data = { ...this.data, [cid]: next as CharacterState };
+      const poolChange = this.refreshTagsPool(cid, patch);
+      if (poolChange !== undefined) changes.push(poolChange);
     }
     return changes;
+  }
+
+  /** location/channel 变化后重算 tags 池；值变才写回并产出 VarChange，否则 undefined。 */
+  private refreshTagsPool(cid: string, patch: CharacterVarPatch): VarChange | undefined {
+    if (this.characterDecl === undefined) return undefined;
+    if (patch.location === undefined && patch.channel === undefined) return undefined;
+    const state = this.get(cid);
+    const nextPool = evalTagsPool(state.vars as InstanceNode, this.characterDecl, {
+      cid: state.cid,
+      locationName: state.location.name,
+      channel: state.channel,
+    });
+    const shell: unknown = state.vars["tags"];
+    const current = isTerminalInstance(shell) ? shell.value : undefined;
+    if (JSON.stringify(current) === JSON.stringify(nextPool)) return undefined;
+    const next: TerminalInstance = { value: nextPool, tags: isTerminalInstance(shell) ? shell.tags : [] };
+    return this.writeRaw(cid, "vars.tags", next);
   }
 
   ensurePlayer(manifest: CharacterManifest, startMinutes: number, characterDecl: ContainerDecl): void {

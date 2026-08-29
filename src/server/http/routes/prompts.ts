@@ -5,7 +5,7 @@
  * 无活跃会话 → 读写世界包基线（?set= 定位包，缺省 DEFAULT_WORLD_SET，包不存在 →
  * WORLD_SET_NOT_FOUND 404；包内文件 IO 在 resources/worldRepository，新会话生效）。
  * 结构 + 占位符校验（合法键集 = 当前模式占位符目录键集，compile/template）留在本路由层。
- * 模板键 = 封闭四值（character/gm/prose/gm-incident 突发变体）。
+ * 模板键 = 对象×功能矩阵扁平键（{object}.{function}，封闭集由 PROMPT_MATRIX 派生）。
  * 占位符目录 = 声明式条目（全对象共享、读者无关；source 二分类 = 程序组装类封闭枚举 /
  * 落盘四根无 source）：GET 出平铺目录 + 组装源封闭枚举；
  * PUT 整份提交——parse（zod 形状 + 分支记号集规范化）+ validatePlaceholders 语义机检
@@ -37,6 +37,7 @@ import {
 import { parseTagRegistry } from "../../../tags/registry.js";
 import {
   isPromptTemplateId,
+  PROMPT_MATRIX_VIEW,
   PROMPT_TEMPLATE_IDS,
   type PromptTemplateId,
 } from "../../../truth/promptsStore.js";
@@ -66,7 +67,7 @@ export function placeholdersCatalog(catalog: CatalogView): {
   }));
 }
 
-/** 读取包基线四份模板全文（GET /api/prompts 无会话模式；结构校验，内容原样返回）。 */
+/** 读取包基线全部模板全文（GET /api/prompts 无会话模式；结构校验，内容原样返回）。 */
 export function readPromptTemplates(promptsDir: string): PromptTemplate[] {
   return PROMPT_TEMPLATE_IDS.map((agent) =>
     PromptTemplateSchema.parse(JSON.parse(readPromptFile(promptsDir, agent))),
@@ -165,8 +166,11 @@ export function promptRoutes(deps: ApiDeps): Route[] {
       pattern: "/api/prompts",
       handler: ({ url }) => {
         const active = deps.coordinator.activePrompts();
-        if (active !== null) return PROMPT_TEMPLATE_IDS.map((id) => active.templates[id]);
-        return readPromptTemplates(promptsDirOf(url));
+        const templates =
+          active !== null
+            ? PROMPT_TEMPLATE_IDS.map((id) => active.templates[id])
+            : readPromptTemplates(promptsDirOf(url));
+        return { templates, matrix: PROMPT_MATRIX_VIEW };
       },
     },
     {

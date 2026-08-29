@@ -23,6 +23,7 @@ import {
   buildProjectionHost,
   buildSysFile,
   buildTagRegistryRaw,
+  buildTagsPool,
   buildVarsTemplate,
   buildWorldTree,
 } from "./builders/index.js";
@@ -49,7 +50,7 @@ const VARS_TAGS_RAW = {
   },
 };
 
-/** 持「角色感知」的角色状态（tags 池 = 程序消费角色 TAG 集唯一路径）。 */
+/** 持「角色感知」的角色状态（tags 池 = 附加名 ∪ cid/地点常驻项，程序消费角色 TAG 集唯一路径）。 */
 function perceivedChar(cid: string, name: string, appearance: boolean) {
   return buildCharacterState({
     cid,
@@ -58,7 +59,7 @@ function perceivedChar(cid: string, name: string, appearance: boolean) {
     appearance,
     vars: {
       attachtags: { value: ["角色感知"], tags: [] },
-      tags: { value: ["角色感知"], tags: [] },
+      tags: buildTagsPool(["角色感知"], { cid, locationName: "灯塔", channel: null }),
     },
   });
 }
@@ -79,7 +80,7 @@ function truth() {
   };
 }
 
-/** baitan present_characters / self_name / self_location 同构目录。 */
+/** baitan present_cid / self_name / self_location 同构目录。 */
 const CATALOG = parsePlaceholders({
   present: {
     description: "在场角色 CID 表",

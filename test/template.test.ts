@@ -11,6 +11,7 @@ import {
 } from "../src/compile/template.js";
 import { resolveWorldDir } from "../src/config.js";
 import { packPromptsDir } from "../src/resources/worldRepository.js";
+import { PROMPT_TEMPLATE_IDS } from "../src/truth/promptsStore.js";
 import { parseSys } from "../src/truth/sysStore.js";
 
 /** 出厂世界包目录与其内 prompts/。 */
@@ -71,10 +72,10 @@ describe("validateTemplate（结构 + 占位符合法性）", () => {
 describe("出厂模板 × 占位符目录（data/assets/{包}/prompts/）", () => {
   const catalog = loadPackPlaceholders(FACTORY_WORLD_DIR);
 
-  for (const agent of ["character", "gm", "prose", "gm-incident"] as const) {
-    it(`${agent}：模板可加载，占位符全部在目录内`, () => {
-      const t = loadTemplate(agent, Object.keys(catalog), FACTORY_PROMPTS_DIR);
-      assert.equal(t.id, agent);
+  for (const id of PROMPT_TEMPLATE_IDS) {
+    it(`${id}：模板可加载，占位符全部在目录内`, () => {
+      const t = loadTemplate(id, Object.keys(catalog), FACTORY_PROMPTS_DIR);
+      assert.equal(t.id, id);
       assert.ok(t.modules.length >= 2);
       // 尾部模块是动态内容（编辑约定：动态置尾）
       const used = new Set(t.modules.flatMap((m) => extractPlaceholders(m.content)));
@@ -82,9 +83,9 @@ describe("出厂模板 × 占位符目录（data/assets/{包}/prompts/）", () =
     });
   }
 
-  it("loadPackPrompts 四份齐备（含 gm-incident）；目录语义机检通过", () => {
+  it("loadPackPrompts 矩阵全量齐备；目录语义机检通过", () => {
     const templates = loadPackPrompts(FACTORY_WORLD_DIR, catalog);
-    assert.deepEqual(templates.map((tpl) => tpl.id), ["character", "gm", "prose", "gm-incident"]);
+    assert.deepEqual(templates.map((tpl) => tpl.id), [...PROMPT_TEMPLATE_IDS]);
     // 与装配同一口径的语义机检（四根路径到末端/置后同轴/分支记号）——机检上下文 =
     // 该包变量体系三文件（tags/vars-template/vars-tags，与包基线编辑校验同基准）
     const read = (name: string): unknown => JSON.parse(fs.readFileSync(path.join(FACTORY_WORLD_DIR, name), "utf8"));

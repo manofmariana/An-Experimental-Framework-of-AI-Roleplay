@@ -68,6 +68,7 @@ describe("web/protocol.js buildCommand × 服务端 schema 对拍", () => {
   /** 每命令一组合法字段（与服务端 schema 同步演进；漂移时此处红）。 */
   const VALID_FIELDS: Record<string, Record<string, unknown>> = {
     player_input: { text: "我推开门。" },
+    directive: { mode: "god", text: "让雾散一刻钟" },
     continue: {},
     rollback: { targetSeq: 3 },
     rollback_and_continue: { targetSeq: 4 },

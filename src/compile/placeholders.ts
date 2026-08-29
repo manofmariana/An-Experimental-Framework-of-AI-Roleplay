@@ -62,6 +62,8 @@ export const ASSEMBLED_SOURCES = [
   "snapshot",
   "group_members",
   "long_term_memory",
+  "god_directive",
+  "writing_directive",
 ] as const;
 export type AssembledSource = (typeof ASSEMBLED_SOURCES)[number];
 

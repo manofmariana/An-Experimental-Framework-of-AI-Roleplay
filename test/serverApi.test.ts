@@ -227,11 +227,11 @@ describe("listRuns / readRunArtifact（存档 v7 Generation 布局）", () => {
 });
 
 describe("prompts API（提示词模板端点的纯逻辑）", () => {
-  it("readPromptTemplates：四份出厂模板结构完整（含 gm-incident 突发变体）", () => {
+  it("readPromptTemplates：矩阵全量出厂模板结构完整（含 gm.incident 突发功能组）", () => {
     const templates = readPromptTemplates(FACTORY_PROMPTS_DIR);
     assert.deepEqual(
       templates.map((t) => t.id),
-      ["character", "gm", "prose", "gm-incident"],
+      ["character.decision", "gm.adjudication", "gm.incident", "prose.render"],
     );
     for (const t of templates) {
       assert.ok(t.modules.length >= 2);
@@ -246,7 +246,7 @@ describe("prompts API（提示词模板端点的纯逻辑）", () => {
       "lore", "events", "current_scene", "prose_window", "last_prose",
       "time", "cast", "contacts", "departure_notices", "incoming_contact", "timers", "fortune",
       "gm_event", "target_group", "world_snapshot", "snapshot", "group_members",
-      "long_term_memory", "self_name", "self_location", "present_characters",
+      "long_term_memory", "self_name", "self_location", "present_cid",
     ]) {
       assert.ok(keys.includes(k), `目录缺 ${k}`);
     }
@@ -262,24 +262,24 @@ describe("prompts API（提示词模板端点的纯逻辑）", () => {
 
   it("validatePromptPayload：合法通过；未知占位符列出名字；id 不符拒绝", () => {
     const catalog = loadPackPlaceholders(FACTORY_WORLD_DIR);
-    const ok = validatePromptPayload("gm", {
-      id: "gm",
+    const ok = validatePromptPayload("gm.adjudication", {
+      id: "gm.adjudication",
       modules: [{ key: "m", role: "system", content: "设定：{{lore}}" }],
     }, catalog);
-    assert.equal(ok.id, "gm");
+    assert.equal(ok.id, "gm.adjudication");
 
     assert.throws(
       () =>
-        validatePromptPayload("gm", {
-          id: "gm",
+        validatePromptPayload("gm.adjudication", {
+          id: "gm.adjudication",
           modules: [{ key: "m", role: "system", content: "{{nope}}" }],
         }, catalog),
       /nope/,
     );
     assert.throws(
       () =>
-        validatePromptPayload("gm", {
-          id: "character",
+        validatePromptPayload("gm.adjudication", {
+          id: "character.decision",
           modules: [{ key: "m", role: "system", content: "{{lore}}" }],
         }, catalog),
       /不一致/,

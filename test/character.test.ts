@@ -25,7 +25,7 @@ describe("角色快照隔离", () => {
   });
   it("模板无 persona/voice/cast，固定示例含 action/inner 键", () => {
     const catalog = loadPackPlaceholders(FACTORY_WORLD_DIR);
-    const template = loadPackPrompts(FACTORY_WORLD_DIR, catalog).find((tpl) => tpl.id === "character")!;
+    const template = loadPackPrompts(FACTORY_WORLD_DIR, catalog).find((tpl) => tpl.id === "character.decision")!;
     const text = renderPrompt(template, catalog, charHost("C1001")).map((message) => message.content).join("\n");
     assert.ok(text.includes('"action"') && text.includes('"inner"'));
     assert.ok(!text.includes("voice_anchor") && !text.includes("演员表"));

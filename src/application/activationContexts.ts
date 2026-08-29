@@ -18,7 +18,9 @@
  * appearance=false 角色的全部末端虚拟挂载
  * {fappear, 6 级}（不落盘、不污染 TAG 池）。working_set 源 = 抓取层同值批隔离 +
  * 逐条目 TAG 过滤（言行条目挂载按焊死映射渲染时派生；通知条目挂载随条目携带；
- * 自己的条目恒可见）。身份替换 = 组装后处理统一出口（renderIdentity：角色 =
+ * 自己的条目恒可见；指令条目不过本通道——god_directive/writing_directive 两组装源
+ * 按读者轴直接供给：god 仅 GM、writing 仅正文、角色恒空，文本原样透传不过 TAG 求值）。
+ * 身份替换 = 组装后处理统一出口（renderIdentity：角色 =
  * renderForReader/renderRefsForReader；GM = refs 渲染、事件保持 @ID 原文；正文 =
  * renderForGm 演员表渲染、refs 保持原文）；events 根 string 末端由引擎过 cid 模式。
  *
@@ -50,6 +52,7 @@ import { snapshotCharacterState, snapshotCharacterStates } from "../truth/snapsh
 import type { TruthStores } from "../truth/stores.js";
 import { parseSys, type ParsedSys } from "../truth/sysStore.js";
 import {
+  isDirectiveEntry,
   isNoticeEntry,
   renderEntryLines,
   renderNoticeText,
@@ -123,7 +126,8 @@ export function remoteCidsOf(truth: TruthStores): Set<string> {
 export function batchIsolatedWorkingSet(truth: TruthStores, cid: string): WorkingSetEntry[] {
   const initiative = truth.characters.get(cid).initiative;
   return truth.sys.pipeline.working_set.filter((e) => {
-    if (isNoticeEntry(e)) return true;
+    // 通知条目无先攻批次（隔离不适用）；指令条目不过本通道（角色读者恒不见，workingSetEntriesFor 跳过）
+    if (isNoticeEntry(e) || isDirectiveEntry(e)) return true;
     if (e.cid === cid) return true; // 自己的过往言行可见（同值批隔离只对他人条目生效）
     const otherState = truth.characters.get(e.cid);
     // 未结算离开者：同值批隔离不适用（其条目是在组内时产生的，继续对原组成员可见）
@@ -275,15 +279,14 @@ class Projection implements RenderHost {
 
   /**
    * 角色读者的 TAG 过滤上下文（事件/lore/vars/working_set 同一口径）：
-   * 有效 TAG 集 = 落盘池（tagNames）∪ 程序派生（自身 cid 恒在、当前地点名、
-   * 当前频道编号（若持有）、工具 AV 临时挂载）；全知权重 = omniscience 系统字段；
+   * 有效 TAG 集 = 落盘池（tagNames；自身 cid、当前地点名、当前频道号经 union sys 项
+   * 常驻池内）∪ 程序派生（工具 AV 临时挂载）；全知权重 = omniscience 系统字段；
    * 开放类别实例集 = cid/channel/location 三类（命中归一化为类别记号）；
    * condition 按读者变量树求真（fail-closed）。
    */
   private characterScope(cid: string): ReaderScope {
     const state = this.truth.characters.get(cid);
-    const tags = new Set([...this.truth.characters.tagNames(cid), cid, state.location.name]);
-    if (state.channel !== null) tags.add(String(state.channel));
+    const tags = new Set(this.truth.characters.tagNames(cid));
     if (this.holdsChannelToolAv(state)) {
       tags.add("A");
       tags.add("V");
@@ -322,6 +325,7 @@ class Projection implements RenderHost {
     const incident = pendingIncidentText(truth, [cid]);
     if (incident !== "") out.push(e(incident));
     for (const entry of batchIsolatedWorkingSet(truth, cid)) {
+      if (isDirectiveEntry(entry)) continue; // 指令条目：角色读者恒不见（第四面墙 = 读者维度）
       if (isNoticeEntry(entry)) {
         const { status, matched } = evaluateTagFilter({ content: null, tags: entry.tags }, scope, registry);
         out.push({ content: renderNoticeText(entry.notice), filter: { status, matched } });
@@ -458,6 +462,22 @@ class Projection implements RenderHost {
       }
       case "long_term_memory":
         return reader.kind === "character" ? this.self().long_term_memory.map((item) => e(`- ${item}`)) : [];
+      // 指令条目两源：读者轴供给本身就是第四面墙（god 仅 GM、writing 仅正文、角色恒空），
+      // 条目不过 TAG 求值（恒放行 e() 缺省）；文本原样透传（出厂基线条目段 identity:false）
+      case "god_directive": {
+        if (reader.kind !== "gm") return [];
+        return truth.sys.pipeline.working_set
+          .filter(isDirectiveEntry)
+          .filter((d) => d.directive.mode === "god")
+          .map((d) => e(d.directive.text, { owner: d.author }));
+      }
+      case "writing_directive": {
+        if (reader.kind !== "prose") return [];
+        return truth.sys.pipeline.working_set
+          .filter(isDirectiveEntry)
+          .filter((d) => d.directive.mode === "writing")
+          .map((d) => e(d.directive.text, { owner: d.author }));
+      }
     }
   }
 

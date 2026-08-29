@@ -17,7 +17,7 @@ const TEMPLATE_RAW = {
   character: {
     children: {
       attachtags: "string_list",
-      tags: { valueType: "string_list", formula: { op: "union_attach", paths: [] as string[] } },
+      tags: { valueType: "string_list", formula: { op: "union", terms: [{ attach: [] as string[] }] } },
       hp: "number",
     },
   },
@@ -89,7 +89,7 @@ describe("系统声明分支并入", () => {
           character: {
             children: {
               attachtags: "string_list",
-              tags: { valueType: "string_list", formula: { op: "union_attach", paths: [] } },
+              tags: { valueType: "string_list", formula: { op: "union", terms: [{ attach: [] }] } },
               name: "string",
             },
           },
@@ -103,7 +103,7 @@ describe("系统声明分支并入", () => {
           character: {
             children: {
               attachtags: "string_list",
-              tags: { valueType: "string_list", formula: { op: "union_attach", paths: [] } },
+              tags: { valueType: "string_list", formula: { op: "union", terms: [{ attach: [] }] } },
             },
           },
           types: { relation: { children: { x: "number" } } },

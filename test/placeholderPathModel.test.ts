@@ -23,7 +23,7 @@ const TEMPLATE = {
   character: {
     children: {
       attachtags: "string_list",
-      tags: { valueType: "string_list", formula: { op: "union_attach", paths: [] } },
+      tags: { valueType: "string_list", formula: { op: "union", terms: [{ attach: [] }] } },
       items: { array: { children: { name: "string", count: "number" } } },
       traits: { array: { type: "trait" } },
     },
@@ -165,7 +165,7 @@ test("类型引用成环护断：循环类型展开为空", () => {
     character: {
       children: {
         attachtags: "string_list",
-        tags: { valueType: "string_list", formula: { op: "union_attach", paths: [] } },
+        tags: { valueType: "string_list", formula: { op: "union", terms: [{ attach: [] }] } },
         links: { array: { type: "node" } },
       },
     },

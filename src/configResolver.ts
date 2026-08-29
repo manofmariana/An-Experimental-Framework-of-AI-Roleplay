@@ -21,13 +21,16 @@
  * 与旧语义的已知差异（有 env 时才可观察）：旧 agents.*.base_url/model 覆盖优先于 env，
  * 迁移后 env 恒优先于 preset（env 定位为部署级覆盖）。无 env 时逐字段等价。
  *
- * 依赖方向：configResolver → contracts（不依赖 config.ts；AgentKind 与 src/config.ts
- * 同值镜像；迁移等价性对拍基准在 test/harness/legacyConfigResolver）。
+ * 依赖方向：configResolver → contracts（不依赖 config.ts；AgentKind/AGENT_KINDS 唯一定义在
+ * contracts/config.ts，此处 re-export 保持既有 import 方；
+ * 迁移等价性对拍基准在 test/harness/legacyConfigResolver）。
  */
 import {
+  AGENT_KINDS,
   ApiPresetSchema,
   ResolvedAgentConfigSchema,
   UserSettingsSchema,
+  type AgentKind,
   type AgentPresetBindings,
   type ApiPreset,
   type FileConfigPayload,
@@ -36,9 +39,8 @@ import {
 } from "./contracts/config.js";
 import { SecretsFileSchema, type SecretRecord, type SecretsFile } from "./contracts/secrets.js";
 
-/** 三类 agent（与 src/config.ts 的 AgentKind 同值；此处镜像以避免反向依赖）。 */
-export type AgentKind = "character" | "gm" | "prose";
-export const AGENT_KINDS: readonly AgentKind[] = ["character", "gm", "prose"];
+export { AGENT_KINDS } from "./contracts/config.js";
+export type { AgentKind } from "./contracts/config.js";
 
 /** 迁移映射使用的 secret 命名空间（旧 config.json 为 DeepSeek 兼容端点）。 */
 export const MIGRATED_SECRET_KIND = "deepseek";

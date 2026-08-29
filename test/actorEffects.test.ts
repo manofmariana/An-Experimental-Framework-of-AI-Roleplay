@@ -8,7 +8,7 @@ import { LoreStore } from "../src/truth/loreStore.js";
 import type { TruthStores } from "../src/truth/stores.js";
 import { SysStore } from "../src/truth/sysStore.js";
 import type { VarChange } from "../src/truth/varChanges.js";
-import { isNoticeEntry } from "../src/truth/workingSet.js";
+import { isDirectiveEntry, isNoticeEntry } from "../src/truth/workingSet.js";
 import { WorldStore } from "../src/truth/worldStore.js";
 import {
   buildManifest,
@@ -87,7 +87,7 @@ describe("planActorDecision（同一 DecisionPackage：正常与编辑重放产�
     revert(replayed, oldEffects.changes);
     replayed.sys.setPipeline({
       working_set: replayed.sys.pipeline.working_set.filter((e) =>
-        isNoticeEntry(e) ? e.notice.actor !== "C1001" : e.cid !== "C1001",
+        isNoticeEntry(e) ? e.notice.actor !== "C1001" : isDirectiveEntry(e) ? true : e.cid !== "C1001",
       ),
     });
     const replayEffects = planActorDecision(replayed, { cid: "C1001", pkg: pkgNew, rollDice: diceQueue([]) });
@@ -267,7 +267,7 @@ describe("planActorDecision（邀请应答：confirm 接受 / 拒绝两分支）
     revert(replayed, accepted.changes);
     replayed.sys.setPipeline({
       working_set: replayed.sys.pipeline.working_set.filter((e) =>
-        isNoticeEntry(e) ? e.notice.actor !== "C1002" : e.cid !== "C1002",
+        isNoticeEntry(e) ? e.notice.actor !== "C1002" : isDirectiveEntry(e) ? true : e.cid !== "C1002",
       ),
     });
     const replayEffects = planActorDecision(replayed, { cid: "C1002", pkg, invitation, rollDice: diceQueue([]) });

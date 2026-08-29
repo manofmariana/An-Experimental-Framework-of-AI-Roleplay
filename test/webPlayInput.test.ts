@@ -24,6 +24,13 @@ class FakeEl {
   title = "";
   disabled = false;
   readonly children: FakeEl[] = [];
+  style: Record<string, string> = {};
+  readonly dataset: Record<string, string> = {};
+  readonly classList = { toggle: (_cls: string, _on?: boolean) => {} };
+  querySelectorAll(sel: string): FakeEl[] {
+    const tag = sel.toLowerCase();
+    return this.children.filter((c) => c.tag === tag);
+  }
   onclick: ((e?: unknown) => unknown) | null = null;
   oninput: (() => unknown) | null = null;
   onkeydown: ((e?: unknown) => unknown) | null = null;
@@ -88,6 +95,7 @@ function makeView() {
     getCharsIdentity: () => ({ runId: null, worldSetId: "w" }),
     onInputChange: () => {},
     onEnter: () => {},
+    onDirective: () => {},
     onPauseChanged: () => {},
   });
   const root = view.mount() as FakeEl;

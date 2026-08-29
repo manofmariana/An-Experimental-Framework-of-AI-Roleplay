@@ -18,13 +18,15 @@ import { SysStore, type SysFile } from "../../src/truth/sysStore.js";
 import { WorldStore } from "../../src/truth/worldStore.js";
 import type { Event, LoreEntry } from "../../src/types.js";
 import { defaultWorldTimeInstance } from "../../src/vars/systemWorld.js";
+import { evalTagsPool } from "../../src/vars/derived.js";
 import { parseVarsTemplate, type VarsTemplate } from "../../src/vars/template.js";
+import type { InstanceNode } from "../../src/vars/tree.js";
 
 /**
  * 测试变量模板原始形状：world 根 children 覆盖测试用到的世界变量
  * （region.fog/region.harbor.fog/omen/A/hp/fresh）；character 根 = attachtags
- * （固有 TAG 末端，string_list 纯名集合）+ tags（string_list 池，union_attach
- * 空 paths = 仅自身 attachtags）。
+ * （固有 TAG 末端，string_list 纯名集合）+ tags（string_list 池，union terms =
+ * 自身 attachtags ∪ cid/location/channel 系统字段常驻项，与出厂基线同形）。
  */
 export const TEST_VARS_TEMPLATE_RAW = {
   world: {
@@ -39,7 +41,18 @@ export const TEST_VARS_TEMPLATE_RAW = {
   character: {
     children: {
       attachtags: "string_list",
-      tags: { valueType: "string_list", formula: { op: "union_attach", paths: [] as string[] } },
+      tags: {
+        valueType: "string_list",
+        formula: {
+          op: "union",
+          terms: [
+            { attach: [] as string[] },
+            { sys: "cid" },
+            { sys: "location" },
+            { sys: "channel" },
+          ],
+        },
+      },
     },
   },
 };
@@ -112,6 +125,19 @@ export function buildWorldTree(
   return { time: tree };
 }
 
+/** tags 池末端外壳：对象侧附加名 ∪ cid/location/channel 常驻项（按测试模板 union terms 重算；手搭角色夹具的 vars.tags 用，与 fromManifest/saveSet 安全网同口径）。 */
+export function buildTagsPool(
+  attachtags: string[],
+  sys: { cid: string; locationName: string; channel: number | null },
+): { value: string[]; tags: never[] } {
+  const pool = evalTagsPool(
+    { attachtags: { value: attachtags, tags: [] } } as unknown as InstanceNode,
+    buildVarsTemplate().characterVars,
+    sys,
+  );
+  return { value: pool, tags: [] };
+}
+
 /**
  * 角色 manifest（世界设定集 characters/*.json 与 player.json 的统一形状）。
  * id 必填；name 缺省 = id；personality 缺省 "谨慎。"。
@@ -139,9 +165,11 @@ export function buildManifest(overrides: Partial<CharacterManifest> & { id: stri
   };
 }
 
-/** 运行时角色状态（characters.json 条目形状；long_term_memory 为状态专有字段）。 */
+/** 运行时角色状态（characters.json 条目形状；long_term_memory 为状态专有字段）。
+ *  vars 缺省 = attachtags 空壳 + tags 池物化值（按测试模板对合并后状态重算，与
+ *  fromManifest/saveSet 安全网同口径）；overrides.vars 提供时原样采用（调用方负责池一致性）。 */
 export function buildCharacterState(overrides?: Partial<CharacterState>): CharacterState {
-  return {
+  const state: CharacterState = {
     cid: "C0",
     name: "某人",
     gender: "未设定",
@@ -164,6 +192,16 @@ export function buildCharacterState(overrides?: Partial<CharacterState>): Charac
     vars: {},
     ...overrides,
   };
+  if (overrides?.vars === undefined) {
+    const attachtags = { value: [] as string[], tags: [] };
+    const pool = evalTagsPool({ attachtags } as unknown as InstanceNode, buildVarsTemplate().characterVars, {
+      cid: state.cid,
+      locationName: state.location.name,
+      channel: state.channel,
+    });
+    state.vars = { attachtags, tags: { value: pool, tags: [] } };
+  }
+  return state;
 }
 
 /** 角色决策包（fake LLM 脚本队列的 JSON 形状；inner 必填，action/dialogue 至少其一）。 */
@@ -230,14 +268,14 @@ export function buildProjectionHost(
   });
 }
 
-/** 档内提示词文件（prompts.json 载荷形状）：四键齐备、id 与键名一致（空模块列表 + 空占位符目录 = 最小合法）。 */
+/** 档内提示词文件（prompts.json 载荷形状）：矩阵键齐备、id 与键名一致（空模块列表 + 空占位符目录 = 最小合法）。 */
 export function buildPromptsFile(): PromptsFile {
   return {
     templates: {
-      character: { id: "character", modules: [] },
-      gm: { id: "gm", modules: [] },
-      prose: { id: "prose", modules: [] },
-      "gm-incident": { id: "gm-incident", modules: [] },
+      "character.decision": { id: "character.decision", modules: [] },
+      "gm.adjudication": { id: "gm.adjudication", modules: [] },
+      "gm.incident": { id: "gm.incident", modules: [] },
+      "prose.render": { id: "prose.render", modules: [] },
     },
     placeholders: {},
   };

@@ -210,6 +210,7 @@ function normalizeTerminal(
   path: string,
   rootDecl: DeclNode,
   scope?: TagWriteScope,
+  allowSys = false,
 ): TerminalInstance {
   // 原始值/数组 = 末端简写
   if (!isPlainObject(raw)) {
@@ -228,20 +229,27 @@ function normalizeTerminal(
   const tags = raw["tags"] === undefined ? [] : validateTagListWrite(raw["tags"], scope);
   const instance: TerminalInstance = { value, tags };
   if (raw["formula"] !== undefined) {
-    instance.formula = validateFormulaSpec(raw["formula"] as RawFormula, decl.valueType, rootDecl, path);
+    instance.formula = validateFormulaSpec(raw["formula"] as RawFormula, decl.valueType, rootDecl, path, allowSys);
   }
   return instance;
 }
 
-function normalize(raw: unknown, decl: DeclNode, path: string, rootDecl: DeclNode, scope?: TagWriteScope): InstanceNode {
+function normalize(
+  raw: unknown,
+  decl: DeclNode,
+  path: string,
+  rootDecl: DeclNode,
+  scope?: TagWriteScope,
+  allowSys = false,
+): InstanceNode {
   if (decl.kind === "terminal") {
-    return normalizeTerminal(raw, decl, path, rootDecl, scope);
+    return normalizeTerminal(raw, decl, path, rootDecl, scope, allowSys);
   }
   if (decl.kind === "array") {
     if (!Array.isArray(raw)) {
       throw new Error(`结构化数组实例必须是数组（路径 "${path}"）`);
     }
-    return raw.map((el, i) => normalize(el, decl.element, `${path}[${i}]`, rootDecl, scope));
+    return raw.map((el, i) => normalize(el, decl.element, `${path}[${i}]`, rootDecl, scope, allowSys));
   }
   if (!isPlainObject(raw)) {
     throw new Error(`容器实例必须是对象（路径 "${path}"）`);
@@ -252,7 +260,7 @@ function normalize(raw: unknown, decl: DeclNode, path: string, rootDecl: DeclNod
     if (childDecl === undefined) {
       throw new Error(`实例含未声明的键（路径 "${path === "" ? key : `${path}.${key}`}"）`);
     }
-    out[key] = normalize(value, childDecl, path === "" ? key : `${path}.${key}`, rootDecl, scope);
+    out[key] = normalize(value, childDecl, path === "" ? key : `${path}.${key}`, rootDecl, scope, allowSys);
   }
   return out;
 }
@@ -261,9 +269,16 @@ function normalize(raw: unknown, decl: DeclNode, path: string, rootDecl: DeclNod
  * 简写展开 + 模板对拍：无声明有实例 = 抛错（消息带路径）；有声明无实例 = 合法
  * （跳过，不出现在产物中）。rootDecl 同时作为实例外壳 formula 的同根解析基准。
  * scope 提供时末端外壳 tags 顺带做名称校验（直编/容器整体写入通道；缺省 = 只验形状）。
+ * allowSys = 实例外壳 formula 的 union sys 项放行闸（仅 character 根调用方传 true）。
  */
-export function normalizeInstance(rawNode: unknown, declNode: DeclNode, path: string, scope?: TagWriteScope): InstanceNode {
-  return normalize(rawNode, declNode, path, declNode, scope);
+export function normalizeInstance(
+  rawNode: unknown,
+  declNode: DeclNode,
+  path: string,
+  scope?: TagWriteScope,
+  allowSys = false,
+): InstanceNode {
+  return normalize(rawNode, declNode, path, declNode, scope, allowSys);
 }
 
 // ---------------------------------------------------------------------------

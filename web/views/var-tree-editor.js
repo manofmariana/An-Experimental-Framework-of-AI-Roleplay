@@ -228,7 +228,12 @@ export function createVarTreeEditor({ el, model, scrollHost, onEdit }) {
       const binds = Object.entries(f.binds).map(([k, p]) => `${k}=${p}`).join("，");
       return `ƒ ${f.expr}${binds ? `（${binds}）` : ""}`;
     }
-    return `ƒ union_attach(${f.paths.join(", ")})`;
+    const parts = [];
+    if (f.hasAttach) parts.push(`union_attach(${f.paths.join(", ")})`);
+    if (f.sys.cid) parts.push("get_cid()");
+    if (f.sys.location) parts.push("get_location()");
+    if (f.sys.channel) parts.push("get_channel()");
+    return `ƒ ${parts.join(" + ")}`;
   }
 
   // ---- 行内表单 ---------------------------------------------------------------

@@ -30,7 +30,7 @@ function proseHost(): RenderHost {
 describe("prose 输入", () => {
   it("模板不含 GM 公共长期记忆与 voice anchors", () => {
     const catalog = loadPackPlaceholders(FACTORY_WORLD_DIR);
-    const template = loadPackPrompts(FACTORY_WORLD_DIR, catalog).find((tpl) => tpl.id === "prose")!;
+    const template = loadPackPrompts(FACTORY_WORLD_DIR, catalog).find((tpl) => tpl.id === "prose.render")!;
     const text = renderPrompt(template, catalog, proseHost()).map((message) => message.content).join("\n");
     assert.ok(!text.includes("voice_anchor") && !text.includes("声纹锚点"));
     const used = template.modules.flatMap((mod) => extractPlaceholders(mod.content));

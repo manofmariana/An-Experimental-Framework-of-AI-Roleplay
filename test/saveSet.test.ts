@@ -196,3 +196,28 @@ describe("validateSaveSet（lore）", () => {
     expectInvariant(save, /lore changelog seq 必须为整数/);
   });
 });
+
+describe("validateSaveSet（tags 池安全网）", () => {
+  it("池与档内模板重算值不一致 → invariant（写路径漏挂当场报错）", () => {
+    const save = buildSaveSet({
+      characters: {
+        C0: buildCharacterState({
+          isPlayer: true,
+          vars: { attachtags: { value: [], tags: [] }, tags: { value: ["stale"], tags: [] } },
+        }),
+      },
+    });
+    expectInvariant(save, /角色 C0 的 tags 池与档内模板重算值不一致/);
+  });
+
+  it("池缺 tags 末端 → invariant", () => {
+    const save = buildSaveSet({ characters: { C0: buildCharacterState({ isPlayer: true, vars: {} }) } });
+    expectInvariant(save, /tags 池/);
+  });
+
+  it("池含 attachtags/cid/location/channel 且与重算一致 → 通过（含持频道）", () => {
+    const c0 = buildCharacterState({ isPlayer: true, channel: 7 });
+    assert.deepEqual(c0.vars["tags"], { value: ["C0", "loc", "7"], tags: [] });
+    assert.doesNotThrow(() => validateSaveSet(buildSaveSet({ characters: { C0: c0 } })));
+  });
+});

@@ -33,7 +33,7 @@ describe("结构化年月日时间（world.time 系统分支纯函数）", () =>
     assert.throws(() => TimeAnchorSchema.parse({ y: -1, m: 1, d: 1, h: 0, min: 0 }));
     assert.throws(() => TimeAnchorSchema.parse({ y: 0, m: 0, d: 1, h: 0, min: 0 }));
   });
-  it("存档版本字面量锚定（结构/口径变更须随版本闸递增）", () => assert.equal(SAVE_SCHEMA_VERSION, 16));
+  it("存档版本字面量锚定（结构/口径变更须随版本闸递增）", () => assert.equal(SAVE_SCHEMA_VERSION, 18));
   it("初始时间实例 = 代码缺省锚与时段表，readWorldTime 回读一致", () => {
     const { anchor, periods } = readWorldTime({ time: defaultWorldTimeInstance() });
     assert.deepEqual(anchor, DEFAULT_TIME_ANCHOR);

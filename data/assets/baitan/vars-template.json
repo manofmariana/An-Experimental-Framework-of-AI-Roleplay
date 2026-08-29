@@ -8,8 +8,13 @@
       "tags": {
         "valueType": "string_list",
         "formula": {
-          "op": "union_attach",
-          "paths": []
+          "op": "union",
+          "terms": [
+            { "attach": [] },
+            { "sys": "cid" },
+            { "sys": "location" },
+            { "sys": "channel" }
+          ]
         }
       },
       "stats": {

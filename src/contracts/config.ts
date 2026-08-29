@@ -8,6 +8,13 @@ import { z } from "zod";
 import { SecretKindSchema, SecretMutationSchema, SecretStateSchema } from "./secrets.js";
 
 // ---------------------------------------------------------------------------
+// activation 对象枚举（提示词矩阵对象轴）
+// ---------------------------------------------------------------------------
+/** 三类 activation（每类独立 adapter/preset 绑定）；唯一出处，config.ts 与 configResolver.ts re-export。 */
+export const AGENT_KINDS = ["character", "gm", "prose"] as const;
+export type AgentKind = (typeof AGENT_KINDS)[number];
+
+// ---------------------------------------------------------------------------
 // config.json 文件形状（迁移闸读取源）
 // 顶层 passthrough——未知字段（如 "_说明" 注释）原样保留；agents/memory 块 strict——
 // 未知 agent / 块内未知字段即拒。

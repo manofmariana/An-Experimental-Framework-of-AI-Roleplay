@@ -5,14 +5,14 @@ import { renderPrompt } from "../src/compile/render.js";
 import type { PromptTemplate } from "../src/compile/template.js";
 import type { TruthStores } from "../src/truth/stores.js";
 import type { WorkingSetEntry } from "../src/truth/workingSet.js";
-import { buildCharacterState, buildProjectionHost, buildTruthStores } from "./builders/index.js";
+import { buildCharacterState, buildProjectionHost, buildTagsPool, buildTruthStores } from "./builders/index.js";
 
 // ---------------------------------------------------------------------------
 // 频道三档可见域集成测试（P2-3 出口，测试夹具占位符）：
 // 言行条目可见域字段（A = 只对同频道 / B = 只对同地 / 缺省 = 组内全体）× 三类读者
 // （频道内 / 同地不在频道 / 失聪），挂载 = 程序按焊死映射渲染时派生：
 // 发言 {aud@1, vis@1}（同级取或）、字段 A 追加 频道@2 + {A@3, V@3}、字段 B 追加 地点@2。
-// 读者有效 TAG 集 = 落盘池 ∪ 自身 cid ∪ 地点名 ∪ 频道编号 ∪ 工具 AV 临时挂载。
+// 读者有效 TAG 集 = 落盘池（自身 cid / 地点名 / 频道编号常驻）∪ 工具 AV 临时挂载。
 // ---------------------------------------------------------------------------
 
 const DEFAULT_SPEECH = "大家都能听到的话。";
@@ -55,7 +55,8 @@ const TEMPLATE: PromptTemplate = {
   ],
 };
 
-/** 场景：C1001（loc_A，频道 5）三条可见域各异的言行；读者 = 频道内（异地）/同地不在频道/失聪。 */
+/** 场景：C1001（loc_A，频道 5）三条可见域各异的言行；读者 = 频道内（异地）/同地不在频道/失聪。
+ *  池 = 附加名 ∪ cid/地点/频道常驻项（与测试模板 union terms 同口径）。 */
 function makeTruth(): TruthStores {
   const truth = buildTruthStores({
     characters: {
@@ -63,30 +64,30 @@ function makeTruth(): TruthStores {
         isPlayer: true,
         appearance: true,
         location: { name: "loc_A", level: 1 },
-        vars: { tags: { value: ["aud", "vis"], tags: [] } },
+        vars: { tags: buildTagsPool(["aud", "vis"], { cid: "C0", locationName: "loc_A", channel: null }) },
       }),
       C1001: buildCharacterState({
         appearance: true,
         location: { name: "loc_A", level: 1 },
         channel: 5,
-        vars: { tags: { value: ["aud", "vis"], tags: [] } },
+        vars: { tags: buildTagsPool(["aud", "vis"], { cid: "C1001", locationName: "loc_A", channel: 5 }) },
       }),
       C1002: buildCharacterState({
         appearance: true,
         location: { name: "loc_B", level: 1 },
         channel: 5,
-        vars: { tags: { value: ["aud", "vis"], tags: [] } },
+        vars: { tags: buildTagsPool(["aud", "vis"], { cid: "C1002", locationName: "loc_B", channel: 5 }) },
       }),
       C1003: buildCharacterState({
         appearance: true,
         location: { name: "loc_A", level: 1 },
-        vars: { tags: { value: ["aud", "vis"], tags: [] } },
+        vars: { tags: buildTagsPool(["aud", "vis"], { cid: "C1003", locationName: "loc_A", channel: null }) },
       }),
       // 失聪读者：落盘池只持 vis（同地、不在频道）
       C1004: buildCharacterState({
         appearance: true,
         location: { name: "loc_A", level: 1 },
-        vars: { tags: { value: ["vis"], tags: [] } },
+        vars: { tags: buildTagsPool(["vis"], { cid: "C1004", locationName: "loc_A", channel: null }) },
       }),
     },
   });

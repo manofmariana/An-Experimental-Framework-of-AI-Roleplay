@@ -7,8 +7,9 @@
  * 真相段：deltas 落库 + durations（时长 → 到期时刻 timer 变量）/location 应用 + 周期计数/
  * 触发复位 + 结算成员 acted 清零 + reconcileGroups 回写 group 与先攻补投 + 频道清理
  * pass + 事件逐条 commit（ID 经注入分配器，调用方只在 commit 成功后推进水位）+
- * 无 timer 校验 + **工作集清算**（GM 转写后言行已入事件库；narrativity=skip 无正文步，
- * 工作集不能挂账）。
+ * 无 timer 校验 + **工作集清算**（GM 转写后言行已入事件库；narrativity ≠ skip 时
+ * 豁免指令条目——正文取数不走工作集，写作指令须活到 prose 步；narrativity=skip
+ * 无正文步，指令条目一并全清）。
  *
  * 规划器只变异传入的 draft（或 live）视图并返回常规 VarChange[] 与本步提交的事件，
  * 永不持久化；提交由调用方负责。
@@ -18,6 +19,7 @@ import type { TruthStores } from "../truth/stores.js";
 import type { VarChange } from "../truth/varChanges.js";
 import { parseSys } from "../truth/sysStore.js";
 import { applyVarDeltas, varWriteDepsOf } from "../truth/varWrite.js";
+import { isDirectiveEntry } from "../truth/workingSet.js";
 import { spanToMinutes, type AdjudicationPackage, type Event } from "../types.js";
 import { cleanupChannels, playableCharacters, rederiveGroups, setAppearance } from "./scheduleEffects.js";
 
@@ -107,7 +109,12 @@ export function planGmAdjudication(draft: TruthStores, ctx: GmAdjudicationContex
       console.warn(`GM 裁决后 ${cid} 无计时器（durations 须覆盖本轮全部行动者）`);
     }
   }
-  // 工作集清算（改到 GM 步，不再等正文步）
-  draft.sys.setPipeline({ working_set: [] });
+  // 工作集清算（改到 GM 步，不再等正文步）：narrativity ≠ skip 时豁免指令条目
+  //（正文读者的场景文本不走工作集，写作指令须活到 prose 步）；narrativity = skip
+  //（无正文步）全清，指令含在内
+  draft.sys.setPipeline({
+    working_set:
+      pkg.narrativity === "skip" ? [] : draft.sys.pipeline.working_set.filter(isDirectiveEntry),
+  });
   return { changes, committed };
 }

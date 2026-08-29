@@ -46,3 +46,48 @@ describe("CharactersStore 同构角色文件", () => {
     );
   });
 });
+
+describe("setVars 系统字段级联 tags 池", () => {
+  it("建角物化池 = attachtags ∪ cid/location/channel 常驻项（channel null = 空集）", () => {
+    const store = CharactersStore.fromManifests([manifest()], 1000, DECL);
+    assert.deepEqual(store.tagNames("C1001"), ["C1001", "灯塔"]);
+  });
+
+  it("location 变化 → 池重算并追加 VarChange；回溯恢复池旧值", () => {
+    const store = CharactersStore.fromManifests([manifest()], 1000, DECL);
+    const changes = store.setVars("C1001", { location: { name: "集市", level: 1 } });
+    assert.deepEqual(store.tagNames("C1001"), ["C1001", "集市"]);
+    const poolChange = changes.find((c) => c.path === "characters.C1001.vars.tags");
+    assert.ok(poolChange, "池变更追加 VarChange");
+    assert.deepEqual(poolChange.before, { value: ["C1001", "灯塔"], tags: [] });
+    assert.deepEqual(poolChange.after, { value: ["C1001", "集市"], tags: [] });
+    for (const change of [...changes].reverse()) store.revertChange(change);
+    assert.deepEqual(store.tagNames("C1001"), ["C1001", "灯塔"], "回溯恢复池旧值");
+    assert.deepEqual(store.get("C1001").location, { name: "灯塔", level: 1 });
+  });
+
+  it("channel 建立/挂断 → 池增减频道号；location 同名（仅 level 变）→ 池不变不追加", () => {
+    const store = CharactersStore.fromManifests([manifest()], 1000, DECL);
+    const up = store.setVars("C1001", { channel: 7 });
+    assert.deepEqual(store.tagNames("C1001"), ["C1001", "灯塔", "7"]);
+    assert.ok(up.some((c) => c.path === "characters.C1001.vars.tags"), "频道建立 → 池追加 VarChange");
+    const noop = store.setVars("C1001", { location: { name: "灯塔", level: 2 } });
+    assert.deepEqual(store.tagNames("C1001"), ["C1001", "灯塔", "7"]);
+    assert.ok(!noop.some((c) => c.path === "characters.C1001.vars.tags"), "池值不变不追加 VarChange");
+    store.setVars("C1001", { channel: null });
+    assert.deepEqual(store.tagNames("C1001"), ["C1001", "灯塔"]);
+  });
+
+  it("只动 timer → 池不重算无 VarChange", () => {
+    const store = CharactersStore.fromManifests([manifest()], 1000, DECL);
+    const changes = store.setVars("C1001", { timer: 1200 });
+    assert.deepEqual(changes.map((c) => c.path), ["characters.C1001.timer"]);
+    assert.deepEqual(store.tagNames("C1001"), ["C1001", "灯塔"]);
+  });
+
+  it("未持有模板（characterDecl 缺省）→ setVars 不重算池（提交边界由存档安全网兜底）", () => {
+    const store = new CharactersStore({ C1001: CharactersStore.fromManifests([manifest()], 1000, DECL).get("C1001") });
+    const changes = store.setVars("C1001", { location: { name: "集市", level: 1 } });
+    assert.ok(!changes.some((c) => c.path.endsWith("vars.tags")));
+  });
+});

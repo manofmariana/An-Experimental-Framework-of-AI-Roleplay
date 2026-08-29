@@ -15,10 +15,10 @@ const t = (id: string, content = `${id}内容`): PromptTemplate => ({
 function sampleFile(): PromptsFile {
   return {
     templates: {
-      character: t("character"),
-      gm: t("gm"),
-      prose: t("prose"),
-      "gm-incident": t("gm-incident"),
+      "character.decision": t("character.decision"),
+      "gm.adjudication": t("gm.adjudication"),
+      "prose.render": t("prose.render"),
+      "gm.incident": t("gm.incident"),
     },
     placeholders: {},
   };
@@ -33,7 +33,7 @@ describe("PromptsFileSchema（prompts.json 文件 codec）", () => {
 
   it("缺键 / 多键拒装", () => {
     const missing = sampleFile();
-    delete (missing.templates as Record<string, unknown>)["gm-incident"];
+    delete (missing.templates as Record<string, unknown>)["gm.incident"];
     assert.throws(() => PromptsFileSchema.parse(missing));
 
     const extra = JSON.parse(JSON.stringify(sampleFile())) as PromptsFile;
@@ -76,7 +76,7 @@ describe("PromptsFileSchema（prompts.json 文件 codec）", () => {
 
   it("模板 id 与键名不符拒装", () => {
     const file = sampleFile();
-    file.templates.gm = t("character");
+    file.templates["gm.adjudication"] = t("character.decision");
     assert.throws(() => PromptsFileSchema.parse(file), /与键名/);
   });
 
@@ -88,28 +88,28 @@ describe("PromptsFileSchema（prompts.json 文件 codec）", () => {
 });
 
 describe("PromptsStore（档内副本；纯内存容器）", () => {
-  it("initFrom 拷入四份模板（只动副本），按 id 取模板", () => {
-    const source = [t("character"), t("gm"), t("prose"), t("gm-incident")];
+  it("initFrom 拷入矩阵全量模板（只动副本），按 id 取模板", () => {
+    const source = [t("character.decision"), t("gm.adjudication"), t("prose.render"), t("gm.incident")];
     const store = PromptsStore.initFrom(source, {});
     for (const id of PROMPT_TEMPLATE_IDS) {
       assert.equal(store.template(id).id, id);
     }
     // 档内变更不影响传入对象
-    store.replaceTemplate(t("gm", "gm改后"));
-    assert.equal(source[1]!.modules[0]!.content, "gm内容");
+    store.replaceTemplate(t("gm.adjudication", "gm改后"));
+    assert.equal(source[1]!.modules[0]!.content, "gm.adjudication内容");
   });
 
-  it("initFrom 缺份即拒（四键齐备口径与 codec 一致）", () => {
-    assert.throws(() => PromptsStore.initFrom([t("character"), t("gm"), t("prose")], {}));
+  it("initFrom 缺份即拒（矩阵键齐备口径与 codec 一致）", () => {
+    assert.throws(() => PromptsStore.initFrom([t("character.decision"), t("gm.adjudication"), t("prose.render")], {}));
   });
 
   it("replaceTemplate 按 id 整体替换单份；未知 id 拒绝", () => {
     const store = new PromptsStore(sampleFile());
-    store.replaceTemplate(t("prose", "prose改后"));
-    assert.equal(store.template("prose").modules[0]!.content, "prose改后");
-    assert.equal(store.template("gm").modules[0]!.content, "gm内容", "其余模板不动");
+    store.replaceTemplate(t("prose.render", "prose改后"));
+    assert.equal(store.template("prose.render").modules[0]!.content, "prose改后");
+    assert.equal(store.template("gm.adjudication").modules[0]!.content, "gm.adjudication内容", "其余模板不动");
     assert.throws(() => store.replaceTemplate(t("npc")), /未知模板 id/);
-    assert.throws(() => store.replaceTemplate({ id: "gm" }), "结构非法拒绝");
+    assert.throws(() => store.replaceTemplate({ id: "gm.adjudication" }), "结构非法拒绝");
   });
 
   it("replacePlaceholders 整份替换目录（分支记号集随写入规范化）；结构非法拒绝且原目录不动", () => {
@@ -143,13 +143,13 @@ describe("PromptsStore（档内副本；纯内存容器）", () => {
   it("clone 语义：构造深拷贝（改源数据不影响 Store），saveData/restoreData 回环", () => {
     const file = sampleFile();
     const store = new PromptsStore(file);
-    file.templates.gm = t("gm", "源改后");
-    assert.equal(store.template("gm").modules[0]!.content, "gm内容", "构造已深拷贝");
+    file.templates["gm.adjudication"] = t("gm.adjudication", "源改后");
+    assert.equal(store.template("gm.adjudication").modules[0]!.content, "gm.adjudication内容", "构造已深拷贝");
 
     const restored = new PromptsStore(sampleFile());
-    restored.replaceTemplate(t("gm", "gm改后"));
+    restored.replaceTemplate(t("gm.adjudication", "gm改后"));
     restored.restoreData(store.saveData());
-    assert.equal(restored.template("gm").modules[0]!.content, "gm内容", "restoreData 内容替换");
+    assert.equal(restored.template("gm.adjudication").modules[0]!.content, "gm.adjudication内容", "restoreData 内容替换");
     assert.deepEqual(new PromptsStore(restored.saveData()).saveData(), store.saveData(), "saveData 回环");
   });
 });

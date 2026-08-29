@@ -14,7 +14,7 @@ import {
   type WorkingSetSpeechEntry,
 } from "../src/truth/workingSet.js";
 import { DecisionPackageSchema, type DecisionPackage } from "../src/types.js";
-import { buildCharacterState, buildDecision, buildProjectionHost, buildTruthStores } from "./builders/index.js";
+import { buildCharacterState, buildDecision, buildProjectionHost, buildTagsPool, buildTruthStores } from "./builders/index.js";
 
 // ---------------------------------------------------------------------------
 // 标记通知注入集成测试（P2-3 出口）：
@@ -27,15 +27,23 @@ function decision(overrides?: Record<string, unknown>): DecisionPackage {
   return DecisionPackageSchema.parse(buildDecision(overrides));
 }
 
-function makeTruth(c0Pool: string[] = ["aud", "vis"]): TruthStores {
+/** 池 = 附加名 ∪ cid/地点/频道常驻项（与测试模板 union terms 同口径；C1002 异地 loc_B）。 */
+function makeTruth(c0Attach: string[] = ["aud", "vis"]): TruthStores {
   return buildTruthStores({
     characters: {
-      C0: buildCharacterState({ isPlayer: true, appearance: true, vars: { tags: { value: c0Pool, tags: [] } } }),
-      C1001: buildCharacterState({ appearance: true, vars: { tags: { value: ["aud", "vis"], tags: [] } } }),
+      C0: buildCharacterState({
+        isPlayer: true,
+        appearance: true,
+        vars: { tags: buildTagsPool(c0Attach, { cid: "C0", locationName: "loc", channel: null }) },
+      }),
+      C1001: buildCharacterState({
+        appearance: true,
+        vars: { tags: buildTagsPool(["aud", "vis"], { cid: "C1001", locationName: "loc", channel: null }) },
+      }),
       C1002: buildCharacterState({
         appearance: true,
         location: { name: "loc_B", level: 1 },
-        vars: { tags: { value: ["aud", "vis"], tags: [] } },
+        vars: { tags: buildTagsPool(["aud", "vis"], { cid: "C1002", locationName: "loc_B", channel: null }) },
       }),
     },
   });

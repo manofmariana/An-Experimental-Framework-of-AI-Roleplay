@@ -1,5 +1,5 @@
 {
-  "id": "prose",
+  "id": "prose.render",
   "modules": [
     {
       "key": "protocol",
@@ -35,6 +35,11 @@
       "key": "gm_turn",
       "role": "user",
       "content": "# 本轮裁决事件包\n{{gm_event}}\n\n# 本轮各角色台词与内心\n{{current_scene}}"
+    },
+    {
+      "key": "writing_directive",
+      "role": "user",
+      "content": "# 写作指令（玩家对正文文风/写法的元层指令，本轮有效，尽力服从；与本模板既有要求冲突时模板优先）\n{{writing_directive}}"
     },
     {
       "key": "思考",

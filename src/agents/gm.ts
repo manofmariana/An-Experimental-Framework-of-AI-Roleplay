@@ -2,7 +2,7 @@ import { renderPrompt, type RenderHost } from "../compile/render.js";
 import { validateTemplate } from "../compile/template.js";
 import type { Display } from "../display.js";
 import type { ChatPort } from "../llm/chatPort.js";
-import type { PromptsStore } from "../truth/promptsStore.js";
+import { PROMPT_MATRIX, type PromptsStore } from "../truth/promptsStore.js";
 import { AdjudicationPackageSchema, IncidentPackageSchema, spanToMinutes, type AdjudicationPackage, type IncidentPackage } from "../types.js";
 import { validateTagListWrite, type TagWriteScope } from "../vars/tree.js";
 import { extractJson } from "./json.js";
@@ -36,7 +36,7 @@ export class GmActivation {
   readonly agentName = "gm";
   constructor(private llm: ChatPort, private prompts: PromptsStore) {}
 
-  private messagesFor(templateId: "gm" | "gm-incident", host: RenderHost) {
+  private messagesFor(templateId: (typeof PROMPT_MATRIX.gm)[keyof typeof PROMPT_MATRIX.gm], host: RenderHost) {
     const catalog = this.prompts.placeholders();
     const template = validateTemplate(this.prompts.template(templateId), Object.keys(catalog));
     return renderPrompt(template, catalog, host);
@@ -46,7 +46,7 @@ export class GmActivation {
    *  eventTagScope = 事件 tags 名称校验上下文（档内注册表类别化口径：注册名 ∪ cid 现存实例 ∪ channel/location 声明；
    *  等级范围由 schema 机检；不合法走解析失败重试通道） */
   async adjudicate(host: RenderHost, turn: number, expectedDurationCids: readonly string[], eventTagScope: TagWriteScope, signal: AbortSignal, display?: Display): Promise<{ raw: string; pkg: AdjudicationPackage }> {
-    const messages = this.messagesFor("gm", host);
+    const messages = this.messagesFor(PROMPT_MATRIX.gm.adjudication, host);
     return runStructuredActivation<AdjudicationPackage>({
       port: this.llm, agentName: this.agentName, seq: turn, messages, signal,
       ...(display !== undefined ? { display } : {}),
@@ -62,10 +62,10 @@ export class GmActivation {
 
   /**
    * 突发 GM：slim 契约（事件文本 + 可选 deltas），独立轻校验，不复用 durations 覆盖校验。
-   * 同一身份（同一 ChatPort/预设/全知视野），只是换用 gm-incident 提示词组。
+   * 同一身份（同一 ChatPort/预设/全知视野），只是换用矩阵 gm.incident 功能组。
    */
   async adjudicateIncident(host: RenderHost, turn: number, signal: AbortSignal, display?: Display): Promise<{ raw: string; pkg: IncidentPackage }> {
-    const messages = this.messagesFor("gm-incident", host);
+    const messages = this.messagesFor(PROMPT_MATRIX.gm.incident, host);
     return runStructuredActivation<IncidentPackage>({
       port: this.llm, agentName: this.agentName, seq: turn, messages, signal,
       ...(display !== undefined ? { display } : {}),

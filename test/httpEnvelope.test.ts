@@ -483,9 +483,12 @@ describe("prompts 域", () => {
     assert.ok(catalog.some((p) => p.key === "events" && p.source === undefined), "events 条目 = 落盘根路由（无 source）");
     // 缺省包（baitan）不在 harness 资产根 → 404 WORLD_SET_NOT_FOUND
     failCode(await callApi(h.port, "GET", "/api/prompts/placeholders"), 404, "WORLD_SET_NOT_FOUND");
-    // ?set=w 命中 harness 包（setupWorld 已拷入四份模板）→ 200 四模板（含 gm-incident 突发变体）
-    const templates = okData<{ id: string }[]>(await callApi(h.port, "GET", "/api/prompts?set=w"));
-    assert.deepEqual(templates.map((tpl) => tpl.id), ["character", "gm", "prose", "gm-incident"]);
+    // ?set=w 命中 harness 包（setupWorld 已拷入矩阵全量模板）→ 200 {templates, matrix}
+    const listed = okData<{ templates: { id: string }[]; matrix: Record<string, string[]> }>(
+      await callApi(h.port, "GET", "/api/prompts?set=w"),
+    );
+    assert.deepEqual(listed.templates.map((tpl) => tpl.id), ["character.decision", "gm.adjudication", "gm.incident", "prose.render"]);
+    assert.deepEqual(listed.matrix, { character: ["decision"], gm: ["adjudication", "incident"], prose: ["render"] });
     // 不存在的包 → 404 WORLD_SET_NOT_FOUND
     failCode(await callApi(h.port, "GET", "/api/prompts?set=nope"), 404, "WORLD_SET_NOT_FOUND");
     // 包存在但无 prompts/ 模板文件 → 未预期 fs 错误映射 500（不再一律 400）
@@ -494,37 +497,39 @@ describe("prompts 域", () => {
     failCode(await callApi(h.port, "PUT", "/api/prompts/npc?set=w", { id: "npc", modules: [] }), 400, "VALIDATION_ERROR");
   });
 
-  it("有活跃会话：GET 读档内副本、PUT 经直编通道写档内（revision 前移 + transition 广播）；gm-incident 可读写", async (t) => {
+  it("有活跃会话：GET 读档内副本、PUT 经直编通道写档内（revision 前移 + transition 广播）；gm.incident 可读写", async (t) => {
     const h = await serverHarness(t);
     const ws = await h.connect();
     ws.send({ type: "new_session", worldSetId: "w", requestId: "r-new" });
     await ws.waitFor((m) => m.type === "snapshot");
 
-    // GET 档内副本（四份齐备，与包基线同源拷入）
-    const before = okData<{ id: string; modules: { key: string }[] }[]>(await callApi(h.port, "GET", "/api/prompts"));
-    assert.deepEqual(before.map((tpl) => tpl.id), ["character", "gm", "prose", "gm-incident"]);
+    // GET 档内副本（矩阵全量齐备，与包基线同源拷入）
+    const before = okData<{ templates: { id: string; modules: { key: string }[] }[]; matrix: Record<string, string[]> }>(
+      await callApi(h.port, "GET", "/api/prompts"),
+    ).templates;
+    assert.deepEqual(before.map((tpl) => tpl.id), ["character.decision", "gm.adjudication", "gm.incident", "prose.render"]);
     const revisionBefore = h.coordinator.currentRevision;
 
-    // PUT gm-incident：走 mutation 通道落档内副本（包基线文件不变）
-    const incident = before.find((tpl) => tpl.id === "gm-incident")!;
+    // PUT gm.incident（路径参数带点号，router 段匹配直收）：走 mutation 通道落档内副本（包基线文件不变）
+    const incident = before.find((tpl) => tpl.id === "gm.incident")!;
     const edited = { ...incident, modules: [...incident.modules, { key: "added", role: "system", content: "追加模块" }] };
-    const put = await callApi(h.port, "PUT", "/api/prompts/gm-incident", edited);
+    const put = await callApi(h.port, "PUT", "/api/prompts/gm.incident", edited);
     assert.equal(put.status, 200);
     assert.ok((h.coordinator.currentRevision ?? 0) > (revisionBefore ?? 0), "档内写入应推进 revision");
     await ws.waitFor((m) => m.type === "transition" && m.reason === "admin_edit");
 
-    const after = okData<{ id: string; modules: { key: string }[] }[]>(await callApi(h.port, "GET", "/api/prompts"));
-    const afterIncident = after.find((tpl) => tpl.id === "gm-incident")!;
+    const after = okData<{ templates: { id: string; modules: { key: string }[] }[] }>(await callApi(h.port, "GET", "/api/prompts")).templates;
+    const afterIncident = after.find((tpl) => tpl.id === "gm.incident")!;
     assert.ok(afterIncident.modules.some((m) => m.key === "added"), "档内副本已更新");
     // 包基线文件未被污染
     const packRaw = JSON.parse(
-      fs.readFileSync(path.join(h.dirs.assetsDir, "w", "prompts", "gm-incident.prompt.json"), "utf8"),
+      fs.readFileSync(path.join(h.dirs.assetsDir, "w", "prompts", "gm.incident.prompt.json"), "utf8"),
     ) as { modules: { key: string }[] };
     assert.ok(!packRaw.modules.some((m) => m.key === "added"), "包基线不被档内编辑污染");
 
     // PUT 未知占位符 → 400（档内模式同样过注册表校验）
     failCode(
-      await callApi(h.port, "PUT", "/api/prompts/gm", { id: "gm", modules: [{ key: "m", role: "system", content: "{{nope}}" }] }),
+      await callApi(h.port, "PUT", "/api/prompts/gm.adjudication", { id: "gm.adjudication", modules: [{ key: "m", role: "system", content: "{{nope}}" }] }),
       400,
       "VALIDATION_ERROR",
     );

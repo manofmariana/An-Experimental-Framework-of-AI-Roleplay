@@ -46,7 +46,7 @@ function makeTemplate() {
     character: {
       children: {
         attachtags: "string_list",
-        tags: { valueType: "string_list", formula: { op: "union_attach", paths: [] } },
+        tags: { valueType: "string_list", formula: { op: "union", terms: [{ attach: [] }] } },
         mood: "string",
       },
     },

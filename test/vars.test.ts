@@ -18,7 +18,7 @@ import {
   type InstanceNode,
   type TagMount,
 } from "../src/vars/tree.js";
-import { buildDerivedPlan, buildRootDerivedPlan, evalDerived, evalDerivedTarget, unionAttach } from "../src/vars/derived.js";
+import { buildDerivedPlan, buildRootDerivedPlan, evalDerived, evalDerivedTarget, unionTerms } from "../src/vars/derived.js";
 
 // ---------------------------------------------------------------------------
 // 测试基建
@@ -36,7 +36,7 @@ const TEMPLATE_RAW = {
   character: {
     children: {
       attachtags: "string_list",
-      tags: { valueType: "string_list", formula: { op: "union_attach", paths: ["inventory"] } },
+      tags: { valueType: "string_list", formula: { op: "union", terms: [{ attach: ["inventory"] }] } },
       hp: "number",
       inventory: {
         children: {
@@ -58,11 +58,11 @@ const TEMPLATE_RAW = {
 
 const TPL: VarsTemplate = parseVarsTemplate(TEMPLATE_RAW);
 
-/** 合法 character 根（保留名齐；inv 容器供 union_attach 指）。 */
+/** 合法 character 根（保留名齐；inv 容器供 union attach 项指）。 */
 const VALID_CHARACTER = {
   children: {
     attachtags: "string_list",
-    tags: { valueType: "string_list", formula: { op: "union_attach", paths: ["inv"] } },
+    tags: { valueType: "string_list", formula: { op: "union", terms: [{ attach: ["inv"] }] } },
     inv: { children: { x: "number" } },
   },
 };
@@ -218,7 +218,7 @@ describe("parseVarsTemplate", () => {
     );
   });
 
-  it("union_attach paths 解析到末端 = 拒绝；指向数组 = 合法", () => {
+  it("union attach 路径解析到末端 = 拒绝；指向数组 = 合法", () => {
     assert.throws(
       () =>
         parseVarsTemplate(
@@ -227,25 +227,89 @@ describe("parseVarsTemplate", () => {
               children: {
                 attachtags: "string_list",
                 hp: "number",
-                tags: { valueType: "string_list", formula: { op: "union_attach", paths: ["hp"] } },
+                tags: { valueType: "string_list", formula: { op: "union", terms: [{ attach: ["hp"] }] } },
               },
             },
           }),
         ),
       /必须解析到容器\/数组声明/,
     );
-    // 数组是合法 union_attach 子树
+    // 数组是合法 union attach 子树
     const tpl = parseVarsTemplate({
       world: { children: {} },
       character: {
         children: {
           attachtags: "string_list",
           bag: { array: { children: { attachtags: "string_list" } } },
-          tags: { valueType: "string_list", formula: { op: "union_attach", paths: ["bag"] } },
+          tags: { valueType: "string_list", formula: { op: "union", terms: [{ attach: ["bag"] }] } },
         },
       },
     });
     assert.equal(tpl.character.children["bag"]?.kind, "array");
+  });
+
+  it("union sys 项：world 根拒装；terms 内重复 sys 拒装；空 terms 拒装", () => {
+    assert.throws(
+      () =>
+        parseVarsTemplate(
+          rawTemplate({
+            world: {
+              children: {
+                pool: { valueType: "string_list", formula: { op: "union", terms: [{ sys: "cid" }] } },
+              },
+            },
+          }),
+        ),
+      /只允许出现在 character 根/,
+    );
+    assert.throws(
+      () =>
+        parseVarsTemplate(
+          rawTemplate({
+            character: {
+              children: {
+                attachtags: "string_list",
+                tags: {
+                  valueType: "string_list",
+                  formula: { op: "union", terms: [{ sys: "cid" }, { sys: "location" }, { sys: "cid" }] },
+                },
+              },
+            },
+          }),
+        ),
+      /重复/,
+    );
+    assert.throws(
+      () =>
+        parseVarsTemplate(
+          rawTemplate({
+            character: {
+              children: {
+                attachtags: "string_list",
+                tags: { valueType: "string_list", formula: { op: "union", terms: [] } },
+              },
+            },
+          }),
+        ),
+    );
+  });
+
+  it("union 挂在非 string_list 末端 = 拒绝", () => {
+    assert.throws(
+      () =>
+        parseVarsTemplate(
+          rawTemplate({
+            character: {
+              children: {
+                attachtags: "string_list",
+                hp: { valueType: "number", formula: { op: "union", terms: [{ attach: [] }] } },
+                tags: { valueType: "string_list", formula: { op: "union", terms: [{ attach: [] }] } },
+              },
+            },
+          }),
+        ),
+      /只能挂在 string_list 末端/,
+    );
   });
 
   it("expr 挂在非 number 末端 = 拒绝", () => {
@@ -271,8 +335,8 @@ describe("parseVarsTemplate", () => {
           rawTemplate({
             character: {
               children: {
-                attachtags: { valueType: "string_list", formula: { op: "union_attach", paths: ["inv"] } },
-                tags: { valueType: "string_list", formula: { op: "union_attach", paths: ["inv"] } },
+                attachtags: { valueType: "string_list", formula: { op: "union", terms: [{ attach: ["inv"] }] } },
+                tags: { valueType: "string_list", formula: { op: "union", terms: [{ attach: ["inv"] }] } },
                 inv: { children: { x: "number" } },
               },
             },
@@ -285,7 +349,7 @@ describe("parseVarsTemplate", () => {
         parseVarsTemplate(
           rawTemplate({ character: { children: { attachtags: "string_list", tags: "string_list" } } }),
         ),
-      /tags 为 union_attach 公式的 string_list 末端/,
+      /tags 为 union 公式的 string_list 末端/,
     );
   });
 });
@@ -596,15 +660,50 @@ const DERIVED_CHAR_INST: InstanceNode = normalizeInstance(
   "character",
 );
 
-describe("unionAttach", () => {
-  it("自身 attachtags ∪ 子树 attachtags（含数组元素递归），按名去重（先取者胜）", () => {
-    const out = unionAttach(DERIVED_CHAR_INST, TPL.character, ["inventory"]);
+describe("unionTerms", () => {
+  it("attach 项：自身 attachtags ∪ 子树 attachtags（含数组元素递归），按名去重（先取者胜）", () => {
+    const out = unionTerms(DERIVED_CHAR_INST, TPL.character, [{ kind: "attach", paths: ["inventory"] }]);
     assert.deepEqual(out, ["自身", "共", "剑"]);
   });
 
-  it("子树路径解析到末端 = 抛错；实例子树缺失按空集", () => {
-    assert.throws(() => unionAttach(DERIVED_CHAR_INST, TPL.character, ["hp"]), /容器\/数组声明/);
-    assert.deepEqual(unionAttach(normalizeInstance({}, TPL.characterVars, "c"), TPL.character, ["inventory"]), []);
+  it("attach 子树路径解析到末端 = 抛错；实例子树缺失按空集", () => {
+    assert.throws(
+      () => unionTerms(DERIVED_CHAR_INST, TPL.character, [{ kind: "attach", paths: ["hp"] }]),
+      /容器\/数组声明/,
+    );
+    assert.deepEqual(
+      unionTerms(normalizeInstance({}, TPL.characterVars, "c"), TPL.character, [{ kind: "attach", paths: ["inventory"] }]),
+      [],
+    );
+  });
+
+  it("sys 项：cid/location/channel 读属主系统字段（channel null = 空集）", () => {
+    const terms = [{ kind: "attach", paths: [] }, { kind: "sys", sys: "cid" }, { kind: "sys", sys: "location" }, { kind: "sys", sys: "channel" }] as const;
+    assert.deepEqual(
+      unionTerms(DERIVED_CHAR_INST, TPL.character, terms, { cid: "C7", locationName: "白滩", channel: 3 }),
+      ["自身", "共", "C7", "白滩", "3"],
+    );
+    assert.deepEqual(
+      unionTerms(DERIVED_CHAR_INST, TPL.character, terms, { cid: "C7", locationName: "白滩", channel: null }),
+      ["自身", "共", "C7", "白滩"],
+    );
+  });
+
+  it("terms 按序并集、先取者胜（sys 在前压过 attach 同名）", () => {
+    const out = unionTerms(
+      DERIVED_CHAR_INST,
+      TPL.character,
+      [{ kind: "sys", sys: "location" }, { kind: "attach", paths: [] }],
+      { cid: "C7", locationName: "自身", channel: null },
+    );
+    assert.deepEqual(out, ["自身", "共"]);
+  });
+
+  it("sys 项缺 sysValues = 抛错", () => {
+    assert.throws(
+      () => unionTerms(DERIVED_CHAR_INST, TPL.character, [{ kind: "sys", sys: "cid" }]),
+      /sysValues/,
+    );
   });
 });
 
@@ -626,7 +725,7 @@ describe("buildDerivedPlan", () => {
     assert.deepEqual(plan.deps["b"], ["a"]);
   });
 
-  it("union_attach 粗粒度依赖：子树下从动末端触发重算", () => {
+  it("union 粗粒度依赖：attach 子树下从动末端触发重算；sys 项不产生图边", () => {
     const tpl = parseVarsTemplate(
       rawTemplate({
         character: {
@@ -637,13 +736,17 @@ describe("buildDerivedPlan", () => {
                 gold: { valueType: "number", formula: { expr: "1" } },
               },
             },
-            tags: { valueType: "string_list", formula: { op: "union_attach", paths: ["inv"] } },
+            tags: {
+              valueType: "string_list",
+              formula: { op: "union", terms: [{ attach: ["inv"] }, { sys: "cid" }] },
+            },
           },
         },
       }),
     );
     const plan = buildDerivedPlan(tpl.character);
     assert.ok(plan.order.indexOf("inv.gold") < plan.order.indexOf("tags"));
+    assert.deepEqual(plan.deps["tags"], ["inv"]);
   });
 
   it("依赖成环 = 抛错（消息带环路径）", () => {
@@ -688,7 +791,7 @@ describe("evalDerived", () => {
     );
   });
 
-  it("union_attach 公式：走算子（需 scope.declRoot）", () => {
+  it("union 公式：走算子（需 scope.declRoot）", () => {
     const decl = terminal("tags", "character");
     const out = evalDerived(decl, DERIVED_CHAR_INST, {
       resolve: () => undefined,
@@ -712,7 +815,7 @@ describe("buildRootDerivedPlan / evalDerivedTarget", () => {
     character: {
       children: {
         attachtags: "string_list",
-        tags: { valueType: "string_list", formula: { op: "union_attach", paths: [] } },
+        tags: { valueType: "string_list", formula: { op: "union", terms: [{ attach: [] }] } },
         armor: { array: { type: "item" } },
       },
     },
@@ -764,7 +867,7 @@ describe("buildRootDerivedPlan / evalDerivedTarget", () => {
       character: {
         children: {
           attachtags: "string_list",
-          tags: { valueType: "string_list", formula: { op: "union_attach", paths: [] } },
+          tags: { valueType: "string_list", formula: { op: "union", terms: [{ attach: [] }] } },
           bag: { array: { type: "box" } },
         },
       },
@@ -789,7 +892,7 @@ describe("buildRootDerivedPlan / evalDerivedTarget", () => {
       character: {
         children: {
           attachtags: "string_list",
-          tags: { valueType: "string_list", formula: { op: "union_attach", paths: [] } },
+          tags: { valueType: "string_list", formula: { op: "union", terms: [{ attach: [] }] } },
           bag: {
             array: {
               children: {

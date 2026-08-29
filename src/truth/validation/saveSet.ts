@@ -15,7 +15,10 @@
  * 纯函数零 IO；依赖方向 = truth 内部（SaveSet 类型经 type-import，无运行时环）。
  */
 import type { SaveSet } from "../generationRepository.js";
-import { isNoticeEntry } from "../workingSet.js";
+import { evalTagsPool } from "../../vars/derived.js";
+import { parseVarsTemplate, type VarsTemplate } from "../../vars/template.js";
+import { isTerminalInstance, type InstanceNode } from "../../vars/tree.js";
+import { isDirectiveEntry, isNoticeEntry } from "../workingSet.js";
 import { SaveLoadError } from "./errors.js";
 
 /** 角色表键：C0 或 C+非零编号（去 @ 归一化后的落盘形态）。 */
@@ -81,12 +84,14 @@ function checkEvents(save: SaveSet): void {
   }
 }
 
-/** ④ 引用闭包：working_set 言行条目 cid / 通知条目 actor 与 archive 角色步 cid 都必须存在于角色表。 */
+/** ④ 引用闭包：working_set 言行条目 cid / 通知条目 actor / 指令条目 author 与 archive 角色步 cid 都必须存在于角色表。 */
 function checkReferences(save: SaveSet): void {
   const known = new Set(Object.keys(save.characters));
   for (const entry of save.sys.pipeline.working_set) {
     if (isNoticeEntry(entry)) {
       if (!known.has(entry.notice.actor)) invariant(`working_set 通知条目引用未知角色: ${entry.notice.actor}`);
+    } else if (isDirectiveEntry(entry)) {
+      if (!known.has(entry.author)) invariant(`working_set 指令条目引用未知角色: ${entry.author}`);
     } else if (!known.has(entry.cid)) {
       invariant(`working_set 引用未知角色: ${entry.cid}`);
     }
@@ -122,8 +127,33 @@ function checkLore(save: SaveSet): void {
 }
 
 /**
+ * ⑦ tags 池：按档内模板重算全部角色 tags 池并与存值逐名比对（cid/location/channel
+ * 常驻池的写路径漏挂安全网——池小、角色少，每次提交重算可承受）。
+ */
+function checkTagsPools(save: SaveSet): void {
+  let template: VarsTemplate;
+  try {
+    template = parseVarsTemplate(save.sys.varsTemplate);
+  } catch (error) {
+    invariant(`varsTemplate 解析失败：${error instanceof Error ? error.message : String(error)}`);
+  }
+  for (const [cid, state] of Object.entries(save.characters)) {
+    const expected = evalTagsPool(state.vars as InstanceNode, template.characterVars, {
+      cid: state.cid,
+      locationName: state.location.name,
+      channel: state.channel,
+    });
+    const shell: unknown = state.vars["tags"];
+    const actual = isTerminalInstance(shell) ? shell.value : undefined;
+    if (!Array.isArray(actual) || JSON.stringify(actual) !== JSON.stringify(expected)) {
+      invariant(`角色 ${cid} 的 tags 池与档内模板重算值不一致`);
+    }
+  }
+}
+
+/**
  * 整档语义校验（可提交态）。任一违规即抛 SaveLoadError("invariant")，消息带具体违规项；
- * 通过则返回 void。检查顺序 = 上列编号顺序（pipeline → archive → events → 引用 → 角色表 → lore）。
+ * 通过则返回 void。检查顺序 = 上列编号顺序（pipeline → archive → events → 引用 → 角色表 → lore → tags 池）。
  */
 export function validateSaveSet(save: SaveSet): void {
   checkPipeline(save);
@@ -132,4 +162,5 @@ export function validateSaveSet(save: SaveSet): void {
   checkReferences(save);
   checkCharacters(save);
   checkLore(save);
+  checkTagsPools(save);
 }

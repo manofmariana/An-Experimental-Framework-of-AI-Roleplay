@@ -21,6 +21,7 @@
 /** 命令类型 → 允许字段白名单（与服务端 schema 的 .strict() 分支对称；身份字段由 sendCommand 附加）。 */
 const COMMAND_FIELDS = {
   player_input: ["text"],
+  directive: ["mode", "text"],
   continue: [],
   rollback: ["targetSeq"],
   rollback_and_continue: ["targetSeq"],

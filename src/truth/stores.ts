@@ -31,7 +31,7 @@ export function cloneTruth(live: TruthStores): TruthStores {
   return {
     world: new WorldStore(structuredClone(live.world.saveData())),
     sys: new SysStore(structuredClone(live.sys.saveData())),
-    characters: new CharactersStore(structuredClone(live.characters.saveData())),
+    characters: new CharactersStore(structuredClone(live.characters.saveData()), live.characters.characterDecl),
     events: new EventsStore(structuredClone(live.events.saveData())),
     archive: new ArchiveStore(structuredClone(live.archive.saveData())),
     loreStore: new LoreStore(structuredClone(live.loreStore.saveData())),

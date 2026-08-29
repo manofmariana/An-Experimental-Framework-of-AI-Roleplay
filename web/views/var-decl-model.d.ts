@@ -6,15 +6,22 @@ export const VALUE_TYPES: readonly string[];
 
 export type ValueType = "number" | "string" | "boolean" | "string_list" | "tag_list";
 
-/** formula 结构化视图（expr 公式 / union_attach 内置算子）。 */
+/** union sys 项勾选态（三系统字段项）。 */
+export interface UnionSysFlags {
+  cid: boolean;
+  location: boolean;
+  channel: boolean;
+}
+
+/** formula 结构化视图（expr 公式 / union 内置算子：attach 项路径序接 + sys 项勾选态）。 */
 export type FormulaView =
   | { kind: "expr"; expr: string; binds: Record<string, string> }
-  | { kind: "unionAttach"; paths: string[] };
+  | { kind: "union"; paths: string[]; sys: UnionSysFlags; hasAttach: boolean };
 
 /** formula 写入形状（null = 清空）。 */
 export type FormulaSpec =
   | { expr: string; binds?: Record<string, string> }
-  | { op: "union_attach"; paths: string[] };
+  | { op: "union"; terms: ({ attach: string[] } | { sys: "cid" | "location" | "channel" })[] };
 
 interface NodeBase {
   key: string;

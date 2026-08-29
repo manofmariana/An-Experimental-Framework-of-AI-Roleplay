@@ -1,5 +1,5 @@
 /**
- * 提示词模板（世界包内 prompts/{agent}.prompt.json，每包一份完整副本）：
+ * 提示词模板（世界包内 prompts/{object}.{function}.prompt.json，每包矩阵全量副本）：
  * 模板 = 有序模块列表，模块 = {key, role, content}，content 内 {{placeholder}} 占位。
  * 占位符合法键集 = 占位符目录（prompts/placeholders.json，档内副本随信封携带）键集，
  * 由调用方传入；未知占位符在加载/保存校验时报错（列出模块 key 与占位符名）。

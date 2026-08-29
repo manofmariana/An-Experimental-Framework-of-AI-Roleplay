@@ -43,6 +43,8 @@ const baseRevisionField = { baseRevision: z.number().int().min(0).optional() };
 export const ClientCommandSchema = z.discriminatedUnion("type", [
   /** 玩家意图（三块输入拼装后的文本）；runId 可省略（首次输入自动建会话） */
   z.object({ type: z.literal("player_input"), text: z.string().min(1), ...requestIdField, ...runIdField, ...baseRevisionField }).strict(),
+  /** 玩家元层指令（god = 上帝/对世界与剧情，writing = 写作/对正文文风写法）；需有活跃会话（不自动建会话） */
+  z.object({ type: z.literal("directive"), mode: z.enum(["god", "writing"]), text: z.string().min(1), ...requestIdField, ...runIdField, ...baseRevisionField }).strict(),
   /** 继续：按 pipeline 当前进度接着跑 */
   z.object({ type: z.literal("continue"), ...requestIdField, ...runIdField, ...baseRevisionField }).strict(),
   /** 回溯：回到第 targetSeq 步刚完成的位置（丢弃其后内容） */

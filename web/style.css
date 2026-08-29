@@ -119,6 +119,12 @@ th { color: #9aa3af; font-weight: 500; }
 .input-block-note { margin-left: 8px; font-size: 12px; }
 .input-block input { padding: 8px; font-size: 13.5px; }
 .pause-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 12.5px; }
+/* 输入区模式页签（主控/上帝）与指令槽 */
+.mode-tabs { display: flex; gap: 6px; }
+.mode-tabs button.active { color: #f2f4f8; border-color: #5b9dd9; }
+.input-mode-panel { display: flex; flex-direction: column; gap: 8px; }
+.directive-row { display: flex; gap: 6px; }
+.directive-row input { flex: 1; min-width: 0; }
 .pause-opt { display: inline-flex; align-items: center; gap: 4px; color: #9aa3af; cursor: pointer; }
 .marker-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .marker-btns { display: flex; gap: 6px; }
@@ -671,7 +677,9 @@ button.act.danger:disabled { opacity: 0.4; }
   overflow-y: auto;
 }
 .ph-menu-col + .ph-menu-col { border-left: 1px solid #232a34; padding-left: 4px; }
+/* 列内成员一律 flex: none——列有 max-height，缺省 flex-shrink 会把按钮纵向挤扁而不滚动 */
 .ph-menu-item {
+  flex: none;
   background: transparent;
   border: none;
   border-radius: 4px;
@@ -687,8 +695,8 @@ button.act.danger:disabled { opacity: 0.4; }
 .ph-menu-item:hover { background: #1b222c; }
 .ph-menu-item.active { background: #24303d; color: #f2f4f8; }
 .ph-menu-leaf { color: #8fb8dd; font-family: Consolas, monospace; font-size: 12px; }
-.ph-menu-hint { color: #6b7684; font-size: 12px; padding: 4px 8px; }
-.ph-menu-axis { display: flex; gap: 4px; padding: 2px 4px 6px; }
+.ph-menu-hint { flex: none; color: #6b7684; font-size: 12px; padding: 4px 8px; }
+.ph-menu-axis { flex: none; display: flex; gap: 4px; padding: 2px 4px 6px; }
 .ph-menu-axis input {
   flex: 1;
   min-width: 0;

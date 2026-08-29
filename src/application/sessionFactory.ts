@@ -50,7 +50,7 @@ import { EventsStore } from "../truth/events.js";
 import { GenerationRepository } from "../truth/generationRepository.js";
 import { Lorebook } from "../truth/lorebook.js";
 import { LoreStore } from "../truth/loreStore.js";
-import { PromptsStore } from "../truth/promptsStore.js";
+import { PROMPT_TEMPLATE_IDS, PromptsStore } from "../truth/promptsStore.js";
 import { parseSys, SysStore, type ParsedSys, type SysStructs } from "../truth/sysStore.js";
 import { cascadeDerived, varWriteDepsOf } from "../truth/varWrite.js";
 import { WorldStore } from "../truth/worldStore.js";
@@ -113,19 +113,18 @@ export function loadPackPlaceholders(worldDir: string): PlaceholderCatalog {
 }
 
 /**
- * 世界包四份提示词模板（prompts/{character,gm,prose,gm-incident}.prompt.json）：
+ * 世界包提示词模板（prompts/{object}.{function}.prompt.json，键集 = PROMPT_TEMPLATE_IDS 矩阵扁平键）：
  * 缺文件即拒装（loadVarsPackFiles 先例）；逐份按占位符目录键集过 validateTemplate
  * + id 与文件名一致校验（loadTemplate），新会话拷入档内 PromptsStore。
  */
 export function loadPackPrompts(worldDir: string, catalog: PlaceholderCatalog): PromptTemplate[] {
   const dir = packPromptsDir(worldDir);
   const keys = Object.keys(catalog);
-  const load = (agent: string): PromptTemplate => {
-    const file = path.join(dir, `${agent}.prompt.json`);
+  return PROMPT_TEMPLATE_IDS.map((id) => {
+    const file = path.join(dir, `${id}.prompt.json`);
     if (!fs.existsSync(file)) throw new Error(`世界设定集缺少提示词模板: ${file}`);
-    return loadTemplate(agent, keys, dir);
-  };
-  return [load("character"), load("gm"), load("prose"), load("gm-incident")];
+    return loadTemplate(id, keys, dir);
+  });
 }
 
 function readWorldSet(runId: string, baseDir?: string): string {
@@ -256,10 +255,10 @@ export function createGameSession(
       normalizedChars[cid] = {
         ...state,
         systemTags: validateSystemTags(state.systemTags, parsedSys.template.character, resumeDeps),
-        vars: normalizeInstance(state.vars, parsedSys.template.characterVars, cid) as Record<string, unknown>,
+        vars: normalizeInstance(state.vars, parsedSys.template.characterVars, cid, undefined, true) as Record<string, unknown>,
       };
     }
-    characters = new CharactersStore(normalizedChars);
+    characters = new CharactersStore(normalizedChars, parsedSys.template.characterVars);
     // 续档整根从动级联（值变才写回；tags 池与 fromManifest 的初始物化同一算子）
     cascadeDerived({ world, characters }, { kind: "world" }, resumeDeps);
     for (const cid of Object.keys(normalizedChars)) {

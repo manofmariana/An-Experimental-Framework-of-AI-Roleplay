@@ -1,5 +1,5 @@
 {
-  "id": "character",
+  "id": "character.decision",
   "modules": [
     {
       "key": "protocol",
@@ -29,7 +29,7 @@
     {
       "key": "snapshots",
       "role": "system",
-      "content": "# 世界快照（这是你的传感器反馈给你的关于世界状态）\n{{world_snapshot}}\n\n# 你的完整角色快照（你看到了自己的信息面板）\n{{present_characters}}\n你是 {{self_name}}。\n{{snapshot}}"
+      "content": "# 世界快照（这是你的传感器反馈给你的关于世界状态）\n{{world_snapshot}}\n\n# 你的完整角色快照（你看到了自己的信息面板）\n{{present_cid}}\n你是 {{self_name}}。\n{{snapshot}}"
     },
     {
       "key": "contacts",

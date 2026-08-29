@@ -1,10 +1,11 @@
 /**
  * 游玩页输入区 view：
- * 三块结构化输入（台词/行动/内心含意图）+ 五标记区（chips + 参数小表单）+
- * 关系记录区（relations 条目行：目标 CID + name/impression）+ 暂停选项行。
+ * 模式页签（主控/上帝）+ 主控面板（三块结构化输入「台词/行动/内心含意图」+ 五标记区
+ * chips + 参数小表单 + 关系记录区 relations 条目行：目标 CID + name/impression + 写作指令槽）
+ * + 上帝面板（上帝指令槽 + 写作指令槽）+ 暂停选项行。两模式各带独立写作指令槽。
  *
  * 状态所有权：本 view 持有 transient UI 态——markers 与 relations 草稿 / knownChars（CID 下拉数据源）/
- * blockEls / pauseState（localStorage 跨会话持久化）。reset 规则与 busy 语义见 play.js 头注。
+ * blockEls / directiveEls / pauseState（localStorage 跨会话持久化）。reset 规则与 busy 语义见 play.js 头注。
  *
  * 竞态 2 收口（refreshCids）：调用时捕获 {runId, worldSetId}，await 后经
  * sameCharsIdentity 与当前身份比对，不符不写 knownChars（world A→B 逆序响应只接受 B）。
@@ -22,11 +23,16 @@ const PAUSE_STORAGE_KEY = "ofair-pause-options";
  * @param {() => {runId: string|null, worldSetId: string}} deps.getCharsIdentity CID 数据源身份（store runId + 世界包选择器当前值）
  * @param {() => void} deps.onInputChange 输入/标记变化（play.js 重算发送按钮）
  * @param {() => void} deps.onEnter Enter 发送
+ * @param {(mode: "god"|"writing", text: string, key: string) => void} deps.onDirective 指令发送（上帝/写作；key = 槽位唯一键；play.js 接线 directive 命令，成功清空对应槽）
  * @param {() => void} deps.onPauseChanged 暂停选项变更（play.js 下发 pause_options）
  */
-export function createPlayInput({ el, api, getCharsIdentity, onInputChange, onEnter, onPauseChanged }) {
+export function createPlayInput({ el, api, getCharsIdentity, onInputChange, onEnter, onDirective, onPauseChanged }) {
   /** 三块输入元素 {dialogue, action, inner}（mount 后非空） */
   let blockEls = null;
+  /** 指令输入元素（槽位键 → input；mount 后非空；写作指令两槽 = "writing"（主控面板）与 "god_writing"（上帝面板）） */
+  let directiveEls = null;
+  /** 输入区模式（main = 主控 / god = 上帝）；用户视图选择，runId reset 不重置 */
+  let mode = "main";
   /** 待发标记（DecisionPackage.markers；即抛指令位） */
   let markers = [];
   let markerChipsEl = null;
@@ -263,12 +269,64 @@ export function createPlayInput({ el, api, getCharsIdentity, onInputChange, onEn
   // 对外接口
   // -------------------------------------------------------------------------
 
-  /** 构建输入区 DOM（三块输入 + 标记区 + 关系记录区 + 暂停选项行；发送/停止/继续行归编排层）。 */
+  /** 构建输入区 DOM：模式页签（主控/上帝）+ 两面板 + 暂停选项行（发送/停止/继续行归编排层）。
+   *  主控面板 = 三块输入（写作指令槽并入网格第四格，内心同行右列）+ 标记区 + 关系记录区；
+   *  上帝面板 = 上帝指令槽（主提交）+ 写作指令槽。写作指令不能独立注入（无发送钮）——
+   *  主控模式随主发送捆绑、上帝模式随上帝指令捆绑。模式切换只显隐——面板 DOM 一次性构建，
+   *  各槽输入值存于元素本身，切换不丢；模式是用户视图选择，runId reset 不重置。 */
   function mount() {
     const inputArea = el("div");
     inputArea.id = "inputarea";
 
-    // 三块：台词（可空）/ 行动（可空）/ 内心含意图（必填）；台词与行动至少填一个
+    // 指令槽（当轮一次性）：写作槽 = 无发送钮纯输入（不能独立注入——主控面板随主发送捆绑、
+    // 上帝面板随上帝指令捆绑）；上帝槽 = 上帝面板的主提交（发送钮/Enter），发送时捆绑本面板写作槽。
+    // key = 槽位唯一键（清空按槽位；两个写作槽 mode 同为 writing、槽位不同）
+    directiveEls = {};
+    /** 写作指令槽（无发送钮；onPrimary = 所属面板的主提交动作，Enter 触发） */
+    const addWritingSlot = (host, key, note, onPrimary) => {
+      const wrap = el("label", "input-block");
+      const head = el("span", "input-block-label", "写作指令");
+      if (note) head.appendChild(el("span", "muted input-block-note", note));
+      const input = el("input");
+      input.type = "text";
+      input.placeholder = "对正文文风/写法的直接指令…";
+      input.onkeydown = (e) => {
+        if (e.key === "Enter") onPrimary();
+      };
+      wrap.append(head, input);
+      host.appendChild(wrap);
+      directiveEls[key] = input;
+    };
+    /** 上帝面板主提交：上帝指令 + 捆绑本面板写作指令（各按槽位键回报，成功各自清空） */
+    const fireGod = () => {
+      const godText = directiveEls.god.value.trim();
+      if (!godText) return;
+      onDirective("god", godText, "god");
+      const writingText = directiveEls.god_writing.value.trim();
+      if (writingText) onDirective("writing", writingText, "god_writing");
+    };
+
+    // 模式页签（主控 = 三块输入撰写决策包；上帝 = 上帝指令 + 写作指令）
+    const modeTabs = el("div", "mode-tabs");
+    const panelMain = el("div", "input-mode-panel");
+    const panelGod = el("div", "input-mode-panel");
+    panelGod.style.display = "none";
+    for (const [m, label] of [["main", "主控"], ["god", "上帝"]]) {
+      const b = el("button", "act", label);
+      b.dataset.mode = m;
+      b.classList.toggle("active", m === mode);
+      b.onclick = () => {
+        mode = m;
+        for (const t of modeTabs.querySelectorAll("button")) t.classList.toggle("active", t.dataset.mode === m);
+        panelMain.style.display = m === "main" ? "" : "none";
+        panelGod.style.display = m === "god" ? "" : "none";
+        onInputChange(); // 编排层 refreshSend：上帝模式无主决策包可发，主发送钮收起
+      };
+      modeTabs.appendChild(b);
+    }
+    inputArea.appendChild(modeTabs);
+
+    // 主控面板 · 三块：台词（可空）/ 行动（可空）/ 内心含意图（必填）；台词与行动至少填一个
     const blocks = el("div", "input-blocks");
     blockEls = {};
     const addBlock = (key, label, placeholder, note) => {
@@ -289,9 +347,11 @@ export function createPlayInput({ el, api, getCharsIdentity, onInputChange, onEn
     addBlock("dialogue", "台词（可空）", "说出的话…");
     addBlock("action", "行动（可空）", "做的事…", "台词与行动至少填一个");
     addBlock("inner", "内心", "内心想法与意图（必填）", "GM 可见，正文作情绪参考");
-    inputArea.appendChild(blocks);
+    // 写作指令槽 = 三块网格第四格（内心同行右列）：无发送钮，随主发送捆绑注入
+    addWritingSlot(blocks, "writing", "仅正文可见，随主发送注入", () => onEnter());
+    panelMain.appendChild(blocks);
 
-    // 标记区：chips（可移除）+ 五个标记按钮；召回/联系展开参数小表单
+    // 主控面板 · 标记区：chips（可移除）+ 五个标记按钮；召回/联系展开参数小表单
     const markerBar = el("div", "marker-bar");
     const markerBtns = el("span", "marker-btns");
     for (const [type, label] of [["gm_request", "GM 请求"], ["leave", "离开"], ["confirm", "确认"]]) {
@@ -309,11 +369,34 @@ export function createPlayInput({ el, api, getCharsIdentity, onInputChange, onEn
     markerChipsEl = el("span", "marker-chips");
     markerFormEl = el("span", "marker-form");
     markerBar.append(markerBtns, markerChipsEl, markerFormEl);
-    inputArea.appendChild(markerBar);
+    panelMain.appendChild(markerBar);
 
-    // 关系记录区：已添加的 relations 条目行（目标 + name/impression + 删除）
+    // 主控面板 · 关系记录区：已添加的 relations 条目行（目标 + name/impression + 删除）
     relationsEl = el("div", "relations-bar");
-    inputArea.appendChild(relationsEl);
+    panelMain.appendChild(relationsEl);
+    inputArea.appendChild(panelMain);
+
+    // 上帝面板：上帝指令槽（主提交，带发送钮）+ 写作指令槽（无钮，随上帝指令捆绑）
+    {
+      const wrap = el("label", "input-block");
+      const head = el("span", "input-block-label", "上帝指令");
+      head.appendChild(el("span", "muted input-block-note", "仅 GM 可见，本轮有效"));
+      const row = el("div", "directive-row");
+      const input = el("input");
+      input.type = "text";
+      input.placeholder = "对世界/剧情的直接指令…";
+      const btn = el("button", "act marker-btn", "发送");
+      btn.onclick = fireGod;
+      input.onkeydown = (e) => {
+        if (e.key === "Enter") fireGod();
+      };
+      row.append(input, btn);
+      wrap.append(head, row);
+      panelGod.appendChild(wrap);
+      directiveEls["god"] = input;
+    }
+    addWritingSlot(panelGod, "god_writing", "仅正文可见，随上帝指令注入", () => fireGod());
+    inputArea.appendChild(panelGod);
 
     inputArea.appendChild(pauseBar());
     return inputArea;
@@ -357,12 +440,29 @@ export function createPlayInput({ el, api, getCharsIdentity, onInputChange, onEn
     renderRelations();
     if (markerFormEl) markerFormEl.textContent = "";
     if (blockEls) for (const k of Object.keys(blockEls)) blockEls[k].value = "";
+    if (directiveEls) for (const k of Object.keys(directiveEls)) directiveEls[k].value = "";
     knownChars = [];
   }
 
-  /** 发送成功后清空三块输入、待发标记与关系记录。 */
+  /** 指令发送成功后清空对应槽位（编排层在 command_result 后调用；按槽位键，同 mode 两槽互不影响）。 */
+  function clearDirective(key) {
+    if (directiveEls && directiveEls[key]) directiveEls[key].value = "";
+  }
+
+  /** 当前输入区模式（"main" | "god"；编排层 refreshSend 据此收起主发送钮）。 */
+  function getMode() {
+    return mode;
+  }
+
+  /** 读槽位当前文本（trim 后；编排层主发送捆绑写作指令用）。 */
+  function slotValue(key) {
+    return directiveEls && directiveEls[key] ? directiveEls[key].value.trim() : "";
+  }
+
+  /** 发送成功后清空三块输入、待发标记与关系记录（含主控面板写作槽——已随主发送捆绑注入）。 */
   function clearAfterSend() {
     if (blockEls) for (const k of Object.keys(blockEls)) blockEls[k].value = "";
+    if (directiveEls && directiveEls.writing) directiveEls.writing.value = "";
     markers = [];
     renderMarkerChips();
     relations = [];
@@ -387,5 +487,5 @@ export function createPlayInput({ el, api, getCharsIdentity, onInputChange, onEn
     };
   }
 
-  return { mount, buildPayload, resetTransient, clearAfterSend, refreshCids, setEnabled, pauseOptionsPayload };
+  return { mount, getMode, slotValue, buildPayload, resetTransient, clearAfterSend, clearDirective, refreshCids, setEnabled, pauseOptionsPayload };
 }

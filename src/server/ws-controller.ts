@@ -152,6 +152,12 @@ export class WsController {
         await coordinator.execute({ type: "edit_result", text: cmd.text, ...base });
         this.sendResult(ws, cmd);
         return;
+      case "directive":
+        // 需有活跃会话（不自动建会话；无会话时 Coordinator 抛错 → command_error）
+        this.checkRunIdentity(cmd.runId);
+        await coordinator.execute({ type: "directive", mode: cmd.mode, text: cmd.text, ...base });
+        this.sendResult(ws, cmd);
+        return;
       case "new_session":
         await coordinator.execute({ type: "new_session", worldSetId: cmd.worldSetId });
         this.broadcastSnapshot();

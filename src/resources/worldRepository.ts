@@ -4,8 +4,8 @@
  * data/assets/{setId}/ 世界包：lores.json 世界书、突发公式配置
  * （incident.json）、变量体系文件（tags.json 注册表只读 + vars-template.json / vars-tags.json 可写，
  * 缺文件读 → null 由路由层给缺省空结构）、角色 manifest
- * （player.json + characters/*.json）、包内提示词模板（prompts/{agent}.prompt.json，每包一份
- * 完整副本，无全局默认；三 activation + gm-incident 突发变体）与占位符目录
+ * （player.json + characters/*.json）、包内提示词模板（prompts/{object}.{function}.prompt.json，每包
+ * 矩阵全量副本，无全局默认；键集 = truth/promptsStore 的 PROMPT_MATRIX）与占位符目录
  * （prompts/placeholders.json，可写）的读写，以及世界设定集列表/目录解析（canonical 实现——config.ts 的
  * listWorldSets/resolveWorldDir 委托到此处，消除两份实现的漂移）。
  *
@@ -162,10 +162,10 @@ export function writeCharacterManifest(worldDir: string, id: string, manifest: u
 }
 
 // ---------------------------------------------------------------------------
-// 提示词模板文件（{packDir}/prompts/{agent}.prompt.json；结构校验在 server 路由层）
+// 提示词模板文件（{packDir}/prompts/{object}.{function}.prompt.json；结构校验在 server 路由层）
 // ---------------------------------------------------------------------------
 
-/** 包内提示词目录：{worldDir}/prompts/（每包完整副本：三 activation + gm-incident，无全局默认）。 */
+/** 包内提示词目录：{worldDir}/prompts/（每包矩阵全量副本，无全局默认）。 */
 export function packPromptsDir(worldDir: string): string {
   return path.join(worldDir, "prompts");
 }

@@ -1,8 +1,10 @@
 /**
- * 提示词页：四份模板（character/gm/prose/gm-incident）切换 + 模块列表编辑
- * （新增/删除/上下排序/key/role 下拉/content 多行）+ 右侧可用占位符目录。
- * 保存 = PUT 整体替换 modules；未知占位符由 API 400 返回并展示。
- * 第五个页签「占位符」= 占位符目录编辑器（委托 views/placeholder-editor.js：nameplate
+ * 提示词页：对象×功能矩阵两级页签（一级 = 对象：角色/GM/正文；二级 = 该对象的功能组：
+ * 角色·决策 / GM·裁决·突发 / 正文·渲染）+ 模块列表编辑（新增/删除/上下排序/key/role 下拉/
+ * content 多行）+ 右侧可用占位符目录。矩阵结构由服务端 GET /api/prompts 应答的 matrix
+ * 字段供给（只读，无增删对象/功能的 UI）；编辑的只是模板内容，保存 = PUT 整体替换
+ * modules（/api/prompts/{object}.{function}）；未知占位符由 API 400 返回并展示。
+ * 顶层另有「占位符」页签 = 占位符目录编辑器（委托 views/placeholder-editor.js：nameplate
  * 陈列 ↔ 编辑子页面 + 引用 chip 级联寻路），本页负责取数——目录 GET 应答 entries/sources +
  * 分支记号 datalist 候选与引用寻路基准 varsTemplate（档内 = GET /api/session/state/sys，
  * 无会话 = 包基线 GET /api/world/tags 与 /api/world/vars-template；拉不到则降级：无候选 /
@@ -12,8 +14,8 @@
 import { api, el } from "../app.js";
 import { createPlaceholderEditor } from "../views/placeholder-editor.js";
 
-const AGENT_LABELS = { character: "角色", gm: "GM", prose: "正文", "gm-incident": "突发GM" };
-const PROMPT_IDS = ["character", "gm", "prose", "gm-incident"];
+const OBJECT_LABELS = { character: "角色", gm: "GM", prose: "正文" };
+const FUNCTION_LABELS = { decision: "决策", adjudication: "裁决", incident: "突发", render: "渲染" };
 const PLACEHOLDERS_TAB = "__placeholders__";
 const ROLES = ["system", "user", "assistant"];
 
@@ -24,10 +26,13 @@ export async function renderPrompts(root) {
     el("div", "muted", "有活跃会话时读写档内副本，保存后下一轮对话生效；无会话时读写世界包基线，新会话生效。动态内容（事件/场景/正文窗）建议放尾部模块——缓存友好是编辑约定。"),
   );
 
-  const [templates, phData] = await Promise.all([
+  const [promptsData, phData] = await Promise.all([
     api("/api/prompts"),
     api("/api/prompts/placeholders"),
   ]);
+  const templates = promptsData.templates;
+  // 矩阵结构（对象 → 功能名列表）：服务端单一出处，本页只读
+  const matrix = promptsData.matrix;
   // 分支记号 datalist 候选 + 引用寻路基准 varsTemplate（档内 = sys 根；无会话 = 包基线；
   // 拉不到 = 无候选 / characters·world 两根仅系统声明分支可展开，不阻塞编辑）
   let tagNames = [];
@@ -50,13 +55,15 @@ export async function renderPrompts(root) {
   }
 
   const tabs = el("div", "prompt-tabs");
+  const subTabs = el("div", "prompt-tabs");
   const layout = el("div", "prompt-editor");
   const listEl = el("div", "module-list");
   const side = el("div", "placeholder-side");
   layout.append(listEl, side);
-  root.append(tabs, layout);
+  root.append(tabs, subTabs, layout);
 
-  let currentAgent = "character";
+  let currentObject = "character";
+  let currentFunction = null;
   /** 侧栏与占位符编辑器共享的目录数据（entries = [{key, description, source, segments}]） */
   let phEntries = phData.entries;
   const phSources = phData.sources;
@@ -148,9 +155,10 @@ export async function renderPrompts(root) {
     saveBtn.onclick = async () => {
       status.textContent = "";
       status.className = "muted";
+      const templateId = `${currentObject}.${currentFunction}`;
       try {
-        const resp = await api(`/api/prompts/${currentAgent}`, "PUT", {
-          id: currentAgent,
+        const resp = await api(`/api/prompts/${templateId}`, "PUT", {
+          id: templateId,
           modules: readRows(),
         });
         status.textContent = ` ${resp.note}`;
@@ -184,30 +192,50 @@ export async function renderPrompts(root) {
     }).mount(listEl);
   };
 
-  const switchAgent = (agent) => {
-    currentAgent = agent;
-    for (const b of tabs.querySelectorAll("button")) {
-      b.classList.toggle("active", b.dataset.agent === agent);
+  const renderSubTabs = () => {
+    subTabs.textContent = "";
+    if (currentObject === PLACEHOLDERS_TAB) return;
+    for (const fn of matrix[currentObject] ?? []) {
+      const b = el("button", null, FUNCTION_LABELS[fn] ?? fn);
+      b.classList.toggle("active", fn === currentFunction);
+      b.onclick = () => switchFunction(fn);
+      subTabs.appendChild(b);
     }
-    if (agent === PLACEHOLDERS_TAB) {
-      renderPlaceholders();
-      renderSide();
-      return;
-    }
-    const t = templates.find((tpl) => tpl.id === agent);
+  };
+
+  const switchFunction = (fn) => {
+    currentFunction = fn;
+    renderSubTabs();
+    const t = templates.find((tpl) => tpl.id === `${currentObject}.${fn}`);
     renderList(structuredClone(t.modules));
     renderSide();
   };
 
-  for (const agent of PROMPT_IDS) {
-    const b = el("button", null, AGENT_LABELS[agent] ?? agent);
-    b.dataset.agent = agent;
-    b.onclick = () => switchAgent(agent);
+  const switchObject = (object) => {
+    currentObject = object;
+    for (const b of tabs.querySelectorAll("button")) {
+      b.classList.toggle("active", b.dataset.object === object);
+    }
+    if (object === PLACEHOLDERS_TAB) {
+      currentFunction = null;
+      renderSubTabs();
+      renderPlaceholders();
+      renderSide();
+      return;
+    }
+    // 切对象默认选该对象第一个功能组
+    switchFunction((matrix[object] ?? [])[0]);
+  };
+
+  for (const object of Object.keys(matrix)) {
+    const b = el("button", null, OBJECT_LABELS[object] ?? object);
+    b.dataset.object = object;
+    b.onclick = () => switchObject(object);
     tabs.appendChild(b);
   }
   const phTab = el("button", null, "占位符");
-  phTab.dataset.agent = PLACEHOLDERS_TAB;
-  phTab.onclick = () => switchAgent(PLACEHOLDERS_TAB);
+  phTab.dataset.object = PLACEHOLDERS_TAB;
+  phTab.onclick = () => switchObject(PLACEHOLDERS_TAB);
   tabs.appendChild(phTab);
-  switchAgent("character");
+  switchObject(Object.keys(matrix)[0] ?? PLACEHOLDERS_TAB);
 }

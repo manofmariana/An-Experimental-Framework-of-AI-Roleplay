@@ -278,10 +278,11 @@ describe("GM deltas 写入通道（applyVarDeltas：双根路由 + 模板校验�
       { path: "characters.C1001.vars.attachtags", op: "=", value: ["aud"] },
     ]);
     const { changes } = plan();
-    assert.deepEqual(truth.characters.tagNames("C1001"), ["aud"]);
+    // 池 = attachtags ∪ cid/location/channel 常驻项（C1001 在 loc_A、无频道）
+    assert.deepEqual(truth.characters.tagNames("C1001"), ["aud", "C1001", "loc_A"]);
     const pool = changes.find((c) => c.path === "characters.C1001.vars.tags");
     assert.ok(pool, "tags 池重算追加 VarChange");
-    assert.deepEqual(pool.after, { value: ["aud"], tags: [] });
+    assert.deepEqual(pool.after, { value: ["aud", "C1001", "loc_A"], tags: [] });
     assert.throws(planWith([{ path: "characters.C1001.timer", op: "=", value: 1 }]).plan, /系统字段/);
     assert.throws(planWith([{ path: "characters.C1001.vars.tags", op: "=", value: [] }]).plan, /从动末端拒写/);
     // CID 形态名按 cid 类别判定：未知 CID = 手误拒绝（channel/location 放行不兜底）
@@ -297,7 +298,7 @@ describe("GM deltas 写入通道（applyVarDeltas：双根路由 + 模板校验�
       { path: "characters.C1001.vars.attachtags", op: "=", value: ["C1001", "C0"] },
     ]);
     plan();
-    assert.deepEqual(truth.characters.tagNames("C1001"), ["C1001", "C0"]);
+    assert.deepEqual(truth.characters.tagNames("C1001"), ["C1001", "C0", "loc_A"]);
     // 未声明类别（空 categories）= 实例名不放行（deps 单元口径，生产注册表三类别齐备）
     const truth2 = makeTruth();
     assert.throws(
@@ -317,7 +318,7 @@ describe("GM deltas 写入通道（applyVarDeltas：双根路由 + 模板校验�
       character: {
         children: {
           attachtags: "string_list",
-          tags: { valueType: "string_list", formula: { op: "union_attach", paths: [] as string[] } },
+          tags: { valueType: "string_list", formula: { op: "union", terms: [{ attach: [] as string[] }] } },
         },
       },
     });
@@ -356,7 +357,7 @@ describe("GM deltas 结构化数组写入（`键[数字]` 下标语法）", () =
       character: {
         children: {
           attachtags: "string_list",
-          tags: { valueType: "string_list", formula: { op: "union_attach", paths: [] as string[] } },
+          tags: { valueType: "string_list", formula: { op: "union", terms: [{ attach: [] as string[] }] } },
           items: { array: { children: { count: "number", name: "string" } } },
         },
       },

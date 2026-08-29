@@ -1,5 +1,5 @@
 {
-  "id": "gm-incident",
+  "id": "gm.incident",
   "modules": [
     {
       "key": "protocol",

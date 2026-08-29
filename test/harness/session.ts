@@ -1,14 +1,14 @@
 /**
  * GameSession 级测试 harness：收敛各 application 测试反复手写的装配——
  * 临时根（save/ + assets/，随套件结束自动清理）+ FakeChatScript + 确定性骰子队列
- * + 临时世界包构造（含包内 prompts/ 四份模板 + incident.json，从真实默认包拷贝模板）。
+ * + 临时世界包构造（含包内 prompts/ 矩阵全量模板 + incident.json，从真实默认包拷贝模板）。
  * GameSession 的注入点（SessionOptions.baseDir/assetsDir/chatPorts/rollDice）
  * 为既有生产端口，harness 只做组装，不改生产行为。
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { AGENT_KINDS, resolveWorldDir, type AgentKind, type LLMConfig } from "../../src/config.js";
+import { resolveWorldDir, type AgentKind, type LLMConfig } from "../../src/config.js";
 import type { GameSession } from "../../src/application/gameSession.js";
 import {
   createGameSession,
@@ -19,7 +19,7 @@ import {
 } from "../../src/application/sessionFactory.js";
 import { packPromptsDir } from "../../src/resources/worldRepository.js";
 import type { CharacterState } from "../../src/truth/charactersStore.js";
-import { PromptsStore } from "../../src/truth/promptsStore.js";
+import { PROMPT_TEMPLATE_IDS, PromptsStore } from "../../src/truth/promptsStore.js";
 import { buildManifest, buildTagRegistryRaw, TEST_VARS_TEMPLATE_RAW } from "../builders/index.js";
 import { FakeChatScript, type RecordedCall } from "../fakes/chatPort.js";
 import { tempDir } from "./tempDir.js";
@@ -90,13 +90,13 @@ export class SessionHarness {
     const dir = path.join(this.assetsDir, worldId);
     fs.mkdirSync(path.join(dir, "characters"), { recursive: true });
     fs.writeFileSync(path.join(dir, "lores.json"), "[]\n");
-    // 包内提示词四副本（三 activation + gm-incident 突发变体）+ 占位符目录：从真实默认包拷贝
+    // 包内提示词矩阵全量副本 + 占位符目录：从真实默认包拷贝
     // （新档装配读取校验后拷入档内 prompts.json）
     const from = packPromptsDir(resolveWorldDir());
     const to = packPromptsDir(dir);
     fs.mkdirSync(to, { recursive: true });
-    for (const agent of [...AGENT_KINDS, "gm-incident"]) {
-      fs.copyFileSync(path.join(from, `${agent}.prompt.json`), path.join(to, `${agent}.prompt.json`));
+    for (const id of PROMPT_TEMPLATE_IDS) {
+      fs.copyFileSync(path.join(from, `${id}.prompt.json`), path.join(to, `${id}.prompt.json`));
     }
     fs.copyFileSync(path.join(from, "placeholders.json"), path.join(to, "placeholders.json"));
     // 突发公式配置（装配启动校验必需）

@@ -3,7 +3,7 @@ import { renderPrompt, type RenderHost } from "../compile/render.js";
 import { validateTemplate } from "../compile/template.js";
 import type { Display } from "../display.js";
 import type { ChatPort } from "../llm/chatPort.js";
-import type { PromptsStore } from "../truth/promptsStore.js";
+import { PROMPT_MATRIX, type PromptsStore } from "../truth/promptsStore.js";
 import { DecisionPackageSchema, InitiativeSchema, LocationSchema, type DecisionPackage } from "../types.js";
 import { extractJson } from "./json.js";
 import { runStructuredActivation } from "./structuredActivation.js";
@@ -38,7 +38,7 @@ export class CharacterActivation {
   async decide(host: RenderHost, turn: number, signal: AbortSignal, display?: Display): Promise<{ raw: string; pkg: DecisionPackage }> {
     if (host.reader.kind !== "character") throw new Error("角色 activation 需要 character 读者投影");
     const catalog = this.prompts.placeholders();
-    const template = validateTemplate(this.prompts.template("character"), Object.keys(catalog));
+    const template = validateTemplate(this.prompts.template(PROMPT_MATRIX.character.decision), Object.keys(catalog));
     const messages = renderPrompt(template, catalog, host);
     const agentName = `character:${host.reader.cid}`;
     return runStructuredActivation<DecisionPackage>({

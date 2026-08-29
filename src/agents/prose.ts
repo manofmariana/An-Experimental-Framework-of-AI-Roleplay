@@ -2,7 +2,7 @@ import { renderPrompt, type RenderHost } from "../compile/render.js";
 import { validateTemplate } from "../compile/template.js";
 import type { Display } from "../display.js";
 import type { ChatPort } from "../llm/chatPort.js";
-import type { PromptsStore } from "../truth/promptsStore.js";
+import { PROMPT_MATRIX, type PromptsStore } from "../truth/promptsStore.js";
 
 /**
  * 无状态正文 activation：构造只持 ChatPort +
@@ -14,7 +14,7 @@ export class ProseActivation {
   constructor(private llm: ChatPort, private prompts: PromptsStore) {}
   async render(host: RenderHost, turn: number, signal: AbortSignal, display?: Display): Promise<string> {
     const catalog = this.prompts.placeholders();
-    const template = validateTemplate(this.prompts.template("prose"), Object.keys(catalog));
+    const template = validateTemplate(this.prompts.template(PROMPT_MATRIX.prose.render), Object.keys(catalog));
     const messages = renderPrompt(template, catalog, host);
     const onDelta = display ? (delta: string) => display.delta(this.agentName, delta) : undefined;
     const onReasoningDelta = display ? (delta: string) => display.reasoningDelta(this.agentName, delta) : undefined;

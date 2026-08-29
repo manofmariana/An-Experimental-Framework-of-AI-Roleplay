@@ -6,13 +6,14 @@ import { buildAdjudication as gmPkg } from "./builders/index.js";
 import { SessionHarness } from "./harness/session.js";
 
 // ---------------------------------------------------------------------------
-// 从动变量级联（GameSession 级出口测试）：写路径整根级联（expr 公式 + union_attach +
+// 从动变量级联（GameSession 级出口测试）：写路径整根级联（expr 公式 + union terms +
 // 结构化数组 "*" 段元素枚举）、直编回归、回溯还原、成环拒装。
 // 集成基建 = SessionHarness（临时世界设定集 + fake LLM + 确定性骰子）。
 // ---------------------------------------------------------------------------
 
 /** 级联测试模板：world 域 tension = omen*2；角色 hp = max_hp - wounds；
- *  tags 池 union_attach paths ["armor"]；item 类型内 load = weight*2（类型内路径以类型根为基准）。 */
+ *  tags 池 union terms = attach ["armor"] + cid/location/channel 常驻；item 类型内
+ *  load = weight*2（类型内路径以类型根为基准）。 */
 const CASCADE_TEMPLATE_RAW = {
   world: {
     children: {
@@ -23,7 +24,10 @@ const CASCADE_TEMPLATE_RAW = {
   character: {
     children: {
       attachtags: "string_list",
-      tags: { valueType: "string_list", formula: { op: "union_attach", paths: ["armor"] } },
+      tags: {
+        valueType: "string_list",
+        formula: { op: "union", terms: [{ attach: ["armor"] }, { sys: "cid" }, { sys: "location" }, { sys: "channel" }] },
+      },
       armor: { array: { type: "item" } },
       max_hp: "number",
       wounds: "number",
@@ -110,24 +114,24 @@ function valueOf(node: unknown): unknown {
   return (node as { value: unknown }).value;
 }
 
-describe("从动级联：union_attach 装备穿脱 + 结构化数组元素枚举", () => {
-  it("初始池 = 装备 attachtags 并集；GM delta 脱一件 → 池同步移除；穿回 → 恢复", async () => {
+describe("从动级联：union 装备穿脱 + 结构化数组元素枚举", () => {
+  it("初始池 = 装备 attachtags ∪ cid/location/channel；GM delta 脱一件 → 池同步移除；穿回 → 恢复", async () => {
     const { session, runId } = makeSession("equip", [
       gmSkip([{ path: "characters.C1001.vars.armor", op: "=", value: [SWORD] }]),
     ]);
-    // 装配物化：池 = 自身 attachtags（空）∪ armor 子树（两件装备）
-    assert.deepEqual(valueOf(varsOf(session, "C1001")["tags"]), ["aud", "vis"]);
+    // 装配物化：池 = 自身 attachtags（空）∪ armor 子树（两件装备）∪ 常驻系统项
+    assert.deepEqual(valueOf(varsOf(session, "C1001")["tags"]), ["aud", "vis", "C1001", "loc_A"]);
 
     // 脱掉一件：池同步移除 vis；armor[0].load 经 "*" 枚举重算（weight 3 → 6）
     await runGmStep(session);
-    assert.deepEqual(valueOf(varsOf(session, "C1001")["tags"]), ["aud"]);
+    assert.deepEqual(valueOf(varsOf(session, "C1001")["tags"]), ["aud", "C1001", "loc_A"]);
     const armor = varsOf(session, "C1001")["armor"] as Record<string, unknown>[];
     assert.equal(valueOf(armor[0]?.["load"]), 6);
     const effects = currentEffects(runId);
     const pool = effects.find((c) => c.path === "characters.C1001.vars.tags");
     assert.ok(pool, "池重算追加 VarChange");
-    assert.deepEqual(pool.after, { value: ["aud"], tags: [] });
-    assert.deepEqual(pool.before, { value: ["aud", "vis"], tags: [] });
+    assert.deepEqual(pool.after, { value: ["aud", "C1001", "loc_A"], tags: [] });
+    assert.deepEqual(pool.before, { value: ["aud", "vis", "C1001", "loc_A"], tags: [] });
     const load = effects.find((c) => c.path === "characters.C1001.vars.armor.0.load");
     assert.ok(load, "数组内从动末端经元素枚举重算");
     assert.deepEqual(load.after, { value: 6, tags: [] });
@@ -137,7 +141,7 @@ describe("从动级联：union_attach 装备穿脱 + 结构化数组元素枚举
       gmSkip([{ path: "characters.C1001.vars.armor", op: "=", value: [SWORD, SHIELD] }]),
     );
     await runGmStep(session);
-    assert.deepEqual(valueOf(varsOf(session, "C1001")["tags"]), ["aud", "vis"]);
+    assert.deepEqual(valueOf(varsOf(session, "C1001")["tags"]), ["aud", "vis", "C1001", "loc_A"]);
     const armor2 = varsOf(session, "C1001")["armor"] as Record<string, unknown>[];
     assert.equal(valueOf(armor2[1]?.["load"]), 10);
   });
@@ -225,7 +229,7 @@ describe("从动依赖成环", () => {
           character: {
             children: {
               attachtags: "string_list",
-              tags: { valueType: "string_list", formula: { op: "union_attach", paths: [] } },
+              tags: { valueType: "string_list", formula: { op: "union", terms: [{ attach: [] }] } },
               a: { valueType: "number", formula: { expr: "b + 1", binds: { b: "b" } } },
               b: { valueType: "number", formula: { expr: "a + 1", binds: { a: "a" } } },
             },

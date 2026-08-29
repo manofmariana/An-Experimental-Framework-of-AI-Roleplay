@@ -40,9 +40,9 @@ export interface LLMConfig {
   reasoningEffort?: string | undefined;
 }
 
-/** 三类 agent（每 agent 独立 OpenAI adapter；文件形状契约见 contracts/config.ts） */
-export type AgentKind = "character" | "gm" | "prose";
-export const AGENT_KINDS: readonly AgentKind[] = ["character", "gm", "prose"];
+/** 三类 activation（唯一定义在 contracts/config.ts；此处 re-export 保持既有 import 方）。 */
+export { AGENT_KINDS } from "./contracts/config.js";
+export type { AgentKind } from "./contracts/config.js";
 
 /** 本轮存档目录：data/users/{username}/save/{runId}/ */
 export function runDir(runId: string): string {

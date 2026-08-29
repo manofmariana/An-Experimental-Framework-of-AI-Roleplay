@@ -117,7 +117,7 @@ describe("突发事件管线", () => {
     const gmPrompt = callsText("gm", 5);
     assert.ok(gmPrompt.includes(`【突发事件】${INCIDENT_TEXT}`), "GM 当前场景注入突发文本");
 
-    // 突发 GM 提示词：gm-incident 模板注入目标组与良恶判定
+    // 突发 GM 提示词：gm.incident 模板注入目标组与良恶判定
     const incidentPrompt = callsText("gm", 3);
     assert.ok(incidentPrompt.includes("山谷（level 90）"), "目标组机械渲染含地点 level");
     assert.ok(incidentPrompt.includes("已休眠 30天"), "目标组机械渲染含剩余休眠时长");

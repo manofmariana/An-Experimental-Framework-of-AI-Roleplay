@@ -1,12 +1,15 @@
 /**
  * 游玩页编排层：store ← transport → protocol 装配 + store 订阅重渲 +
- * 权限/按钮闸 + 会话 modal 统一生命周期；三块输入/标记/暂停选项归 views/play-input.js，
+ * 权限/按钮闸 + 会话 modal 统一生命周期；三块输入/标记/暂停选项与指令槽（输入区模式
+ * 页签「主控/上帝」：主控 = 三块 + 写作指令槽，上帝 = 上帝指令槽 + 写作指令槽；写作
+ * 指令无独立发送——主控随主发送捆绑、上帝随上帝指令捆绑，本层 doSend/onDirective 接线）归
+ * views/play-input.js，
  * 流式卡片/panels/历史回显归 views/play-stream.js，直编 modal 归 views/state-editor.js。
  *
  * 状态所有权：
  * ① 服务端权威状态 = web/session-store.js（runId/revision/连接态/world/characters/events/
  *    history/pipeline/streaming 槽/needsResync）——本页只读（S()），经 subscribe 重渲；
- * ② transient UI 态 = views/play-input.js（markers 草稿 / knownChars / 三块输入 / pauseState），
+ * ② transient UI 态 = views/play-input.js（markers 草稿 / knownChars / 三块输入 / 指令槽 / 模式页签 / pauseState），
  *    本模块只留 sideView / canInputNow——reset 规则表：
  *      runId 变化（snapshot 信号）：inputView.resetTransient()、scrollPinned 钉底、
  *        会话 modal 统一关闭（closeSessionModals）；
@@ -138,6 +141,10 @@ const inputView = createPlayInput({
   getCharsIdentity: () => ({ runId: S().runId, worldSetId: worldSel?.value ?? "" }),
   onInputChange: () => refreshSend(),
   onEnter: () => doSend(),
+  onDirective: (mode, text, key) => {
+    // 发送成功才清空对应槽位；失败由 sendCmd 错误行可见
+    sendCmd("directive", { mode, text }).then(() => inputView.clearDirective(key));
+  },
   onPauseChanged: () => sendPauseOptions(),
 });
 
@@ -261,6 +268,8 @@ function onStoreChange(state, meta) {
 
 function refreshSend() {
   if (!sendBtn) return;
+  // 上帝模式 = 指令通道（各槽自带发送钮），无主决策包可发——主发送钮收起
+  sendBtn.style.display = inputView.getMode() === "god" ? "none" : "";
   sendBtn.disabled = !canInputNow || inputView.buildPayload() === null;
 }
 
@@ -311,6 +320,9 @@ function send(text) {
 const doSend = () => {
   const text = inputView.buildPayload();
   if (text === null) return;
+  // 写作指令捆绑主提交：先行入队（单 socket 保序，先于本轮 GM/正文生效）；清空归 clearAfterSend
+  const writing = inputView.slotValue("writing");
+  if (writing !== "") sendCmd("directive", { mode: "writing", text: writing });
   streamView.appendSelfCard(text);
   send(text);
   inputView.clearAfterSend();
