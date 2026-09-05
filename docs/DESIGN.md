@@ -342,6 +342,5 @@ ST 式结构 = **单上下文、单人格、全知视角的文本拼接**：
 
 ## 11. 参考
 
-- 参考思路.txt（类脑社区"独立角色"实践）：角色自治哲学、第一人称认知改写、GM 克制红线、记忆三层、Audit/Diary/Chat 模式、涌现实证。
 - [GhostXia/AIRP-MCP-Server](https://github.com/GhostXia/AIRP-MCP-Server)：数据层/推理层分离铁律、决策提示而非强制工作流、通用优先于特供、缓存下沉边缘（[prompt-caching.md](https://github.com/GhostXia/AIRP-MCP-Server/blob/main/docs/prompt-caching.md)）、skill vs MCP 分工（[skills-vs-mcp.md](https://github.com/GhostXia/AIRP-MCP-Server/blob/main/docs/skills-vs-mcp.md)）、隔离 activation 治"死人化"、token 纪律细节。
 - [ST-ClaudeCacheGateway](https://github.com/shanye5593/ST-ClaudeCacheGateway)（AIRP 引用）：`[[CACHE_BREAK]]` 中性标记 → 边缘翻译的思路。

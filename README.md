@@ -89,7 +89,7 @@ TAG 是内容可见性的判定通货：内容侧挂 `{name, level}`（1-7 级�
 - **一套完整的示例游玩模板**——目前只有测试用途的世界包，缺一个真正展示系统能力的完整示例；
 - **世界包工具箱**——让玩家可以从零设计自己世界包（TAG 体系、变量模板、数值规则、状态栏、提示词）的完整工具链。
 
-完整现状见 `docs/DESIGN.md`，规划见 `docs/ROADMAP.md`。
+完整现状见 [docs/DESIGN.md](docs/DESIGN.md)（架构基准，现行机制的唯一设计出处），规划见 [docs/ROADMAP.md](docs/ROADMAP.md)（未实现的计划与已定案设计）。
 
 ## 技术栈
 
@@ -123,9 +123,9 @@ npm run test:unit / test:contract / test:application / test:integration
 - `web/` — 无构建前端；`test/` — node:test 测试；`scripts/` — 套件 runner 与依赖审计；
 - `data/assets/{setId}/` — 世界包（世界书/角色/提示词矩阵/TAG 注册表/变量模板等）；
 - `docs/` — 全部项目文档：
-  - `DESIGN.md` 架构基准（现行机制的唯一设计出处）——**新合作者建议从这里读起**；
+  - [DESIGN.md](docs/DESIGN.md) 架构基准（现行机制的唯一设计出处）——**新合作者建议从这里读起**；
   - `CONTEXT.md` 领域词汇表；`CODEINDEX.md` 逐文件职责/IO/依赖方向；
-  - `ROADMAP.md` 未来计划；`adr/` 难逆决策记录；`BUGS.md` 未解 bug 登记；
+  - [ROADMAP.md](docs/ROADMAP.md) 未来计划；`adr/` 难逆决策记录；`BUGS.md` 未解 bug 登记；
 - `AGENTS.md` — 开发约定与工程纪律（AI 结对开发上下文，对人类贡献者同样适用）。
 
 ## 开发者留言
