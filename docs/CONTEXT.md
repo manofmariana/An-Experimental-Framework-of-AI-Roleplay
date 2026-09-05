@@ -79,7 +79,7 @@ _Avoid_: 圈、回合
 _Avoid_: 轮游标、pipeline 快照、组级先攻排序存储、archive 回扫定行动状态
 
 **Continuous Scene（连续场景）**:
-同一个同步组（同一组编号存续期间）的全部轮次。正文归档记录该轮的 `participants` 与行动时的 `scenes[CID]`；角色正文滑窗只取包含自身且归档场景 id 与当前相同的最近 N 段，GM 只取与本轮行动者连续的正文，正文 agent 保持全量近期正文。
+同一个同步组（同一组编号存续期间）的全部轮次。正文归档记录该轮的 `participants` 与行动时的 `scenes[CID]`；角色正文滑窗只取包含自身且归档场景 id 与当前相同的最近 N 段，GM 只取与本轮行动者连续的正文，正文 activation 保持全量近期正文。
 _Avoid_: 按全局最近正文注入
 
 **Working Set（工作集）**:
@@ -95,7 +95,7 @@ _Avoid_: 命令、工具调用、系统提示
 _Avoid_: 输出、回复
 
 **Reference Placeholder（指称占位符）**:
-正文存储原文中指称演员表角色的占位语法 `[[称呼|@CID]]`——称呼 = 当时为人所知的名字/外号/特征称谓，@CID 绑身份；被引号包裹的直接引语豁免，照写原文。渲染看读者：玩家显示 → 称呼；角色注入 → 按读者 relations（name → impression → 保留 @CID）；GM 注入 → 称呼（@CID）；正文 agent 的上一轮正文注入保持原文（格式学习通道）。与 Event 的 @CID + 身份替换同一"存储用 CID、渲染看读者"体系（adr/0003）。
+正文存储原文中指称演员表角色的占位语法 `[[称呼|@CID]]`——称呼 = 当时为人所知的名字/外号/特征称谓，@CID 绑身份；被引号包裹的直接引语豁免，照写原文。渲染看读者：玩家显示 → 称呼；角色注入 → 按读者 relations（name → impression → 保留 @CID）；GM 注入 → 称呼（@CID）；正文 activation 的上一轮正文注入保持原文（格式学习通道）。与 Event 的 @CID + 身份替换同一"存储用 CID、渲染看读者"体系（adr/0003）。
 _Avoid_: 正文裸名直存、正文裸 @CID 直存
 
 **Incident（突发事件）**:
@@ -104,7 +104,7 @@ _Avoid_: 随机事件、遭遇
 
 **Incident GM（突发 GM）**:
 **GM** 身份的功能变体：同一 preset、同一全知视野，专用提示词组 = 矩阵 `gm.incident` 功能组，slim 契约（突发内容文本 + 可选 deltas；不复用 durations 覆盖校验）；产出归档为 `incident` 步 kind（调度透明步）——kind 是管线语义轴、身份是模型预设轴，二者不对齐是设计（adr/0006）。
-_Avoid_: 第四 agent、独立突发身份
+_Avoid_: 第四 activation、独立突发身份
 
 **Incident Content（突发内容）**:
 Incident GM 的产出：**非 Event 的描述文本 + 可选变量变更（deltas）**——未裁决素材（地位同 **Working Set**），存于 incident 步 result；经派生注入目标组角色的 #当前场景 开头与常规 GM 的 ##当前场景 开头；GM 结算覆盖该组时由 GM 转写为 **Event**，注入自动消解。

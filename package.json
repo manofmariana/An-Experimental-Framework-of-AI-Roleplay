@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Open Framework of AI Roleplay (Ofair): multi-agent roleplay engine (truth layer + tiered compilation)",
+  "description": "Open Framework of AI Roleplay (Ofair): roleplay framework built on async temporal scheduling, TAG-filtered declarative prompt assembly, and a custom variable/numeric-rule system (truth layer, not chat text)",
   "scripts": {
     "dev": "tsx src/cli.ts",
     "serve": "tsx src/server/index.ts",
