@@ -338,9 +338,3 @@ ST 式结构 = **单上下文、单人格、全知视角的文本拼接**：
 - 单事件窗口成本 ≈ N×角色（小输入小输出，且唤醒制下多数沉睡）+ 0~1×GM（大缓存前缀+结构化输出，按需激活）+ 0~1×正文（中缓存前缀+长输出，仅 GM 激活后）。
 - 对比 ST 单次巨长无缓存调用：长会话下本架构**可能更便宜**——多出的调用次数被缓存命中率覆盖；无判定轮使 GM 调用频率从"每圈一次"降为按需。
 
----
-
-## 11. 参考
-
-- [GhostXia/AIRP-MCP-Server](https://github.com/GhostXia/AIRP-MCP-Server)：数据层/推理层分离铁律、决策提示而非强制工作流、通用优先于特供、缓存下沉边缘（[prompt-caching.md](https://github.com/GhostXia/AIRP-MCP-Server/blob/main/docs/prompt-caching.md)）、skill vs MCP 分工（[skills-vs-mcp.md](https://github.com/GhostXia/AIRP-MCP-Server/blob/main/docs/skills-vs-mcp.md)）、隔离 activation 治"死人化"、token 纪律细节。
-- [ST-ClaudeCacheGateway](https://github.com/shanye5593/ST-ClaudeCacheGateway)（AIRP 引用）：`[[CACHE_BREAK]]` 中性标记 → 边缘翻译的思路。
